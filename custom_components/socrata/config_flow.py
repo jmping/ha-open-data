@@ -10,7 +10,12 @@ from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .api import SocrataClient, SocrataConnectionError, SocrataResponseError
+from .api import (
+    SocrataClient,
+    SocrataConnectionError,
+    SocrataResponseError,
+    normalize_portal_url,
+)
 from .const import (
     CONF_DATASET_ID,
     CONF_PORTAL_URL,
@@ -20,13 +25,30 @@ from .const import (
 )
 
 
-async def _async_validate_input(hass: HomeAssistant, data: dict[str, Any]) -> str:
+def _normalize_input(data: dict[str, Any]) -> dict[str, str]:
+    """Normalize user input into the canonical persisted representation."""
+    dataset_id = str(data[CONF_DATASET_ID]).strip().lower()
+    timestamp_field = str(
+        data.get(CONF_TIMESTAMP_FIELD, DEFAULT_TIMESTAMP_FIELD)
+    ).strip()
+
+    if not dataset_id or not timestamp_field:
+        raise ValueError("Dataset ID and timestamp field must not be empty")
+
+    return {
+        CONF_PORTAL_URL: normalize_portal_url(str(data[CONF_PORTAL_URL])),
+        CONF_DATASET_ID: dataset_id,
+        CONF_TIMESTAMP_FIELD: timestamp_field,
+    }
+
+
+async def _async_validate_input(hass: HomeAssistant, data: dict[str, str]) -> str:
     """Validate config-flow input and return a display title."""
     client = SocrataClient(async_get_clientsession(hass), data[CONF_PORTAL_URL])
     metadata = await client.async_get_dataset_metadata(data[CONF_DATASET_ID])
     await client.async_latest_row(
         data[CONF_DATASET_ID],
-        data.get(CONF_TIMESTAMP_FIELD, DEFAULT_TIMESTAMP_FIELD),
+        data[CONF_TIMESTAMP_FIELD],
     )
     return metadata.name
 
@@ -43,23 +65,23 @@ class SocrataConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            unique_id = (
-                f"{user_input[CONF_PORTAL_URL].rstrip('/').lower()}::"
-                f"{user_input[CONF_DATASET_ID].lower()}"
-            )
-            await self.async_set_unique_id(unique_id)
-            self._abort_if_unique_id_configured()
-
             try:
-                title = await _async_validate_input(self.hass, user_input)
+                normalized_input = _normalize_input(user_input)
+                unique_id = (
+                    f"{normalized_input[CONF_PORTAL_URL].lower()}::"
+                    f"{normalized_input[CONF_DATASET_ID]}"
+                )
+                await self.async_set_unique_id(unique_id)
+                self._abort_if_unique_id_configured()
+                title = await _async_validate_input(self.hass, normalized_input)
             except SocrataConnectionError:
                 errors["base"] = "cannot_connect"
             except SocrataResponseError:
                 errors["base"] = "invalid_response"
-            except (ValueError, KeyError):
+            except (ValueError, KeyError, TypeError):
                 errors["base"] = "invalid_input"
             else:
-                return self.async_create_entry(title=title, data=user_input)
+                return self.async_create_entry(title=title, data=normalized_input)
 
         schema = vol.Schema(
             {
