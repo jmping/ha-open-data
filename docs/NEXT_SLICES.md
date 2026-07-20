@@ -1,29 +1,39 @@
-# Development Slices
+# Development slices
 
-Only one slice may be marked **In progress**. Completed work is retained here for auditability and summarized in `ENGINEERING_LOG.md`.
+Only one implementation slice may be marked **In progress**. Completed work is retained for auditability and summarized in `ENGINEERING_LOG.md`.
 
 | ID | Status | Slice | Exit criteria |
 |---|---|---|---|
-| S001–S014 | Done | Intelligence core | Provider-neutral structural inference, ranking, and descriptors exist. |
-| S015 | Done | Intelligence core validation | GitHub Actions run 29761386815 completed successfully. |
-| S016–S025 | Done | Knowledge core | Aliases, observables, dataset roles, locations, quality, summaries, explanations, fixtures, and capabilities exist. |
-| S026 | Done | Knowledge core validation | GitHub Actions run 29762110068 completed successfully. |
-| S027–S036 | Done | Planning core | Observable, entity, device, update, polling, state, attribute, availability, naming, and diagnostic plans exist. |
-| S037 | Done | Planning core validation | GitHub Actions run 29762535146 completed successfully. |
-| S038 | Done | Provider SDK contracts | Discovery requests, pages, contexts, and adapter protocol are provider-neutral. |
-| S039 | Done | Provider registry | Adapters register and resolve through normalized stable identifiers. |
-| S040 | Done | Provider failures | Provider errors have structured categories and retryability. |
-| S041 | Done | Adapter validation | Adapter contracts are checked without network activity. |
-| S042 | Done | Metadata mapping | Common provider metadata maps into shared dataset and resource descriptors. |
-| S043 | Done | Provider service | Capability negotiation and adapter invocation share one orchestration boundary. |
-| S044 | In progress | Provider SDK validation | CI passes all SDK, planning-core, and legacy tests; failures are corrected. |
-| S045 | Planned | CKAN SDK adapter | Rework CKAN discovery and description behind the provider SDK contract. |
-| S046 | Planned | CSV SDK adapter | Prove the SDK against a non-portal tabular source. |
+| S001–S015 | Done | Intelligence Core | Provider-neutral structural inference, ranking, profiles, and descriptors exist and CI passes. |
+| S016–S026 | Done | Knowledge Core | Aliases, observables, roles, locations, quality, summaries, explanations, fixtures, and capability negotiation exist and CI passes. |
+| S027–S037 | Done | Planning Core | Stable entity and device plans, update and polling strategy, state, attributes, availability, naming, and diagnostics exist and CI passes. |
+| S038–S044 | Done | Provider SDK | Contracts, registry, validation, mapping, failures, service orchestration, tests, and CI validation exist. |
+| S045 | In progress | CKAN isolation | Inventory existing CKAN responsibilities, establish the intended package boundary, and identify every import or call path that must migrate without changing behavior. |
+| S046 | Planned | CKAN adapter skeleton | A runtime-valid `ProviderAdapter` delegates to existing CKAN behavior; callers can resolve it through the provider registry. |
+| S047 | Planned | CKAN discovery migration | CKAN search returns deterministic `DiscoveryPage` and `DatasetDescriptor` values with opaque pagination. |
+| S048 | Planned | CKAN dataset and resource translation | Package and resource payloads are translated below the adapter boundary; CKAN JSON does not escape. |
+| S049 | Planned | CKAN pipeline composition | Normalized descriptors feed profile, knowledge, and planning primitives through one pure integration path. |
+| S050 | Planned | CKAN golden integration tests | Representative CKAN fixtures produce frozen, deterministic entity and device plans. |
+| S051 | Planned | CKAN milestone validation | All accumulated tests pass; boundary leaks and regressions are corrected and validation evidence is recorded. |
+| S052 | Planned | CSV adapter | Local or remote CSV metadata and rows enter the shared descriptor and planning pipeline. |
+| S053 | Planned | JSON adapter | Common JSON record shapes enter the shared descriptor and planning pipeline. |
+| S054 | Planned | Generic REST adapter | Constrained REST endpoints can be configured without provider-specific semantic logic. |
+| S055 | Planned | Generic-provider validation | At least two non-CKAN source shapes validate the SDK and justify any shared contract changes. |
+| S056+ | Planned | Portal adapters and HA materialization | Add portal families, then translate stable plans into native Home Assistant entities and devices. |
+
+## S045 working checklist
+
+- map current CKAN functions to client, translation, adapter, or provider-neutral ownership;
+- identify modules importing `providers.ckan`;
+- define compatibility exports needed during migration;
+- avoid moving resource ranking or semantic inference into the CKAN package;
+- specify tests that prove behavior preservation;
+- update staged documentation before marking the slice complete.
 
 ## Selection rule
 
-Concrete provider implementations now take precedence over additional provider-neutral abstraction. New shared layers require evidence from at least two adapters.
+Reliability and concrete provider evidence take precedence over expansion. Do not add another provider-neutral framework while CKAN can still expose missing requirements through a smaller, testable change.
 
 ## Current decision
 
-S044 is active. The provider SDK is implemented as pure Python and the next action is evidence-driven correction from GitHub Actions before adapting CKAN.
+S045 is active. The immediate deliverable is an evidence-backed CKAN isolation map and migration boundary. Code movement begins only after that map identifies compatibility requirements and test coverage, reducing the chance of a broad, partially migrated state.
