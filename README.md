@@ -1,112 +1,84 @@
 # ha-open-data
 
-A Home Assistant custom integration for turning public open-data portals into
-useful local observability entities.
+A Home Assistant custom integration for turning public open-data portals into useful local observability entities.
 
 > [!IMPORTANT]
-> This project is under active development. Interfaces may change while the
-> first real datasets and providers are integrated.
-
-## Why this exists
-
-Home Assistant makes indoor sensing excellent. Municipalities, universities,
-counties, and utilities often publish nearby weather, air-quality, rainfall,
-water, traffic, and energy data. `ha-open-data` is intended to make that data
-feel native in Home Assistant rather than forcing every user to hand-build REST
-sensors and brittle templates.
-
-Ann Arbor, Michigan is the first reference deployment. The integration is
-provider-based so that CKAN, Socrata, and future open-data platforms can share
-the same Home Assistant entity and coordinator layers.
-
-## Initial providers
-
-- CKAN
-- Socrata
-
-Planned providers include ArcGIS, OpenDataSoft, and generic CSV/JSON resources.
-
-## Current architecture
-
-```text
-Home Assistant entities
-        ↓
-Entity mapping and normalized snapshots
-        ↓
-Update coordinator
-        ↓
-Provider interface
-        ↓
-CKAN / Socrata / future providers
-```
-
-Provider-specific code is responsible for catalog metadata, schema discovery,
-and record retrieval. Home Assistant entities consume normalized models and do
-not need to know which portal software is in use.
-
-## Ann Arbor air quality
-
-The first production target is the City of Ann Arbor's hourly air-quality
-dataset.
-
-```text
-Portal:     https://ckan.a2gov.org
-Dataset:    air-quality-sensor-data
-Dataset ID: 3b531fba-bf1e-44a4-ae30-7caaaa76f705
-Resource:   d16be6d6-9738-4c1c-8a86-1849942953ad
-```
-
-The package contains one active CKAN DataStore resource. The integration uses
-`package_show` to resolve the package and automatically selects the active
-DataStore resource, so users normally only need the portal URL and dataset name.
-The UUIDs above are included for diagnostics and reproducibility.
-
-Example configuration-flow values:
-
-```text
-Provider:   CKAN
-Portal URL: https://ckan.a2gov.org
-Dataset ID: air-quality-sensor-data
-```
-
-A resource ID is optional. When omitted, the CKAN provider selects the first
-active DataStore resource returned by the package metadata.
-
-For time-series data, set the timestamp field once the dataset schema has been
-inspected. The coordinator then requests one row sorted by that field in
-descending order.
-
-## CKAN behavior
-
-The CKAN provider currently supports:
-
-1. `package_search` for catalog search;
-2. `package_show` using either a package name or UUID;
-3. automatic active DataStore resource selection;
-4. schema discovery through `datastore_search` with `limit=0`;
-5. latest-row retrieval through `datastore_search` with `limit=1`;
-6. optional descending sort by a validated timestamp field.
-
-A manually supplied resource ID must belong to the selected package and must be
-DataStore-enabled. Invalid or non-DataStore resources are rejected during the
-config flow rather than failing later during polling.
+> This project is under active development. The semantic and provider contracts are validated, while concrete provider migration and Home Assistant materialization remain in progress.
 
 ## Product direction
 
-The next milestones are:
+Municipalities, universities, counties, and utilities publish nearby weather, air-quality, rainfall, water, traffic, and energy data. `ha-open-data` is intended to make that data feel native in Home Assistant without requiring users to hand-build REST sensors and brittle templates.
 
-1. verify the Ann Arbor air-quality schema and timestamp field;
-2. expose AQI, PM2.5, NO2, temperature, humidity, and freshness entities where
-   those fields are available;
-3. add station selection;
-4. add Ann Arbor weather datasets;
-5. add dataset search and selection directly to the config flow;
-6. add provider conformance tests and CI.
+Ann Arbor, Michigan is the first reference deployment. CKAN is the first provider used to validate the provider-neutral architecture. Generic CSV, JSON, and REST ingestion will follow before additional portal families such as Socrata, ArcGIS, and OpenDataSoft.
+
+## Validated architecture
+
+```text
+Provider-specific API
+        ↓
+ProviderAdapter
+        ↓
+Dataset and resource descriptors
+        ↓
+Intelligence Core
+        ↓
+Knowledge Core
+        ↓
+Planning Core
+        ↓
+EntityPlan and DevicePlan
+        ↓
+Future Home Assistant materialization
+```
+
+The four validated cores are:
+
+- **Intelligence:** structural field inference, timestamps, coordinates, identifiers, geometry, units, confidence, dataset profiles, and deterministic resource ranking.
+- **Knowledge:** aliases, observables, dataset roles, locations, quality, summaries, explanations, golden profiles, and capability negotiation.
+- **Planning:** observable graphs, stable entity and device plans, update strategy, polling, state and attribute selection, availability, naming, and diagnostics.
+- **Provider SDK:** immutable contexts and requests, adapter contracts, deterministic registration, normalized metadata mapping, capability-aware orchestration, validation, and structured failures.
+
+Provider-specific payloads must not cross the adapter boundary. Inference and planning code must not branch on provider type.
+
+## Current milestone: CKAN SDK adoption
+
+The current work migrates the existing CKAN implementation behind the Provider SDK without changing behavior.
+
+```text
+CKAN HTTP and JSON
+        ↓
+CKAN adapter and translation layer
+        ↓
+Provider SDK descriptors
+        ↓
+Existing provider-neutral cores
+```
+
+The migration sequence is:
+
+1. isolate the CKAN client and translation boundary;
+2. implement the adapter skeleton by delegating to existing behavior;
+3. migrate discovery;
+4. migrate dataset description and resource translation;
+5. connect the full profile, knowledge, and planning pipeline;
+6. freeze representative CKAN fixtures and golden plans.
+
+Success means that exactly one provider package understands CKAN payloads and the rest of the integration depends on `ProviderAdapter`, `ProviderService`, and normalized descriptors.
+
+## Reference deployment
+
+The first production target remains the City of Ann Arbor's air-quality data on `https://ckan.a2gov.org`, including package `air-quality-sensor-data`. Dataset and resource identifiers are retained in diagnostics and fixtures for reproducibility, but provider-neutral code must not depend on those identifiers.
+
+## Validation evidence
+
+- Intelligence Core: GitHub Actions run `29761386815` succeeded.
+- Knowledge Core: GitHub Actions run `29762110068` succeeded.
+- Planning Core: GitHub Actions run `29762535146` succeeded.
+- Provider SDK: GitHub Actions run `29763177537` succeeded.
 
 ## Installation
 
-During development, copy `custom_components/open_data` into the Home Assistant
-configuration directory:
+During development, copy `custom_components/open_data` into the Home Assistant configuration directory:
 
 ```text
 <config>/custom_components/open_data
@@ -114,14 +86,12 @@ configuration directory:
 
 Restart Home Assistant and add **Open Data** from Settings → Devices & services.
 
+The current Home Assistant surface is transitional. The provider-neutral plans will be materialized into final entities only after multiple provider paths validate the shared contracts.
+
 ## Contributing
 
-Useful contributions include:
+Useful contributions include public portal URLs, representative metadata and row fixtures, source cadence information, provider edge cases, semantic field mappings, and expected entity plans.
 
-- public portal URLs and dataset identifiers;
-- sample package metadata and rows;
-- desired Home Assistant entities;
-- timestamp, units, station, and update-cadence information;
-- provider-specific edge cases and tests.
+Changes should remain understandable, deterministic, testable, and reversible. New provider-neutral abstractions require evidence from concrete provider implementations.
 
-Changes should remain understandable, testable, and reversible.
+See `docs/PLAN.md`, `docs/NEXT_SLICES.md`, and `docs/ENGINEERING_LOG.md` for architecture, active execution, and validation history.
