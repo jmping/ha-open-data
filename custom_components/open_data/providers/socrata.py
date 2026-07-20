@@ -50,31 +50,31 @@ class SocrataProvider(JsonClient):
             raw=payload,
         )
 
-    async def async_latest_row(
+    async def async_rows(
         self,
         dataset_id: str,
         resource_id: str | None = None,
         timestamp_field: str | None = None,
-    ) -> dict[str, Any] | None:
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
         dataset_id = self._dataset_id(dataset_id)
-        params = {"$limit": "1"}
+        params = {"$limit": str(max(1, min(limit, 1000)))}
         if timestamp_field:
             field = timestamp_field.strip()
             if not _FIELD_NAME_PATTERN.fullmatch(field):
                 raise ValueError("Timestamp field is not a valid Socrata field")
             params["$order"] = f"{field} DESC"
-        payload = await self.async_get_json(
-            f"/resource/{dataset_id}.json", params=params
-        )
+        payload = await self.async_get_json(f"/resource/{dataset_id}.json", params=params)
         if not isinstance(payload, list) or not all(isinstance(row, dict) for row in payload):
             raise OpenDataResponseError("Socrata query did not return rows")
-        return payload[0] if payload else None
+        return payload
 
     async def async_search_datasets(
         self, query: str, limit: int = 20
     ) -> list[OpenDataDataset]:
         payload = await self.async_get_json(
-            "/api/catalog/v1", params={"search_context": self.portal_url, "q": query, "limit": str(limit)}
+            "/api/catalog/v1",
+            params={"search_context": self.portal_url, "q": query, "limit": str(limit)},
         )
         results = payload.get("results", []) if isinstance(payload, dict) else []
         datasets: list[OpenDataDataset] = []
