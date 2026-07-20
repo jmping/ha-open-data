@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import (
@@ -20,6 +21,7 @@ from .feedback import FeedbackRegistry
 from .providers import create_provider
 from .services import async_register_services
 
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 _DATA_FEEDBACK = "feedback_registry"
 
 type OpenDataConfigEntry = ConfigEntry[OpenDataCoordinator]
