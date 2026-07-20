@@ -7,6 +7,7 @@ from typing import Any
 from ..models import OpenDataDataset, OpenDataField
 from .base import OpenDataResponseError
 from .common import JsonClient
+from .resource_scoring import choose_best_resource
 
 
 class CkanProvider(JsonClient):
@@ -28,8 +29,8 @@ class CkanProvider(JsonClient):
         """Return normalized metadata for a CKAN dataset.
 
         ``dataset_id`` may be either the CKAN package name or UUID. When no
-        resource is supplied, the first active DataStore resource is selected
-        automatically.
+        resource is supplied, the best active DataStore resource is selected
+        automatically using deterministic scoring.
         """
         package = await self._action(
             "package_show", {"id": dataset_id.strip()}
@@ -145,15 +146,7 @@ class CkanProvider(JsonClient):
                 )
             return selected
 
-        selected = next(
-            (
-                item
-                for item in resources
-                if item.get("datastore_active")
-                and item.get("state", "active") == "active"
-            ),
-            None,
-        )
+        selected = choose_best_resource(resources)
         if selected is None:
             raise OpenDataResponseError(
                 "CKAN dataset has no active DataStore resource"
