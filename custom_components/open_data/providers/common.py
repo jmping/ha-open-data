@@ -25,12 +25,16 @@ USER_AGENT = "Home Assistant Open Data integration"
 def normalize_portal_url(portal_url: str) -> str:
     """Normalize and validate a public portal root URL."""
     value = portal_url.strip().rstrip("/")
-    if not value.startswith(("http://", "https://")):
+    if "://" not in value:
         value = f"https://{value}"
     parsed = urlparse(value)
     hostname = parsed.hostname
+    try:
+        port = parsed.port
+    except ValueError as err:
+        raise ValueError("Portal URL contains an invalid port") from err
     if (
-        parsed.scheme not in {"http", "https"}
+        parsed.scheme.lower() not in {"http", "https"}
         or not hostname
         or parsed.username is not None
         or parsed.password is not None
@@ -43,12 +47,17 @@ def normalize_portal_url(portal_url: str) -> str:
     try:
         address = ipaddress.ip_address(hostname)
     except ValueError:
-        pass
-    else:
+        address = None
+    if address is not None:
         _reject_non_public_address(address)
-    host = hostname.encode("idna").decode("ascii").lower()
-    port = f":{parsed.port}" if parsed.port is not None else ""
-    return f"{parsed.scheme.lower()}://{host}{port}{parsed.path.rstrip('/')}"
+    normalized_host = hostname.encode("idna").decode("ascii").lower()
+    if ":" in normalized_host:
+        normalized_host = f"[{normalized_host}]"
+    port_suffix = f":{port}" if port is not None else ""
+    return (
+        f"{parsed.scheme.lower()}://{normalized_host}{port_suffix}"
+        f"{parsed.path.rstrip('/')}"
+    )
 
 
 def _reject_non_public_address(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> None:
