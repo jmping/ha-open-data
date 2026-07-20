@@ -8,44 +8,54 @@ The first milestone established deterministic CKAN resource selection, structura
 
 **Validation evidence:** GitHub Actions run `29761386815` completed successfully for commit `cdba84e788c6c80b5aead0eed0ab093f2042e9f1`.
 
-## S016 — Field alias normalization
+## S016–S026 — Knowledge core
 
-Canonicalizes common weather and air-quality aliases, including temperature, humidity, particulate matter, precipitation, wind speed, and station identifiers.
+The second milestone added canonical aliases, observable inference, dataset-role and location inference, quality scoring, summaries, explanation graphs, fixture-backed golden profiles, and capability negotiation.
 
-## S017 — Observable inference
+**Validation evidence:** GitHub Actions run `29762110068` completed successfully for commit `46af5ec405733b60f07bf6df0f7498d702ec5087`.
 
-Infers canonical measurable concepts from field names and labels and associates recognized canonical units without provider or Home Assistant coupling.
+## S027 — Observable graph
 
-## S018 — Dataset type inference
+Groups inferred observables by logical source while preserving stable source and field ordering.
 
-Classifies datasets as observations, forecasts, station metadata, events, or snapshots using profile intelligence and conservative metadata hints.
+## S028 — Entity planning
 
-## S019 — Location inference
+Creates immutable provider-neutral entity plans with stable keys, state fields, observable kinds, units, and attribute slots.
 
-Identifies station, location, municipality, region, and country fields with deterministic confidence ordering.
+## S029 — Device planning
 
-## S020 — Dataset quality scoring
+Groups entity plans into deterministic logical devices without importing Home Assistant.
 
-Scores structural completeness, semantic richness, description availability, and freshness metadata while retaining reasons and penalties.
+## S030 — Update strategy
 
-## S021 — Dataset summary generation
+Represents snapshot, append-only, rolling-window, and historical update modes and conservatively infers a strategy from temporal and observation signals.
 
-Produces deterministic human-readable summaries from dataset title, type, profile, location structure, identifiers, and measurement fields.
+## S031 — Polling heuristics
 
-## S022 — Explainability graph
+Produces bounded polling intervals from declared cadence, live-data hints, and temporal structure.
 
-Introduces shared immutable explanation nodes for conclusions, confidence, reasons, and alternatives, plus deterministic subject lookup.
+## S032 — State-field selection
 
-## S023–S024 — Fixture corpus and golden profiles
+Selects the highest-confidence observable as entity state with deterministic semantic and field-name tie-breaking.
 
-Seeds the regression corpus with representative weather-observation metadata and a corresponding expected semantic profile.
+## S033 — Attribute selection
 
-## S025 — Capability negotiation
+Selects deduplicated non-state fields while honoring exclusions and bounded attribute counts.
 
-Models provider capabilities and query requirements and reports unmet capabilities in a stable order.
+## S034 — Availability planning
 
-## S026 — Knowledge core validation
+Classifies observations as available, stale, or unknown using a poll-derived staleness window and timezone-safe timestamps.
+
+## S035 — Naming engine
+
+Generates deterministic device and entity display names from dataset, location, and observable semantics.
+
+## S036 — Planning diagnostics
+
+Captures selected values, reasons, and rejected alternatives in a shared immutable diagnostics model.
+
+## S037 — Planning core validation
 
 **Status:** In progress.
 
-`tests/test_knowledge_core.py` covers aliasing, observables, location inference, quality scoring, summaries, explanations, capability negotiation, and golden-profile composition. The next action is to inspect the completed GitHub Actions run for the current branch head and correct any failures before beginning property-based invariants or expanding the fixture corpus.
+`tests/test_planning_core.py` covers composition across observable graphs, entity and device plans, update and polling strategy, state and attribute selection, availability, naming, and diagnostics. The current branch head must complete GitHub Actions successfully before this milestone is recorded as stable.
