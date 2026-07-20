@@ -2,8 +2,10 @@
 
 from datetime import timedelta
 
+from homeassistant.const import Platform
+
 DOMAIN = "socrata"
-PLATFORMS = ["sensor"]
+PLATFORMS = [Platform.SENSOR]
 
 CONF_PORTAL_URL = "portal_url"
 CONF_DATASET_ID = "dataset_id"
