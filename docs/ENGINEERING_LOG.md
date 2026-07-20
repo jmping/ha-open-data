@@ -2,75 +2,50 @@
 
 This file records completed development slices, validation evidence, and follow-up work discovered during implementation.
 
-## S001–S004 — Foundation
+## S001–S015 — Intelligence core
 
-- **S001 CKAN resource scoring:** deterministic automatic selection with explicit selection preserved.
-- **S002 automated test execution:** GitHub Actions workflow added; Home Assistant added after the first run exposed an import dependency.
-- **S003 scoring robustness:** mixed mappings, MIME formats, timestamp fallback, UTC normalization, and null CKAN state handling.
-- **S004 timestamp detection:** provider-neutral timestamp scoring with deterministic ranking and false-positive rejection.
+The first milestone established deterministic CKAN resource selection, structural field inference, dataset profiles, confidence and unit handling, identifier and geometry detection, dataset intelligence, generic resource ranking, and provider-neutral descriptors.
 
-Validation for the accumulated branch remains governed by the pull-request workflow. No slice is recorded as passing until a completed successful run exists.
+**Validation evidence:** GitHub Actions run `29761386815` completed successfully for commit `cdba84e788c6c80b5aead0eed0ab093f2042e9f1`.
 
-## S005 — Coordinate detection
+## S016 — Field alias normalization
 
-**Status:** Implemented; validation pending.
+Canonicalizes common weather and air-quality aliases, including temperature, humidity, particulate matter, precipitation, wind speed, and station identifiers.
 
-Detects latitude/longitude candidates, pairs the strongest deterministic candidates, rewards numeric metadata, and rejects projected or generic axes such as `x`, `y`, `easting`, and `northing`.
+## S017 — Observable inference
 
-## S006 — Semantic field classification
+Infers canonical measurable concepts from field names and labels and associates recognized canonical units without provider or Home Assistant coupling.
 
-**Status:** Implemented; validation pending.
+## S018 — Dataset type inference
 
-Composes timestamp, coordinate, identifier, and geometry detectors into immutable `FieldSemantic` results, then classifies remaining numeric and textual fields.
+Classifies datasets as observations, forecasts, station metadata, events, or snapshots using profile intelligence and conservative metadata hints.
 
-## S007 — Dataset profile
+## S019 — Location inference
 
-**Status:** Implemented; validation pending.
+Identifies station, location, municipality, region, and country fields with deterministic confidence ordering.
 
-Builds an immutable `DatasetProfile` containing the primary timestamp, coordinate pair, identifier, geometry field, measures, and text fields.
+## S020 — Dataset quality scoring
 
-## S008 — Confidence normalization
+Scores structural completeness, semantic richness, description availability, and freshness metadata while retaining reasons and penalties.
 
-**Status:** Implemented; validation pending.
+## S021 — Dataset summary generation
 
-Adds bounded percentage confidence and reusable evidence objects while preserving raw scores and reasons.
+Produces deterministic human-readable summaries from dataset title, type, profile, location structure, identifiers, and measurement fields.
 
-## S009 — Unit detection
+## S022 — Explainability graph
 
-**Status:** Implemented; validation pending.
+Introduces shared immutable explanation nodes for conclusions, confidence, reasons, and alternatives, plus deterministic subject lookup.
 
-Canonicalizes common temperature, concentration, percentage, speed, and length units from explicit metadata or label suffixes.
+## S023–S024 — Fixture corpus and golden profiles
 
-## S010 — Identifier detection
+Seeds the regression corpus with representative weather-observation metadata and a corresponding expected semantic profile.
 
-**Status:** Implemented; validation pending.
+## S025 — Capability negotiation
 
-Ranks strong and weak identifier names, recognizes UUID/GUID types, and rejects temporal, coordinate, and measurement false positives.
+Models provider capabilities and query requirements and reports unmet capabilities in a stable order.
 
-## S011 — Geometry detection
+## S026 — Knowledge core validation
 
-**Status:** Implemented; validation pending.
+**Status:** In progress.
 
-Recognizes geometry field names and geometry data types including GeoJSON, WKT, point, line, and polygon variants.
-
-## S012 — Dataset intelligence
-
-**Status:** Implemented; validation pending.
-
-Infers temporal, spatial, tabular, observation, and station-metadata characteristics from a dataset profile with explainable reasons.
-
-## S013 — Generic resource ranking
-
-**Status:** Implemented; validation pending.
-
-Ranks normalized resources using format, queryability, schema richness, spatial support, freshness, and deterministic identifier ordering.
-
-## S014 — Descriptor models
-
-**Status:** Implemented; validation pending.
-
-Adds immutable portal, catalog, dataset, resource, and observable descriptors as the provider-neutral vocabulary for the later adapter phase.
-
-## Validation and next assessment
-
-`tests/test_intelligence_core.py` covers composition across S005–S014. The next action is to inspect the first completed workflow run for the current branch head, correct any failures, and only then declare this intelligence-core milestone stable. Cross-provider adapter integration remains intentionally deferred.
+`tests/test_knowledge_core.py` covers aliasing, observables, location inference, quality scoring, summaries, explanations, capability negotiation, and golden-profile composition. The next action is to inspect the completed GitHub Actions run for the current branch head and correct any failures before beginning property-based invariants or expanding the fixture corpus.
