@@ -4,6 +4,7 @@
   "codeowners": ["@jmping"],
   "config_flow": true,
   "documentation": "https://github.com/jmping/ha-open-data",
+  "issue_tracker": "https://github.com/jmping/ha-open-data/issues",
   "integration_type": "service",
   "iot_class": "cloud_polling",
   "requirements": [],
