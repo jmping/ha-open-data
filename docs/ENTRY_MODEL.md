@@ -1,69 +1,55 @@
-# Portal and dataset entry model
+# Open Data entry and polling model
 
-`ha-open-data` uses two Home Assistant config-entry types.
+The integration separates catalog ownership from data-stream ownership.
 
-## Portal entry
+## Portal entries
 
-A portal entry represents one institution catalog, such as `https://ckan.a2gov.org`.
-It detects and stores the provider and portal root, but does not poll dataset rows or
-create sensor entities.
+A portal entry represents one institution-level CKAN or Socrata catalog. It owns provider detection, catalog discovery, and ranking. It does not poll dataset rows or create sensor entities.
 
-Opening **Configure** on a portal entry searches and ranks its public catalog. Choosing
-a result launches a new dataset config flow. The resulting dataset is a separate Home
-Assistant integration instance.
+Configuring a portal launches a new dataset flow. The selected dataset is created as a separate config entry.
 
-This keeps one institution-level search index while allowing every selected source to
-have an independent lifecycle.
+## Dataset entries
 
-## Dataset entry
-
-A dataset entry represents one independently updating source. It owns:
-
-- provider and portal identity;
-- normalized dataset and optional resource identifiers;
-- polling coordinator;
-- field selection and entities;
-- availability, reload, and update behavior.
-
-Dataset entries may be created either from a portal catalog or by pasting a location
-directly.
+A dataset entry is independently updating. It may originate from portal discovery or a manual URL, API endpoint, or identifier. Each dataset entry owns its coordinator, selected fields, selected stream location, availability, reload lifecycle, and profile cache.
 
 ## Accepted direct references
 
-The reference parser currently recognizes common CKAN and Socrata forms:
+The parser recognizes common CKAN and Socrata portal roots, dataset pages, resource pages, Action API URLs, SODA resource/view endpoints, human dataset pages ending in a four-by-four ID, and bare identifiers accompanied by a portal URL.
 
-- CKAN portal roots;
-- CKAN `/dataset/<name>` pages;
-- CKAN `/dataset/<name>/resource/<uuid>` pages;
-- CKAN `package_show?id=<name>` endpoints;
-- Socrata `/resource/<four-by-four>.json` endpoints;
-- Socrata `/api/views/<four-by-four>` endpoints;
-- Socrata human dataset pages ending in a four-by-four identifier;
-- bare CKAN names, UUIDs, and Socrata identifiers when accompanied by a portal URL.
+## Location-aware streams
 
-When a URL does not identify its provider structurally, the integration probes CKAN's
-`site_read` action and Socrata's catalog endpoint.
+Recent rows are inspected for likely station, site, location, or sensor fields. Summary and aggregate rows rank before physical locations. Other locations are ranked using Euclidean latitude/longitude distance from Home Assistant's configured location. This distance is only a local relative ranking, not a physical distance measurement.
+
+## Adaptive large-dataset profiling
+
+Each dataset entry maintains a persistent intelligence profile in Home Assistant storage. Profiling is delayed after setup and then repeated every six hours, so initial configuration remains responsive.
+
+The profiler obtains the provider's row count and samples small pages from the beginning, middle, and end. It records page hashes, timestamp ordering, row-count growth, changing regions, observation count, last profile time, inferred newest region, and confidence.
+
+Timestamp ordering provides a deterministic result when available:
+
+- ascending timestamps imply newest rows are at the end;
+- descending timestamps imply newest rows are at the beginning;
+- inconsistent timestamp samples mark the dataset unstable.
+
+Without a timestamp field, repeated page-hash observations build confidence about whether the beginning, middle, or end changes. Middle rewrites or multiple changing regions reduce confidence and mark the dataset unstable.
+
+## Bounded adaptive pagination
+
+CKAN and Socrata providers expose offset pagination and inexpensive row counts. Dataset polling uses the learned profile:
+
+- timestamped datasets are explicitly sorted newest-first;
+- end-appending datasets begin at the final page and walk backward;
+- beginning-changing or unknown datasets start at the first page and walk forward;
+- location filtering continues page by page until a matching row is found;
+- scans are bounded to avoid unbounded downloads or blocking Home Assistant.
+
+Current safety limits are 500 rows per page and 40 pages per refresh. These bounds allow a selected location to be found across substantially larger datasets without downloading the complete table.
 
 ## Identity and migration
 
-Portal unique IDs use:
-
-```text
-portal:<provider>:<portal URL>
-```
-
-Dataset unique IDs use:
-
-```text
-dataset:<provider>:<portal URL>:<dataset ID>:<resource ID>
-```
-
-Version 1 entries are migrated to version 2 as dataset entries, preserving their
-existing polling behavior.
+Portal unique IDs use `portal:<provider>:<portal URL>`. Dataset unique IDs use `dataset:<provider>:<portal URL>:<dataset ID>:<resource ID>`. Version 1 entries migrate to version 2 as dataset entries.
 
 ## Extension boundary
 
-Additional providers should extend reference parsing and provider probing, then feed
-the existing normalized provider interface. ArcGIS, OpenDataSoft, and direct CSV/JSON
-sources can therefore be added without changing the portal-versus-dataset ownership
-model.
+Reference parsing, provider APIs, dataset profiling, and config-entry ownership are separate layers. ArcGIS, OpenDataSoft, CSV, JSON, or arbitrary REST providers can implement the pagination contract without changing the portal/dataset entry model or intelligence layer.
