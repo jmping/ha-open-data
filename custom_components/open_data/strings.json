@@ -1,0 +1,37 @@
+{
+  "title": "Open Data",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect an open data dataset",
+        "description": "Choose the portal provider and identify a dataset. CKAN resource ID is optional when the package has one DataStore resource.",
+        "data": {
+          "provider": "Provider",
+          "portal_url": "Portal URL",
+          "dataset_id": "Dataset ID or CKAN package name",
+          "resource_id": "CKAN resource ID (optional)",
+          "timestamp_field": "Timestamp field used to select the newest row (optional)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Unable to connect to the portal.",
+      "invalid_dataset": "The portal, dataset, resource, or timestamp field is invalid.",
+      "unknown": "Unexpected error. Check the Home Assistant logs."
+    },
+    "abort": {
+      "already_configured": "This open data resource is already configured."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "dataset_status": {
+        "name": "Dataset status",
+        "state": {
+          "data_available": "Data available",
+          "no_data": "No data"
+        }
+      }
+    }
+  }
+}
