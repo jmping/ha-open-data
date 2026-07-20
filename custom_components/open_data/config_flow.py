@@ -15,6 +15,8 @@ from homeassistant.helpers.selector import SelectOptionDict, SelectSelector, Sel
 from .const import (
     CONF_DATASET_ID,
     CONF_ENTRY_TYPE,
+    CONF_LOCATION_FIELD,
+    CONF_LOCATION_VALUE,
     CONF_PORTAL_URL,
     CONF_PROVIDER,
     CONF_RESOURCE_ID,
@@ -23,8 +25,10 @@ from .const import (
     DOMAIN,
     ENTRY_TYPE_DATASET,
     ENTRY_TYPE_PORTAL,
+    LOCATION_SAMPLE_LIMIT,
 )
 from .discovery import DatasetCandidate, rank_datasets
+from .locations import DatasetLocation, discover_locations
 from .models import OpenDataDataset
 from .providers import create_provider
 from .providers.base import OpenDataConnectionError, OpenDataResponseError
@@ -51,7 +55,9 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     MINOR_VERSION = 0
 
     @staticmethod
-    def async_get_options_flow(config_entry: config_entries.ConfigEntry) -> config_entries.OptionsFlow:
+    def async_get_options_flow(
+        config_entry: config_entries.ConfigEntry,
+    ) -> config_entries.OptionsFlow:
         """Return the options flow for this entry type."""
         if config_entry.data.get(CONF_ENTRY_TYPE, ENTRY_TYPE_DATASET) == ENTRY_TYPE_PORTAL:
             return OpenDataPortalOptionsFlow(config_entry)
@@ -252,24 +258,70 @@ class OpenDataPortalOptionsFlow(config_entries.OptionsFlow):
 
 
 class OpenDataDatasetOptionsFlow(config_entries.OptionsFlow):
-    """Choose which discovered fields become entities."""
+    """Choose fields and a summary or nearby stream location."""
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         self._config_entry = config_entry
+        self._locations: list[DatasetLocation] | None = None
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
-        """Manage field selection."""
+        """Manage field and location selection."""
         if user_input is not None:
+            selected = user_input.pop("location_selection", "")
+            if selected:
+                field, value = selected.split("\x1f", 1)
+                user_input[CONF_LOCATION_FIELD] = field
+                user_input[CONF_LOCATION_VALUE] = value
+            else:
+                user_input.pop(CONF_LOCATION_FIELD, None)
+                user_input.pop(CONF_LOCATION_VALUE, None)
             return self.async_create_entry(title="", data=user_input)
 
         coordinator = self._config_entry.runtime_data
         choices = {field.name: field.label for field in coordinator.data.dataset.fields}
         current = list(self._config_entry.options.get(CONF_SELECTED_FIELDS, choices.keys()))
+        if self._locations is None:
+            rows = await coordinator.provider.async_rows(
+                coordinator.dataset_id,
+                coordinator.resource_id,
+                coordinator.timestamp_field,
+                limit=LOCATION_SAMPLE_LIMIT,
+            )
+            self._locations = discover_locations(
+                rows,
+                self.hass.config.latitude,
+                self.hass.config.longitude,
+            )
+
+        location_options = [SelectOptionDict(value="", label="Automatic / first row")]
+        location_options.extend(
+            SelectOptionDict(value=f"{item.field}\x1f{item.value}", label=self._location_label(item))
+            for item in self._locations
+        )
+        current_location = ""
+        if self._config_entry.options.get(CONF_LOCATION_FIELD) and self._config_entry.options.get(CONF_LOCATION_VALUE) is not None:
+            current_location = (
+                f"{self._config_entry.options[CONF_LOCATION_FIELD]}\x1f"
+                f"{self._config_entry.options[CONF_LOCATION_VALUE]}"
+            )
+
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(
                 {
-                    vol.Optional(CONF_SELECTED_FIELDS, default=current): cv.multi_select(choices)
+                    vol.Optional(CONF_SELECTED_FIELDS, default=current): cv.multi_select(choices),
+                    vol.Optional("location_selection", default=current_location): SelectSelector(
+                        SelectSelectorConfig(options=location_options)
+                    ),
                 }
             ),
+            description_placeholders={"location_count": str(len(self._locations))},
         )
+
+    @staticmethod
+    def _location_label(location: DatasetLocation) -> str:
+        if location.is_summary:
+            return f"Summary · {location.label}"
+        if location.distance is not None:
+            return f"Nearby · {location.label} ({location.distance:.4f}°)"
+        return location.label
