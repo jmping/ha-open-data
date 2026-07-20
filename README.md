@@ -1,127 +1,143 @@
-# ha-open-data
+# Open Data for Home Assistant
 
-A Home Assistant custom integration for turning public open-data portals into
-useful local observability entities.
+A Home Assistant custom integration that discovers public datasets on supported
+open-data portals and turns selected fields into Home Assistant sensors.
 
 > [!IMPORTANT]
-> This project is under active development. Interfaces may change while the
-> first real datasets and providers are integrated.
+> This project is an early HACS-ready release. Provider and entity behavior may
+> still change before the first stable release.
 
-## Why this exists
-
-Home Assistant makes indoor sensing excellent. Municipalities, universities,
-counties, and utilities often publish nearby weather, air-quality, rainfall,
-water, traffic, and energy data. `ha-open-data` is intended to make that data
-feel native in Home Assistant rather than forcing every user to hand-build REST
-sensors and brittle templates.
-
-Ann Arbor, Michigan is the first reference deployment. The integration is
-provider-based so that CKAN, Socrata, and future open-data platforms can share
-the same Home Assistant entity and coordinator layers.
-
-## Initial providers
+## Supported providers
 
 - CKAN
 - Socrata
 
-Planned providers include ArcGIS, OpenDataSoft, and generic CSV/JSON resources.
+ArcGIS, OpenDataSoft, and generic CSV/JSON resources are planned but are not yet
+supported by the Home Assistant integration.
 
-## Current architecture
+## What it does
+
+The integration provides a provider-independent workflow:
 
 ```text
 Home Assistant entities
         ↓
-Entity mapping and normalized snapshots
+Normalized dataset snapshot
         ↓
 Update coordinator
         ↓
-Provider interface
-        ↓
-CKAN / Socrata / future providers
+CKAN or Socrata provider
 ```
 
-Provider-specific code is responsible for catalog metadata, schema discovery,
-and record retrieval. Home Assistant entities consume normalized models and do
-not need to know which portal software is in use.
+During configuration, the integration searches a public portal, ranks likely
+useful datasets, lets the user select one, inspects its schema, and creates
+sensors for selected fields. The current ranking favors environmental, weather,
+air-quality, rainfall, water, climate, energy, traffic, and transit datasets.
 
-## Ann Arbor air quality
+## Installation with HACS
 
-The first production target is the City of Ann Arbor's hourly air-quality
-dataset.
+Until this repository is added to the default HACS catalog:
 
-```text
-Portal:     https://ckan.a2gov.org
-Dataset:    air-quality-sensor-data
-Dataset ID: 3b531fba-bf1e-44a4-ae30-7caaaa76f705
-Resource:   d16be6d6-9738-4c1c-8a86-1849942953ad
-```
+1. Open HACS in Home Assistant.
+2. Open the menu and choose **Custom repositories**.
+3. Add `https://github.com/jmping/ha-open-data` as an **Integration** repository.
+4. Install **Open Data**.
+5. Restart Home Assistant.
+6. Go to **Settings → Devices & services → Add integration** and select
+   **Open Data**.
 
-The package contains one active CKAN DataStore resource. The integration uses
-`package_show` to resolve the package and automatically selects the active
-DataStore resource, so users normally only need the portal URL and dataset name.
-The UUIDs above are included for diagnostics and reproducibility.
-
-Example configuration-flow values:
-
-```text
-Provider:   CKAN
-Portal URL: https://ckan.a2gov.org
-Dataset ID: air-quality-sensor-data
-```
-
-A resource ID is optional. When omitted, the CKAN provider selects the first
-active DataStore resource returned by the package metadata.
-
-For time-series data, set the timestamp field once the dataset schema has been
-inspected. The coordinator then requests one row sorted by that field in
-descending order.
-
-## CKAN behavior
-
-The CKAN provider currently supports:
-
-1. `package_search` for catalog search;
-2. `package_show` using either a package name or UUID;
-3. automatic active DataStore resource selection;
-4. schema discovery through `datastore_search` with `limit=0`;
-5. latest-row retrieval through `datastore_search` with `limit=1`;
-6. optional descending sort by a validated timestamp field.
-
-A manually supplied resource ID must belong to the selected package and must be
-DataStore-enabled. Invalid or non-DataStore resources are rejected during the
-config flow rather than failing later during polling.
-
-## Product direction
-
-The next milestones are:
-
-1. verify the Ann Arbor air-quality schema and timestamp field;
-2. expose AQI, PM2.5, NO2, temperature, humidity, and freshness entities where
-   those fields are available;
-3. add station selection;
-4. add Ann Arbor weather datasets;
-5. add dataset search and selection directly to the config flow;
-6. add provider conformance tests and CI.
-
-## Installation
-
-During development, copy `custom_components/open_data` into the Home Assistant
-configuration directory:
+For manual development installs, copy `custom_components/open_data` to:
 
 ```text
 <config>/custom_components/open_data
 ```
 
-Restart Home Assistant and add **Open Data** from Settings → Devices & services.
+## Configuration
+
+The config flow asks for:
+
+- the portal provider (`CKAN` or `Socrata`);
+- the public portal URL.
+
+It then scans and ranks public datasets. After selecting a dataset, use the
+integration options to choose which discovered fields become sensors.
+
+### Ann Arbor reference portal
+
+```text
+Provider:   CKAN
+Portal URL: https://ckan.a2gov.org
+Dataset:    air-quality-sensor-data
+```
+
+The CKAN provider resolves package metadata, selects an active DataStore
+resource, discovers fields, and retrieves the latest row. A manually supplied
+resource must belong to the package and be DataStore-enabled.
+
+## Home Assistant actions
+
+The integration registers response-capable actions for discovery and support:
+
+- `open_data.scan_portal`
+- `open_data.search_datasets`
+- `open_data.inspect_dataset`
+- `open_data.refresh_entry`
+- `open_data.feedback_preview`
+
+`feedback_preview` creates a metadata-only preview. It does not transmit data.
+Feedback submission remains opt-in and is not enabled until a central collector
+contract exists.
+
+## Privacy and demand deduplication
+
+The integration stores a random local installation identifier using Home
+Assistant storage. Portal metadata is normalized and hashed so an unchanged
+report from the same installation can be suppressed. Dataset records,
+credentials, account data, IP addresses, and location history are not included
+in feedback payloads.
+
+A future central collector must count each `(installation_id, portal_id)` pair
+as one demand signal, regardless of how often that Home Assistant instance
+runs.
+
+## OpenDataFinder relationship
+
+[OpenDataFinder](https://github.com/jmping/OpenDataFinder) is the generic portal
+crawler and compatibility-test project. It performs bounded reconnaissance,
+platform detection, source benchmarking, and ranked review-queue preparation.
+This Home Assistant repository contains the lightweight runtime provider layer
+used by installed Home Assistant instances.
+
+## Current release boundary
+
+The first HACS release is intentionally limited to:
+
+- CKAN and Socrata catalog discovery;
+- dataset schema inspection;
+- latest-row polling;
+- scalar field sensors;
+- diagnostics and manual refresh actions;
+- privacy-safe feedback previews.
+
+It does not yet provide semantic device classes and units for arbitrary fields,
+station selection, automatic provider detection, or central feedback upload.
+
+## Validation
+
+Every relevant push and pull request runs:
+
+- Python compilation and Ruff checks;
+- manifest and service metadata validation;
+- Home Assistant Hassfest;
+- HACS validation.
 
 ## Contributing
 
-Useful contributions include:
+Useful contributions include public portal URLs, dataset identifiers, sample
+metadata, field semantics, timestamp and unit details, provider edge cases, and
+regression tests. Changes should remain understandable, testable, and
+reversible.
 
-- public portal URLs and dataset identifiers;
-- sample package metadata and rows;
-- desired Home Assistant entities;
-- timestamp, units, station, and update-cadence information;
-- provider-specific edge cases and tests.
+## License
 
-Changes should remain understandable, testable, and reversible.
+MIT
