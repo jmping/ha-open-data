@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Mapping, Protocol, runtime_checkable
 
 from .descriptors import DatasetDescriptor, PortalDescriptor
@@ -14,7 +14,7 @@ class ProviderContext:
     """Immutable provider configuration supplied to adapter calls."""
 
     portal: PortalDescriptor
-    options: Mapping[str, Any] = ()
+    options: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
