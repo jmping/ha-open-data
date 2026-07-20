@@ -29,7 +29,11 @@ from .const import (
 from .discovery import DatasetCandidate, rank_datasets
 from .models import OpenDataDataset
 from .providers import create_provider
-from .providers.base import OpenDataConnectionError, OpenDataResponseError
+from .providers.base import (
+    OpenDataConnectionError,
+    OpenDataResponseError,
+    OpenDataSecurityError,
+)
 from .providers.common import normalize_portal_url
 
 _DISCOVERY_QUERIES = (
@@ -67,13 +71,15 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Choose a provider and scan its public catalog."""
+        """Choose a provider and scan its verified public catalog."""
         errors: dict[str, str] = {}
         if user_input is not None:
             self._provider_name = user_input[CONF_PROVIDER]
-            self._portal_url = normalize_portal_url(user_input[CONF_PORTAL_URL])
             try:
+                self._portal_url = normalize_portal_url(user_input[CONF_PORTAL_URL])
                 datasets = await self._async_discover_catalog()
+            except OpenDataSecurityError:
+                errors["base"] = "invalid_dataset"
             except OpenDataConnectionError:
                 errors["base"] = "cannot_connect"
             except (OpenDataResponseError, ValueError):
@@ -119,7 +125,7 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     return await self._async_create_dataset_entry(candidate.dataset)
                 except OpenDataConnectionError:
                     errors["base"] = "cannot_connect"
-                except (OpenDataResponseError, ValueError):
+                except (OpenDataResponseError, OpenDataSecurityError, ValueError):
                     errors["base"] = "invalid_dataset"
                 except Exception:  # noqa: BLE001
                     errors["base"] = "unknown"
@@ -148,7 +154,7 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
 
     async def _async_discover_catalog(self) -> list[OpenDataDataset]:
-        """Search broad catalog slices and de-duplicate provider results."""
+        """Verify and search broad catalog slices, then de-duplicate results."""
         if self._provider_name is None or self._portal_url is None:
             raise ValueError("Discovery flow is missing provider state")
         provider = create_provider(
@@ -156,6 +162,7 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             async_get_clientsession(self.hass),
             self._portal_url,
         )
+        await provider.async_verify_portal()
         found: dict[str, OpenDataDataset] = {}
         last_error: OpenDataResponseError | None = None
         for query in _DISCOVERY_QUERIES:
@@ -183,6 +190,7 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             async_get_clientsession(self.hass),
             self._portal_url,
         )
+        await provider.async_verify_portal()
         dataset = await provider.async_get_dataset(discovered.dataset_id)
         unique_id = (
             f"{self._provider_name}:{self._portal_url}:"
