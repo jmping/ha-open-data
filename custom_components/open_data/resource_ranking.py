@@ -48,4 +48,13 @@ def rank_resources(resources: Iterable[ResourceDescriptor]) -> tuple[RankedResou
             score += 10
             reasons.append("spatial support")
         ranked.append(RankedResource(resource, score, tuple(reasons)))
-    return tuple(sorted(ranked, key=lambda item: (-item.score, -(item.resource.modified.timestamp() if item.resource.modified else float("-inf")), item.resource.resource_id.casefold())))
+    return tuple(
+        sorted(
+            ranked,
+            key=lambda item: (
+                -item.score,
+                -(item.resource.modified.timestamp() if item.resource.modified else 0),
+                item.resource.resource_id.casefold(),
+            ),
+        )
+    )
