@@ -9,7 +9,7 @@ _ALIASES = {
     "c": "°C", "degc": "°C", "celsius": "°C", "°c": "°C",
     "f": "°F", "degf": "°F", "fahrenheit": "°F", "°f": "°F",
     "%": "%", "percent": "%", "percentage": "%",
-    "ppm": "ppm", "ug/m3": "µg/m³", "µg/m³": "µg/m³",
+    "ppm": "ppm", "ug/m3": "µg/m³", "µg/m3": "µg/m³",
     "m/s": "m/s", "km/h": "km/h", "kph": "km/h",
     "mm": "mm", "cm": "cm", "m": "m", "in": "in", "ft": "ft",
 }
