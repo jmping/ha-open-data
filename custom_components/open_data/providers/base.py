@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import Any
 
 from ..models import OpenDataDataset
@@ -20,14 +21,36 @@ class OpenDataResponseError(OpenDataError):
     """Raised when a portal returns invalid data."""
 
 
+class OpenDataSecurityError(OpenDataError):
+    """Raised when a portal URL or response violates security policy."""
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderCapabilities:
+    """Features exposed by an open-data provider."""
+
+    supports_search: bool = True
+    supports_schema: bool = True
+    supports_latest_row: bool = True
+    supports_spatial_queries: bool = False
+    supports_incremental_updates: bool = False
+
+
 class OpenDataProvider(ABC):
     """Common async interface implemented by each provider."""
 
     provider_name: str
     portal_url: str
+    capabilities = ProviderCapabilities()
 
     @abstractmethod
-    async def async_get_dataset(self, dataset_id: str, resource_id: str | None = None) -> OpenDataDataset:
+    async def async_verify_portal(self) -> None:
+        """Verify that the host exposes the expected open-data platform API."""
+
+    @abstractmethod
+    async def async_get_dataset(
+        self, dataset_id: str, resource_id: str | None = None
+    ) -> OpenDataDataset:
         """Return normalized metadata and schema."""
 
     @abstractmethod
@@ -39,6 +62,10 @@ class OpenDataProvider(ABC):
     ) -> dict[str, Any] | None:
         """Return the latest row."""
 
-    async def async_search_datasets(self, query: str, limit: int = 20) -> list[OpenDataDataset]:
+    async def async_search_datasets(
+        self, query: str, limit: int = 20
+    ) -> list[OpenDataDataset]:
         """Search datasets when supported."""
-        raise OpenDataResponseError(f"{self.provider_name} dataset search is not implemented")
+        raise OpenDataResponseError(
+            f"{self.provider_name} dataset search is not implemented"
+        )
