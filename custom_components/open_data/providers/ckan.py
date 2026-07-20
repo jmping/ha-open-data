@@ -53,29 +53,46 @@ class CkanProvider(JsonClient):
             raw=package,
         )
 
-    async def async_rows(
+    async def async_rows_page(
         self,
         dataset_id: str,
         resource_id: str | None = None,
         timestamp_field: str | None = None,
         limit: int = 100,
+        offset: int = 0,
+        descending: bool | None = None,
     ) -> list[dict[str, Any]]:
-        """Return recent rows from a CKAN DataStore resource."""
+        """Return one page from a CKAN DataStore resource."""
         dataset = await self.async_get_dataset(dataset_id, resource_id)
         params = {
             "resource_id": dataset.resource_id or "",
             "limit": str(max(1, min(limit, 1000))),
+            "offset": str(max(0, offset)),
         }
         if timestamp_field:
             safe_fields = {field.name for field in dataset.fields}
             if timestamp_field not in safe_fields:
                 raise ValueError("Timestamp field is not present in the CKAN resource")
-            params["sort"] = f'"{timestamp_field}" desc'
+            if descending is not None:
+                direction = "desc" if descending else "asc"
+                params["sort"] = f'"{timestamp_field}" {direction}'
         result = await self._action("datastore_search", params)
         records = result.get("records", []) if isinstance(result, dict) else []
         if not isinstance(records, list) or not all(isinstance(row, dict) for row in records):
             raise OpenDataResponseError("CKAN DataStore did not return records")
         return records
+
+    async def async_row_count(
+        self, dataset_id: str, resource_id: str | None = None
+    ) -> int | None:
+        """Return CKAN's DataStore total without downloading records."""
+        dataset = await self.async_get_dataset(dataset_id, resource_id)
+        result = await self._action(
+            "datastore_search",
+            {"resource_id": dataset.resource_id or "", "limit": "0"},
+        )
+        total = result.get("total") if isinstance(result, dict) else None
+        return total if isinstance(total, int) else None
 
     async def async_search_datasets(
         self, query: str, limit: int = 20
