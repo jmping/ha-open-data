@@ -68,6 +68,24 @@ def _dataset_dict(dataset: Any, *, include_raw: bool = False) -> dict[str, Any]:
     return result
 
 
+def _review_gate(
+    *, provider_verified: bool, dataset_count: int, errors: list[str]
+) -> dict[str, Any]:
+    """Return a conservative decision for future AI-review collection."""
+    reasons: list[str] = []
+    if not provider_verified:
+        reasons.append("provider API signature was not verified")
+    if dataset_count < 1:
+        reasons.append("no catalog datasets were discovered")
+    if errors:
+        reasons.append("catalog scan produced errors")
+    return {
+        "eligible_for_ai_review": not reasons,
+        "reasons": reasons,
+        "policy": "verified public provider API plus non-empty clean catalog scan",
+    }
+
+
 async def async_register_services(hass: HomeAssistant, feedback: FeedbackRegistry) -> None:
     """Register the public Open Data service surface."""
 
@@ -76,6 +94,7 @@ async def async_register_services(hass: HomeAssistant, feedback: FeedbackRegistr
         portal_url = normalize_portal_url(call.data[CONF_PORTAL_URL])
         limit = call.data[CONF_LIMIT]
         provider = create_provider(provider_name, async_get_clientsession(hass), portal_url)
+        await provider.async_verify_portal()
         found: dict[str, Any] = {}
         errors: list[str] = []
         for query in _DISCOVERY_QUERIES:
@@ -90,24 +109,35 @@ async def async_register_services(hass: HomeAssistant, feedback: FeedbackRegistr
                     break
             if len(found) >= limit:
                 break
+        gate = _review_gate(
+            provider_verified=True,
+            dataset_count=len(found),
+            errors=errors,
+        )
         return {
             "provider": provider_name,
             "portal_url": portal_url,
+            "provider_verified": True,
+            "capabilities": asdict(provider.capabilities),
             "dataset_count": len(found),
             "datasets": [_dataset_dict(item) for item in found.values()],
             "errors": errors,
+            "review_gate": gate,
         }
 
     async def async_search_datasets(call: ServiceCall) -> dict[str, Any]:
         provider_name = call.data[CONF_PROVIDER]
         portal_url = normalize_portal_url(call.data[CONF_PORTAL_URL])
         provider = create_provider(provider_name, async_get_clientsession(hass), portal_url)
+        await provider.async_verify_portal()
         datasets = await provider.async_search_datasets(
             call.data.get(CONF_QUERY, ""), limit=call.data[CONF_LIMIT]
         )
         return {
             "provider": provider_name,
             "portal_url": portal_url,
+            "provider_verified": True,
+            "capabilities": asdict(provider.capabilities),
             "datasets": [_dataset_dict(item) for item in datasets],
         }
 
@@ -115,12 +145,15 @@ async def async_register_services(hass: HomeAssistant, feedback: FeedbackRegistr
         provider_name = call.data[CONF_PROVIDER]
         portal_url = normalize_portal_url(call.data[CONF_PORTAL_URL])
         provider = create_provider(provider_name, async_get_clientsession(hass), portal_url)
+        await provider.async_verify_portal()
         dataset = await provider.async_get_dataset(
             call.data[CONF_DATASET_ID], call.data.get(CONF_RESOURCE_ID)
         )
         return {
             "provider": provider_name,
             "portal_url": portal_url,
+            "provider_verified": True,
+            "capabilities": asdict(provider.capabilities),
             "dataset": _dataset_dict(dataset, include_raw=True),
         }
 
