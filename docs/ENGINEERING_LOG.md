@@ -2,71 +2,75 @@
 
 This file records completed development slices, validation evidence, and follow-up work discovered during implementation.
 
-## Slice S001 — CKAN resource scoring
+## S001–S004 — Foundation
 
-**Status:** Implemented; validation pending
+- **S001 CKAN resource scoring:** deterministic automatic selection with explicit selection preserved.
+- **S002 automated test execution:** GitHub Actions workflow added; Home Assistant added after the first run exposed an import dependency.
+- **S003 scoring robustness:** mixed mappings, MIME formats, timestamp fallback, UTC normalization, and null CKAN state handling.
+- **S004 timestamp detection:** provider-neutral timestamp scoring with deterministic ranking and false-positive rejection.
 
-**Goal:** Replace first-match CKAN resource selection with deterministic, explainable scoring while preserving explicit resource selection.
+Validation for the accumulated branch remains governed by the pull-request workflow. No slice is recorded as passing until a completed successful run exists.
 
-**Files:**
+## S005 — Coordinate detection
 
-- `custom_components/open_data/providers/resource_scoring.py`
-- `custom_components/open_data/providers/ckan.py`
-- `tests/test_resource_scoring.py`
+**Status:** Implemented; validation pending.
 
-**Behavior:**
+Detects latitude/longitude candidates, pairs the strongest deterministic candidates, rewards numeric metadata, and rejects projected or generic axes such as `x`, `y`, `easting`, and `northing`.
 
-- Rejects resources that are not active DataStore resources.
-- Prefers structured tabular formats.
-- Uses resource modification time as a secondary ranking signal.
-- Preserves source order as the final stable tie-breaker.
-- Leaves explicit `resource_id` validation unchanged.
+## S006 — Semantic field classification
 
-## Slice S002 — Automated test execution
+**Status:** Implemented; validation pending.
 
-**Status:** Corrected; awaiting rerun
+Composes timestamp, coordinate, identifier, and geometry detectors into immutable `FieldSemantic` results, then classifies remaining numeric and textual fields.
 
-**Goal:** Establish repeatable pull-request validation.
+## S007 — Dataset profile
 
-**Change record:**
+**Status:** Implemented; validation pending.
 
-- Added `.github/workflows/tests.yml` for Python 3.12 and `pytest`.
-- The first run reached test execution but failed because importing the integration requires Home Assistant.
-- Updated the workflow to install `homeassistant` with the test dependencies.
+Builds an immutable `DatasetProfile` containing the primary timestamp, coordinate pair, identifier, geometry field, measures, and text fields.
 
-**Validation evidence:** GitHub Actions run 29760441005 failed at the `Run tests` step after checkout, Python setup, and dependency installation succeeded. The corrective commit is awaiting a new run.
+## S008 — Confidence normalization
 
-## Slice S003 — Resource scoring robustness
+**Status:** Implemented; validation pending.
 
-**Status:** Implemented; validation pending
+Adds bounded percentage confidence and reusable evidence objects while preserving raw scores and reasons.
 
-**Goal:** Safely handle mixed real-world CKAN metadata without nondeterministic time behavior.
+## S009 — Unit detection
 
-**Behavior:**
+**Status:** Implemented; validation pending.
 
-- Accepts mapping objects rather than requiring concrete dictionaries.
-- Recognizes common MIME-style format values.
-- Falls back through multiple modification timestamps when earlier values are malformed.
-- Normalizes naive and offset timestamps to UTC.
-- Treats a null state as CKAN's default active state.
+Canonicalizes common temperature, concentration, percentage, speed, and length units from explicit metadata or label suffixes.
 
-**Tests:** Added coverage for MIME formats, malformed timestamp fallback, UTC normalization, and null state values.
+## S010 — Identifier detection
 
-## Slice S004 — Timestamp field detection
+**Status:** Implemented; validation pending.
 
-**Status:** Implemented; validation pending
+Ranks strong and weak identifier names, recognizes UUID/GUID types, and rejects temporal, coordinate, and measurement false positives.
 
-**Goal:** Add a provider-neutral, deterministic timestamp candidate ranker.
+## S011 — Geometry detection
 
-**Files:**
+**Status:** Implemented; validation pending.
 
-- `custom_components/open_data/timestamp_detection.py`
-- `tests/test_timestamp_detection.py`
+Recognizes geometry field names and geometry data types including GeoJSON, WKT, point, line, and polygon variants.
 
-**Behavior:**
+## S012 — Dataset intelligence
 
-- Scores temporal data types, strong field names, human-readable labels, and observation timing tokens.
-- Rejects timezone, UTC-offset, and duration false positives.
-- Uses stable field-name ordering for equal scores.
+**Status:** Implemented; validation pending.
 
-**Next assessment:** Coordinate detection is the best next slice because it completes the two foundational structural signals needed before a broader field classifier can compose semantics.
+Infers temporal, spatial, tabular, observation, and station-metadata characteristics from a dataset profile with explainable reasons.
+
+## S013 — Generic resource ranking
+
+**Status:** Implemented; validation pending.
+
+Ranks normalized resources using format, queryability, schema richness, spatial support, freshness, and deterministic identifier ordering.
+
+## S014 — Descriptor models
+
+**Status:** Implemented; validation pending.
+
+Adds immutable portal, catalog, dataset, resource, and observable descriptors as the provider-neutral vocabulary for the later adapter phase.
+
+## Validation and next assessment
+
+`tests/test_intelligence_core.py` covers composition across S005–S014. The next action is to inspect the first completed workflow run for the current branch head, correct any failures, and only then declare this intelligence-core milestone stable. Cross-provider adapter integration remains intentionally deferred.
