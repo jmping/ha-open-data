@@ -7,6 +7,7 @@ from typing import Any
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -17,6 +18,7 @@ from .const import (
     ATTR_RETRIEVED_AT,
     ATTR_SOURCE_ROW,
     CONF_PORTAL_URL,
+    DOMAIN,
 )
 from .coordinator import SocrataDataUpdateCoordinator
 
@@ -45,6 +47,16 @@ class SocrataDatasetStatusSensor(
         super().__init__(entry.runtime_data)
         self._entry = entry
         self._attr_unique_id = f"{entry.unique_id}_dataset_status"
+
+        metadata = self.coordinator.metadata
+        dataset_name = metadata.name if metadata is not None else self.coordinator.dataset_id
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, self.coordinator.dataset_id)},
+            name=dataset_name,
+            manufacturer="Socrata",
+            model="Open Data Dataset",
+            configuration_url=entry.data[CONF_PORTAL_URL],
+        )
 
     @property
     def native_value(self) -> str:
