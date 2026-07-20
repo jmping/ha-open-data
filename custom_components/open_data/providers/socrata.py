@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 from ..models import OpenDataDataset, OpenDataField
-from .base import OpenDataResponseError
+from .base import OpenDataResponseError, ProviderCapabilities
 from .common import JsonClient
 
 _DATASET_ID_PATTERN = re.compile(r"^[a-z0-9]{4}-[a-z0-9]{4}$", re.IGNORECASE)
@@ -17,6 +17,13 @@ class SocrataProvider(JsonClient):
     """Provider for Socrata SODA portals."""
 
     provider_name = "Socrata"
+    capabilities = ProviderCapabilities(
+        supports_search=True,
+        supports_schema=True,
+        supports_latest_row=True,
+        supports_spatial_queries=True,
+        supports_incremental_updates=True,
+    )
 
     @staticmethod
     def _dataset_id(value: str) -> str:
@@ -24,6 +31,21 @@ class SocrataProvider(JsonClient):
         if not _DATASET_ID_PATTERN.fullmatch(normalized):
             raise ValueError("Dataset ID must use Socrata's four-by-four format")
         return normalized
+
+    async def async_verify_portal(self) -> None:
+        """Require a recognizable Socrata catalog response."""
+        payload = await self.async_get_json(
+            "/api/catalog/v1",
+            params={"search_context": self.portal_url, "limit": "1"},
+        )
+        if (
+            not isinstance(payload, dict)
+            or not isinstance(payload.get("results"), list)
+            or not isinstance(payload.get("resultSetSize"), int)
+        ):
+            raise OpenDataResponseError(
+                "Host did not return a recognizable Socrata catalog response"
+            )
 
     async def async_get_dataset(
         self, dataset_id: str, resource_id: str | None = None
@@ -66,19 +88,28 @@ class SocrataProvider(JsonClient):
         payload = await self.async_get_json(
             f"/resource/{dataset_id}.json", params=params
         )
-        if not isinstance(payload, list) or not all(isinstance(row, dict) for row in payload):
+        if not isinstance(payload, list) or not all(
+            isinstance(row, dict) for row in payload
+        ):
             raise OpenDataResponseError("Socrata query did not return rows")
         return payload[0] if payload else None
 
     async def async_search_datasets(
         self, query: str, limit: int = 20
     ) -> list[OpenDataDataset]:
+        """Search the Socrata catalog with a bounded result count."""
+        bounded_limit = min(max(int(limit), 1), 100)
         payload = await self.async_get_json(
-            "/api/catalog/v1", params={"search_context": self.portal_url, "q": query, "limit": str(limit)}
+            "/api/catalog/v1",
+            params={
+                "search_context": self.portal_url,
+                "q": query,
+                "limit": str(bounded_limit),
+            },
         )
         results = payload.get("results", []) if isinstance(payload, dict) else []
         datasets: list[OpenDataDataset] = []
-        for result in results:
+        for result in results[:bounded_limit]:
             resource = result.get("resource", {}) if isinstance(result, dict) else {}
             if resource.get("id") and resource.get("name"):
                 datasets.append(
