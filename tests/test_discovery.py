@@ -1,7 +1,33 @@
 """Regression tests for provider-independent dataset discovery."""
 
-from custom_components.open_data.discovery import rank_datasets, score_dataset
-from custom_components.open_data.models import OpenDataDataset, OpenDataField
+from importlib.util import module_from_spec, spec_from_file_location
+from pathlib import Path
+import sys
+from types import ModuleType
+
+_ROOT = Path(__file__).parents[1] / "custom_components" / "open_data"
+
+package = ModuleType("custom_components.open_data")
+package.__path__ = [str(_ROOT)]
+sys.modules.setdefault("custom_components", ModuleType("custom_components"))
+sys.modules["custom_components.open_data"] = package
+
+
+def _load(name: str):
+    spec = spec_from_file_location(f"custom_components.open_data.{name}", _ROOT / f"{name}.py")
+    assert spec is not None and spec.loader is not None
+    module = module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+models = _load("models")
+discovery = _load("discovery")
+OpenDataDataset = models.OpenDataDataset
+OpenDataField = models.OpenDataField
+rank_datasets = discovery.rank_datasets
+score_dataset = discovery.score_dataset
 
 
 def test_environmental_dataset_scores_above_administrative_dataset() -> None:
