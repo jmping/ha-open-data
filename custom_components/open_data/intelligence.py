@@ -78,6 +78,7 @@ class DatasetIntelligence:
 
     async def async_profile(self) -> DatasetProfile:
         """Take sparse probes and update the learned profile."""
+        previous_count = self.profile.row_count
         row_count = await self.provider.async_row_count(
             self.dataset_id, self.resource_id
         )
@@ -97,7 +98,18 @@ class DatasetIntelligence:
             hashes[region] = _rows_hash(rows)
 
         previous = self.profile.sample_hashes
-        changed = [region for region, digest in hashes.items() if previous.get(region) != digest]
+        changed = (
+            [region for region, digest in hashes.items() if previous.get(region) != digest]
+            if previous
+            else []
+        )
+        if (
+            previous_count is not None
+            and row_count is not None
+            and row_count > previous_count
+            and "end" not in changed
+        ):
+            changed.append("end")
         for region in changed:
             self.profile.changed_regions[region] = self.profile.changed_regions.get(region, 0) + 1
 
@@ -117,10 +129,11 @@ def _probe_offsets(row_count: int | None, sample_size: int) -> dict[str, int]:
     """Return sparse beginning/middle/end page offsets."""
     if row_count is None or row_count <= sample_size:
         return {"beginning": 0}
-    end = max(0, row_count - sample_size)
-    middle = max(0, (row_count // 2) - (sample_size // 2))
-    offsets = {"beginning": 0, "middle": middle, "end": end}
-    return dict.fromkeys(offsets).keys() and offsets
+    return {
+        "beginning": 0,
+        "middle": max(0, (row_count // 2) - (sample_size // 2)),
+        "end": max(0, row_count - sample_size),
+    }
 
 
 def _rows_hash(rows: list[dict[str, Any]]) -> str:
@@ -138,7 +151,7 @@ def _infer_ordering(
     values: list[str] = []
     for region in ("beginning", "middle", "end"):
         rows = samples.get(region, [])
-        for row in (rows[:1] + rows[-1:]):
+        for row in rows[:1] + rows[-1:]:
             value = row.get(timestamp_field)
             if value is not None:
                 values.append(str(value))
