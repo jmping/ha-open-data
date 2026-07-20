@@ -7,11 +7,13 @@ on:
       - main
     paths:
       - "custom_components/**"
+      - "hacs.json"
       - "README.md"
       - ".github/workflows/validate.yml"
   pull_request:
     paths:
       - "custom_components/**"
+      - "hacs.json"
       - "README.md"
       - ".github/workflows/validate.yml"
 
@@ -32,21 +34,39 @@ jobs:
         run: python -m compileall -q custom_components
       - name: Lint integration
         run: ruff check custom_components
-      - name: Validate manifest and service metadata
+      - name: Validate repository, manifest, and service metadata
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
           import yaml
 
-          root = Path("custom_components/open_data")
+          components = Path("custom_components")
+          domains = sorted(path.name for path in components.iterdir() if path.is_dir())
+          if domains != ["open_data"]:
+              raise SystemExit(f"expected only custom_components/open_data, found: {domains}")
+
+          hacs = json.loads(Path("hacs.json").read_text(encoding="utf-8"))
+          if not hacs.get("name"):
+              raise SystemExit("hacs.json must include a name")
+
+          root = components / "open_data"
           manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
-          required = {"domain", "name", "version", "config_flow", "iot_class"}
+          required = {
+              "domain",
+              "name",
+              "version",
+              "config_flow",
+              "iot_class",
+              "documentation",
+              "issue_tracker",
+          }
           missing = sorted(required - manifest.keys())
           if missing:
               raise SystemExit(f"manifest.json missing keys: {missing}")
           if manifest["domain"] != "open_data":
               raise SystemExit("manifest domain must be open_data")
+
           services = yaml.safe_load((root / "services.yaml").read_text(encoding="utf-8"))
           expected = {
               "scan_portal",
