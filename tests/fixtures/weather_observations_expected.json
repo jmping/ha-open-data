@@ -1,0 +1,11 @@
+{
+  "timestamp": "observed_at",
+  "latitude": "latitude",
+  "longitude": "longitude",
+  "identifier": "station_id",
+  "dataset_type": "observations",
+  "observables": [
+    ["temp", "temperature", "°C"],
+    ["rh", "relative_humidity", "%"]
+  ]
+}
