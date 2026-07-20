@@ -22,7 +22,6 @@ from .const import (
     CONF_PROVIDER,
     CONF_RESOURCE_ID,
     CONF_SELECTED_FIELDS,
-    CONF_TIMESTAMP_FIELD,
     DOMAIN,
     PROVIDER_CKAN,
     PROVIDER_SOCRATA,
@@ -205,7 +204,8 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Build a compact, explainable selector label."""
         reasons = ", ".join(candidate.reasons[:3])
         suffix = f" — {reasons}" if reasons else ""
-        return f"{candidate.score:03d} · {candidate.dataset.title}{suffix}"
+        title = candidate.dataset.title[:100]
+        return f"{candidate.score:03d} · {title}{suffix}"[:150]
 
 
 class OpenDataOptionsFlow(config_entries.OptionsFlow):
