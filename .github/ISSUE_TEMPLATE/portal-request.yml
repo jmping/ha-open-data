@@ -1,0 +1,57 @@
+name: Portal or city request
+description: Request support or improved mappings for a public open-data portal.
+title: "[Portal]: "
+labels:
+  - portal-request
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Submit public metadata only. Do not include credentials, private URLs, Home Assistant backups, or dataset records containing personal information.
+  - type: input
+    id: city
+    attributes:
+      label: City or jurisdiction
+      placeholder: Ann Arbor, Michigan
+    validations:
+      required: true
+  - type: input
+    id: portal
+    attributes:
+      label: Public portal URL
+      placeholder: https://data.example.gov
+    validations:
+      required: true
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Portal software, when known
+      options:
+        - Unknown
+        - CKAN
+        - Socrata
+        - ArcGIS Hub
+        - OpenDataSoft
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: datasets
+    attributes:
+      label: Requested datasets or observations
+      description: List the public datasets and the Home Assistant observations you want from them.
+      placeholder: Air quality sensors; rainfall gauges; road closures
+    validations:
+      required: true
+  - type: textarea
+    id: current_result
+    attributes:
+      label: Current Open Data result
+      description: Explain what discovery found, what was unmatched, or what failed. Redact any private information.
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Public-data confirmation
+      options:
+        - label: I confirmed that the portal and dataset information in this issue are public.
+          required: true
