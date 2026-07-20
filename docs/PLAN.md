@@ -1,241 +1,128 @@
 # Project plan
 
-## Working agreement
+## Objective
 
-`ha-socrata` is intentionally and entirely vibe coded: the project is being shaped through iterative human–AI collaboration, empirical testing, and refactoring rather than a fixed up-front specification.
+Build a Home Assistant integration that converts heterogeneous public open-data sources into deterministic, explainable entity and device plans, then materializes those plans through native Home Assistant primitives.
 
-That choice is a development method, not an exemption from engineering discipline. Every implementation should still aim for:
+## Engineering method
 
-- explicit behavior and boundaries;
-- readable code and useful type annotations;
-- tests for important behavior and regressions;
-- restrained dependencies;
-- observable failures rather than silent corruption;
-- small, reversible changes;
-- documentation that distinguishes current behavior from aspiration.
+Development is iterative and evidence-driven. Every slice must preserve explicit boundaries, deterministic behavior, readable types, regression tests, observable failures, restrained dependencies, reversible changes, and documentation that separates implemented behavior from aspiration.
 
-## Problem statement
+## Architectural rules
 
-Socrata portals expose rich public datasets, but Home Assistant users currently need to understand portal-specific URLs, SODA query syntax, source fields, timestamps, units, and template sensors. This creates fragile one-off configurations and makes cross-city reuse difficult.
+1. Provider-specific HTTP, pagination, authentication, and payload quirks remain below `ProviderAdapter`.
+2. Provider adapters translate into shared portal, catalog, dataset, resource, and observable descriptors.
+3. Intelligence, Knowledge, and Planning consume only provider-neutral structures.
+4. Home Assistant materialization consumes plans rather than raw provider records.
+5. No generic execution, caching, or scheduling framework is introduced before at least two concrete providers demonstrate the same need.
+6. Provider-specific branches above the adapter boundary are treated as architectural defects.
 
-The integration should provide a generic transport and discovery layer, then add semantic adapters that turn selected datasets into high-quality Home Assistant entities.
+## Validated semantic platform
 
-## Design principles
+### Intelligence Core
 
-### Preserve provenance
+Provides deterministic structural inference: field semantics, timestamps, coordinates, geometry, identifiers, units, confidence, immutable dataset profiles, dataset intelligence, and resource ranking.
 
-Every normalized observation should retain its source portal, dataset identifier, source timestamp, station or location when present, retrieval timestamp, and mapping identity.
+### Knowledge Core
 
-### Prefer semantics over raw columns
+Adds aliases, observable inference, dataset-role inference, location inference, quality scoring, summaries, explanation structures, fixture-backed golden profiles, and capability negotiation.
 
-A raw column is not automatically a useful Home Assistant sensor. Adapters should map source fields to concepts such as temperature, precipitation, PM2.5, AQI, wind speed, or normalized solar output.
+### Planning Core
 
-### Keep the client small
+Produces observable graphs, logical source groups, stable entity and device plans, update strategies, polling intervals, state and attribute selection, freshness-based availability, names, and diagnostics.
 
-The Socrata HTTP surface needed here is compact. The initial client will use Home Assistant's shared `aiohttp` session instead of introducing a separate or unmaintained SDK.
+### Provider SDK
 
-### Validate early
+Defines immutable provider contexts and discovery requests, discovery pages, a runtime-checkable adapter protocol, deterministic registration, structured failures, adapter validation, common descriptor mapping, and capability-aware service orchestration.
 
-The config flow must test the portal and dataset before creating an entry. Invalid URLs, inaccessible datasets, malformed responses, and unsupported schemas should produce actionable errors.
+## Delivery program
 
-### Poll responsibly
+### Milestone 1 — semantic platform
 
-The integration should respect source update cadence, use a `DataUpdateCoordinator`, avoid duplicate requests across entities, and use conservative defaults.
+Status: complete and validated.
 
-### Expose freshness
+Validation evidence:
 
-Stale source data must not look current. Entities should expose source timestamps and become unavailable or diagnostically stale according to explicit adapter policy.
+- Intelligence: run `29761386815`.
+- Knowledge: run `29762110068`.
+- Planning: run `29762535146`.
+- Provider SDK: run `29763177537`.
 
-## Architectural layers
+### Milestone 2 — CKAN SDK adoption
 
-### 1. Socrata client
+Purpose: validate the SDK against the existing real provider without changing user-visible behavior.
 
-Responsibilities:
+Slices:
 
-- normalize portal URLs;
-- request dataset metadata;
-- execute SODA queries;
-- retrieve latest rows;
-- classify transport, HTTP, decoding, and schema failures;
-- avoid Home Assistant entity concerns.
+- **S045 — CKAN isolation:** define the package boundary and classify existing functions as client, translation, adapter, or provider-neutral behavior.
+- **S046 — Adapter skeleton:** implement `ProviderAdapter` by delegating to existing CKAN behavior.
+- **S047 — Discovery migration:** return `DiscoveryPage` and normalized `DatasetDescriptor` objects.
+- **S048 — Dataset and resource translation:** normalize package and resource metadata without leaking CKAN payloads.
+- **S049 — Pipeline composition:** connect descriptors to profile, knowledge, and planning outputs.
+- **S050 — Golden CKAN integration tests:** freeze representative fixtures and expected plans.
+- **S051 — CKAN milestone validation:** pass all legacy and new integration tests and correct boundary leaks.
 
-Initial interface:
+Exit criteria:
 
-```python
-client = SocrataClient(session, portal_url)
-metadata = await client.async_get_dataset_metadata(dataset_id)
-rows = await client.async_query(dataset_id, limit=1, order="timestamp DESC")
+- only the CKAN provider package parses CKAN JSON;
+- consumers depend on the Provider SDK or normalized descriptors;
+- existing CKAN behavior remains covered;
+- a frozen fixture produces deterministic entity and device plans;
+- CI passes the accumulated suite.
+
+### Milestone 3 — generic ingestion
+
+Implement CSV, JSON, and constrained generic REST adapters. Use them to discover gaps in the SDK before adding more portal-specific abstractions.
+
+Exit criteria:
+
+- the same semantic and planning pipeline works for at least two non-CKAN source shapes;
+- any shared additions are justified by multiple concrete adapters;
+- descriptor and failure contracts remain stable.
+
+### Milestone 4 — major portal adapters
+
+Add Socrata, ArcGIS, and OpenDataSoft in evidence-driven order. Each adapter owns transport and translation only; semantic inference remains shared.
+
+### Milestone 5 — Home Assistant materialization
+
+Translate `EntityPlan` and `DevicePlan` into native entities, device registry entries, coordinator behavior, config entries, diagnostics, and repairs.
+
+Exit criteria:
+
+- provider-neutral plans determine stable IDs, names, state, attributes, availability, update cadence, and device grouping;
+- entities issue no independent provider requests;
+- provider failures are surfaced through Home Assistant diagnostics and update semantics.
+
+### Milestone 6 — operational scale
+
+Extract caching, pagination, rate limiting, concurrency, incremental synchronization, and large-dataset strategies only from demonstrated provider workloads.
+
+### Milestone 7 — contributor ecosystem
+
+Provide adapter conformance tests, fixture tooling, validation CLI support, provider documentation, benchmarks, and a reviewable contribution contract.
+
+## CKAN migration boundary
+
+Target package shape:
+
+```text
+providers/ckan/
+    __init__.py
+    adapter.py
+    client.py
+    translation.py
 ```
 
-### 2. Coordinator
+`client.py` owns HTTP and CKAN actions. `translation.py` owns payload-to-descriptor conversion. `adapter.py` implements the Provider SDK and coordinates those components. Ranking, inference, knowledge, and planning remain outside the package.
 
-Responsibilities:
+## Documentation transaction policy
 
-- own refresh cadence;
-- execute one query per config entry;
-- translate client failures into Home Assistant update failures;
-- retain the latest row and retrieval metadata.
+Architectural migrations may stage mirrors under `docs/proposed/`. Every affected canonical document is inventoried, updated across all relevant slices, checked for consistent terminology and status, and then promoted together. The transaction manifest records the promotion.
 
-### 3. Dataset adapters
+## Open decisions
 
-Responsibilities:
-
-- identify compatible datasets;
-- define field mappings and timestamp selection;
-- parse values and units;
-- produce normalized observations;
-- define entity descriptions and stale-data policy.
-
-Adapters should be registered independently of the transport client. Ann Arbor adapters are the first concrete implementations, not special cases inside `api.py`.
-
-### 4. Home Assistant platforms
-
-Responsibilities:
-
-- expose normalized observations as entities;
-- use appropriate device classes, native units, and state classes;
-- provide stable unique IDs;
-- attach provenance and diagnostic attributes;
-- avoid issuing their own HTTP requests.
-
-## Delivery sequence
-
-## Milestone 0 — repository foundation
-
-Deliverables:
-
-- project README and this plan;
-- minimal custom-integration package;
-- manifest, config flow, translations, and coordinator;
-- basic development metadata;
-- a visible statement that the project is entirely vibe coded.
-
-Exit criterion:
-
-- Home Assistant can load the integration module without structural errors.
-
-## Milestone 1 — generic vertical slice
-
-Configuration fields:
-
-- portal URL;
-- Socrata dataset identifier;
-- optional timestamp field;
-- optional polling interval later, after sensible defaults are established.
-
-Behavior:
-
-- config flow validates metadata access;
-- coordinator requests the latest row;
-- one diagnostic sensor reports whether a row was retrieved;
-- attributes expose the raw row, dataset ID, portal, and retrieval time.
-
-Exit criterion:
-
-- a real public dataset can be configured without YAML and refreshed reliably.
-
-## Milestone 2 — test harness and CI
-
-Tests:
-
-- URL normalization;
-- successful metadata and query responses;
-- HTTP and malformed JSON failures;
-- config-flow success, duplicate prevention, and connection failure;
-- coordinator refresh success and failure;
-- sensor availability and attributes.
-
-Tooling:
-
-- Ruff or equivalent linting and formatting;
-- pytest with Home Assistant test support;
-- GitHub Actions for static checks and tests.
-
-Exit criterion:
-
-- pull requests receive deterministic automated feedback.
-
-## Milestone 3 — Ann Arbor adapters
-
-Investigate and document the authoritative Ann Arbor datasets and field schemas for:
-
-- weather;
-- air quality;
-- rainfall.
-
-For each adapter:
-
-1. capture metadata and representative rows;
-2. select stable identifiers and timestamps;
-3. document units and missing-value behavior;
-4. implement compatibility detection;
-5. create typed entities;
-6. add fixtures and tests;
-7. expose station and source attributes.
-
-Exit criterion:
-
-- Ann Arbor users receive native environmental entities without hand-authored field mappings.
-
-## Milestone 4 — catalog discovery
-
-The config flow should search the portal catalog and rank likely datasets using metadata such as title, description, tags, columns, data types, and update frequency.
-
-Discovery is advisory. Users should see why a dataset was suggested and be able to reject or override mappings.
-
-Exit criterion:
-
-- a user can start from a portal URL rather than a known dataset identifier.
-
-## Milestone 5 — community mapping model
-
-Define a contribution format for portal or dataset adapters. The format should be reviewable, testable, and capable of handling schema variation without arbitrary executable configuration.
-
-Possible forms:
-
-- Python adapters for complex behavior;
-- declarative mappings for straightforward datasets;
-- a registry that matches portal plus dataset ID or metadata fingerprints.
-
-Exit criterion:
-
-- support for a new city's stable dataset can be contributed without editing the generic client.
-
-## Near-term implementation decisions
-
-- Domain: `socrata`
-- Integration type: `service`
-- Configuration: UI config flow only
-- Networking: Home Assistant shared async HTTP session
-- Polling: coordinator-owned, initially 15 minutes
-- Authentication: anonymous public datasets first; application tokens considered later
-- Storage: config entries for durable configuration; no local dataset cache in the first slice
-- Entities: sensor platform first
-
-## Open questions
-
-- How should generic rows be represented before a semantic adapter exists?
-- Should one config entry represent a portal, a dataset, or a portal plus selected datasets?
-- How should adapters specify freshness thresholds relative to irregular source update schedules?
-- Which Socrata metadata APIs are sufficiently consistent across portal generations?
-- How should geospatial station selection work when a dataset contains multiple locations?
-- Can catalog and schema matching be made deterministic enough to avoid surprising entities?
-- What diagnostics are useful without leaking tokens if authenticated access is later added?
-
-## Decision log
-
-### 2026-07-20 — build a thin native async client
-
-The project will not center itself on `sodapy`. The required query surface is small, and a native async client integrates cleanly with Home Assistant's HTTP lifecycle.
-
-### 2026-07-20 — Ann Arbor is a reference deployment
-
-Ann Arbor datasets will drive the first adapters and real-world testing. City-specific mappings must remain outside the generic Socrata transport layer.
-
-### 2026-07-20 — environmental observability is the product frame
-
-The project is intended to support correlation between external public telemetry and building telemetry, including air quality, rainfall, weather, water, and energy contexts.
-
-### 2026-07-20 — entirely vibe coded, explicitly documented
-
-The repository will openly describe the project's human–AI, iterative development method. Generated code is still subject to review, testing, and refactoring before being treated as reliable.
+- The exact normalized record-fetch contract should be added only when CKAN pipeline composition demonstrates what is required.
+- Pagination cursors should remain opaque to callers.
+- Authentication belongs in provider context options but must avoid leaking secrets into diagnostics.
+- Home Assistant materialization remains deferred until multiple provider paths validate plan stability.
