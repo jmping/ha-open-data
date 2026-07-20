@@ -1,10 +1,10 @@
 # Engineering Log
 
-This file records completed development slices, their validation evidence, and follow-up work discovered during implementation.
+This file records completed development slices, validation evidence, and follow-up work discovered during implementation.
 
 ## Slice S001 — CKAN resource scoring
 
-**Status:** Implemented; validation in progress
+**Status:** Implemented; validation pending
 
 **Goal:** Replace first-match CKAN resource selection with deterministic, explainable scoring while preserving explicit resource selection.
 
@@ -22,35 +22,51 @@ This file records completed development slices, their validation evidence, and f
 - Preserves source order as the final stable tie-breaker.
 - Leaves explicit `resource_id` validation unchanged.
 
-**Validation:**
-
-- Focused unit tests added.
-- Automated execution was initially unavailable because the repository had no active test workflow.
-
-**Risks and follow-ups:**
-
-- Real CKAN metadata varies across portals; fixtures from representative portals should be added later.
-- Scoring diagnostics are internal only and are not yet exposed through Home Assistant diagnostics.
-
 ## Slice S002 — Automated test execution
 
-**Status:** Implemented; awaiting first workflow result
+**Status:** Corrected; awaiting rerun
 
-**Goal:** Establish repeatable pull-request validation for the current pure-Python test suite.
+**Goal:** Establish repeatable pull-request validation.
 
-**Files:**
+**Change record:**
 
-- `.github/workflows/tests.yml`
+- Added `.github/workflows/tests.yml` for Python 3.12 and `pytest`.
+- The first run reached test execution but failed because importing the integration requires Home Assistant.
+- Updated the workflow to install `homeassistant` with the test dependencies.
+
+**Validation evidence:** GitHub Actions run 29760441005 failed at the `Run tests` step after checkout, Python setup, and dependency installation succeeded. The corrective commit is awaiting a new run.
+
+## Slice S003 — Resource scoring robustness
+
+**Status:** Implemented; validation pending
+
+**Goal:** Safely handle mixed real-world CKAN metadata without nondeterministic time behavior.
 
 **Behavior:**
 
-- Runs `pytest` on pull requests and pushes to `main` using Python 3.12.
-- Grants read-only repository permissions.
+- Accepts mapping objects rather than requiring concrete dictionaries.
+- Recognizes common MIME-style format values.
+- Falls back through multiple modification timestamps when earlier values are malformed.
+- Normalizes naive and offset timestamps to UTC.
+- Treats a null state as CKAN's default active state.
 
-**Validation:**
+**Tests:** Added coverage for MIME formats, malformed timestamp fallback, UTC normalization, and null state values.
 
-- The workflow itself will be validated by its first GitHub Actions run.
+## Slice S004 — Timestamp field detection
 
-**Risks and follow-ups:**
+**Status:** Implemented; validation pending
 
-- The dependency installation is intentionally minimal. Home Assistant-specific tests may require a pinned development requirements file in a later slice.
+**Goal:** Add a provider-neutral, deterministic timestamp candidate ranker.
+
+**Files:**
+
+- `custom_components/open_data/timestamp_detection.py`
+- `tests/test_timestamp_detection.py`
+
+**Behavior:**
+
+- Scores temporal data types, strong field names, human-readable labels, and observation timing tokens.
+- Rejects timezone, UTC-offset, and duration false positives.
+- Uses stable field-name ordering for equal scores.
+
+**Next assessment:** Coordinate detection is the best next slice because it completes the two foundational structural signals needed before a broader field classifier can compose semantics.
