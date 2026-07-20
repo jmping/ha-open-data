@@ -78,6 +78,17 @@ jobs:
           if manifest["domain"] != "open_data":
               raise SystemExit("manifest domain must be open_data")
 
+          manifest_keys = list(manifest)
+          expected_key_order = ["domain", "name", *sorted(manifest_keys[2:])]
+          if manifest_keys != expected_key_order:
+              raise SystemExit(
+                  f"manifest keys must be domain, name, then alphabetical: {manifest_keys}"
+              )
+
+          init_source = (root / "__init__.py").read_text(encoding="utf-8")
+          if "CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)" not in init_source:
+              raise SystemExit("integration must declare a config-entry-only CONFIG_SCHEMA")
+
           services = yaml.safe_load((root / "services.yaml").read_text(encoding="utf-8"))
           expected = {
               "scan_portal",
