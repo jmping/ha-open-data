@@ -1,51 +1,59 @@
-# Engineering Log
+# Engineering log
 
 This file records completed development slices, validation evidence, and follow-up work discovered during implementation.
 
-## S001–S015 — Intelligence core
+## S001–S015 — Intelligence Core
 
-The first milestone established deterministic CKAN resource selection, structural field inference, dataset profiles, confidence and unit handling, identifier and geometry detection, dataset intelligence, generic resource ranking, and provider-neutral descriptors.
+Established deterministic CKAN resource selection, structural field inference, immutable dataset profiles, confidence and unit handling, identifier and geometry detection, dataset intelligence, generic resource ranking, and provider-neutral descriptors.
 
 **Validation evidence:** GitHub Actions run `29761386815` completed successfully for commit `cdba84e788c6c80b5aead0eed0ab093f2042e9f1`.
 
-## S016–S026 — Knowledge core
+## S016–S026 — Knowledge Core
 
-The second milestone added canonical aliases, observable inference, dataset-role and location inference, quality scoring, summaries, explanation graphs, fixture-backed golden profiles, and capability negotiation.
+Added canonical aliases, observable inference, dataset-role and location inference, quality scoring, summaries, explanation structures, fixture-backed golden profiles, and capability negotiation.
 
 **Validation evidence:** GitHub Actions run `29762110068` completed successfully for commit `46af5ec405733b60f07bf6df0f7498d702ec5087`.
 
-## S027–S037 — Planning core
+## S027–S037 — Planning Core
 
-The third milestone added observable graphs, immutable entity and device plans, update strategies, polling heuristics, state and attribute selection, availability planning, deterministic naming, and structured planning diagnostics.
+Added observable graphs, deterministic entity and device plans, update strategy, bounded polling heuristics, state and attribute selection, freshness-based availability, deterministic naming, and structured planning diagnostics.
+
+`tests/test_planning_core.py` validates composition across these primitives without importing Home Assistant.
 
 **Validation evidence:** GitHub Actions run `29762535146` completed successfully for commit `19fb23dda22bf42a144df123394f564c88870d4c`.
 
-## S038 — Provider SDK contracts
+## S038–S044 — Provider SDK
 
-Introduces immutable provider context, discovery request and page models, and a runtime-checkable adapter protocol covering discovery and dataset description.
+Added immutable provider contexts, discovery requests and pages, a runtime-checkable adapter protocol, deterministic provider registration, structured failures, adapter validation, common metadata-to-descriptor mapping, and capability-aware provider service orchestration.
 
-## S039 — Provider registry
+`tests/test_provider_sdk.py` covers the contracts and orchestration while preserving the accumulated legacy suite.
 
-Registers adapters under normalized stable identifiers, rejects duplicate registrations, and exposes deterministic provider ordering.
+**Validation evidence:** GitHub Actions run `29763177537` completed successfully for commit `357306755ae09ad4a1ca561fb234c375c4e58be4`.
 
-## S040 — Provider failures
+## Architecture decision — stop speculative core expansion
 
-Defines structured provider failure categories, retryability, and a single exception wrapper suitable for diagnostics and integration boundaries.
+The Intelligence, Knowledge, Planning, and Provider SDK layers form the validated semantic platform. Additional provider-neutral execution, scheduling, or caching frameworks are deferred until multiple concrete providers demonstrate a shared requirement.
 
-## S041 — Adapter validation
+The next architectural test is moving CKAN behind the SDK. The desired outcome is not merely protocol conformance; it is that exactly one provider package understands CKAN payloads and all upper layers consume normalized descriptors or plans.
 
-Checks provider identity, capabilities, discovery, and description methods without performing network calls.
-
-## S042 — Metadata mapping
-
-Maps common provider metadata shapes into shared dataset and resource descriptors while enforcing stable identity and required titles.
-
-## S043 — Provider service
-
-Combines registry resolution, adapter validation, capability negotiation, and discovery invocation behind one provider-neutral service boundary.
-
-## S044 — Provider SDK validation
+## S045 — CKAN isolation
 
 **Status:** In progress.
 
-`tests/test_provider_sdk.py` covers adapter registration, request validation, metadata mapping, contract validation, capability negotiation, structured unsupported failures, and asynchronous discovery invocation. The current branch head must complete GitHub Actions successfully before CKAN is moved behind the SDK.
+This slice inventories the existing CKAN module, classifies each responsibility as client transport, payload translation, adapter orchestration, or provider-neutral behavior, and identifies compatibility exports and tests required for a mechanical migration.
+
+Target boundary:
+
+```text
+providers/ckan/client.py       HTTP and CKAN actions
+providers/ckan/translation.py  CKAN payloads to descriptors
+providers/ckan/adapter.py      ProviderAdapter implementation
+```
+
+Resource ranking, structural inference, knowledge, and planning remain outside the provider package.
+
+## Documentation transaction D001–D005
+
+The repository documentation was inventoried and staged under `docs/proposed/`. `README.md`, `docs/PLAN.md`, `docs/ENGINEERING_LOG.md`, and `docs/NEXT_SLICES.md` were reconciled around the validated four-core architecture and the CKAN adoption program, then promoted together. `docs/proposed/MANIFEST.md` records the affected documents, invariants, and promotion result.
+
+This process prevents canonical documents from describing mixed architectural states during multi-slice migrations.
