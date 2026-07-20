@@ -7,13 +7,17 @@ on:
       - main
     paths:
       - "custom_components/**"
+      - "tests/**"
       - "hacs.json"
+      - "LICENSE"
       - "README.md"
       - ".github/workflows/validate.yml"
   pull_request:
     paths:
       - "custom_components/**"
+      - "tests/**"
       - "hacs.json"
+      - "LICENSE"
       - "README.md"
       - ".github/workflows/validate.yml"
 
@@ -29,11 +33,13 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install validation tools
-        run: python -m pip install ruff pyyaml
+        run: python -m pip install pytest ruff pyyaml
       - name: Compile integration
-        run: python -m compileall -q custom_components
-      - name: Lint integration
-        run: ruff check custom_components
+        run: python -m compileall -q custom_components tests
+      - name: Run regression tests
+        run: pytest -q
+      - name: Lint integration and tests
+        run: ruff check custom_components tests
       - name: Validate repository, manifest, and service metadata
         run: |
           python - <<'PY'
@@ -46,9 +52,12 @@ jobs:
           if domains != ["open_data"]:
               raise SystemExit(f"expected only custom_components/open_data, found: {domains}")
 
+          if not Path("LICENSE").is_file():
+              raise SystemExit("LICENSE is required")
+
           hacs = json.loads(Path("hacs.json").read_text(encoding="utf-8"))
-          if not hacs.get("name"):
-              raise SystemExit("hacs.json must include a name")
+          if hacs.get("name") != "Open Data":
+              raise SystemExit("hacs.json name must be Open Data")
 
           root = components / "open_data"
           manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
