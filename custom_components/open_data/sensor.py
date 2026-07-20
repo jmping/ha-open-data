@@ -22,8 +22,11 @@ async def async_setup_entry(
 ) -> None:
     """Create sensors from the discovered dataset schema."""
     coordinator = entry.runtime_data
+    snapshot = coordinator.data
+    if snapshot is None:
+        return
     selected = set(entry.options.get(CONF_SELECTED_FIELDS, ()))
-    fields = coordinator.data.dataset.fields
+    fields = snapshot.dataset.fields
     if selected:
         fields = tuple(field for field in fields if field.name in selected)
     entities: list[SensorEntity] = [OpenDataStatusSensor(entry, coordinator)]
@@ -41,7 +44,10 @@ class OpenDataSensorBase(CoordinatorEntity[OpenDataCoordinator], SensorEntity):
 
     def __init__(self, entry: ConfigEntry, coordinator: OpenDataCoordinator) -> None:
         super().__init__(coordinator)
-        dataset = coordinator.data.dataset
+        snapshot = coordinator.data
+        if snapshot is None:
+            raise ValueError("Open Data coordinator has no initial snapshot")
+        dataset = snapshot.dataset
         provider = entry.data[CONF_PROVIDER]
         portal = entry.data[CONF_PORTAL_URL]
         resource = dataset.resource_id or "default"
@@ -66,7 +72,8 @@ class OpenDataStatusSensor(OpenDataSensorBase):
 
     @property
     def native_value(self) -> str:
-        return "data_available" if self.coordinator.data.values else "no_data"
+        snapshot = self.coordinator.data
+        return "data_available" if snapshot is not None and snapshot.values else "no_data"
 
 
 class OpenDataFieldSensor(OpenDataSensorBase):
@@ -86,7 +93,10 @@ class OpenDataFieldSensor(OpenDataSensorBase):
 
     @property
     def native_value(self) -> Any:
-        value = self.coordinator.data.values.get(self._field_name)
+        snapshot = self.coordinator.data
+        if snapshot is None:
+            return None
+        value = snapshot.values.get(self._field_name)
         if isinstance(value, (str, int, float, bool)) or value is None:
             return value
         return str(value)[:255]
