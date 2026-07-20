@@ -1,0 +1,12 @@
+{
+  "title": "City weather observations",
+  "description": "Hourly observations from municipal weather stations.",
+  "fields": [
+    ["station_id", "Station ID", "string"],
+    ["observed_at", "Observed At", "timestamp"],
+    ["latitude", "Latitude", "number"],
+    ["longitude", "Longitude", "number"],
+    ["temp", "Air Temperature (degC)", "number"],
+    ["rh", "Relative Humidity (%)", "number"]
+  ]
+}
