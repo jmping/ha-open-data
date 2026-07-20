@@ -14,48 +14,38 @@ The second milestone added canonical aliases, observable inference, dataset-role
 
 **Validation evidence:** GitHub Actions run `29762110068` completed successfully for commit `46af5ec405733b60f07bf6df0f7498d702ec5087`.
 
-## S027 — Observable graph
+## S027–S037 — Planning core
 
-Groups inferred observables by logical source while preserving stable source and field ordering.
+The third milestone added observable graphs, immutable entity and device plans, update strategies, polling heuristics, state and attribute selection, availability planning, deterministic naming, and structured planning diagnostics.
 
-## S028 — Entity planning
+**Validation evidence:** GitHub Actions run `29762535146` completed successfully for commit `19fb23dda22bf42a144df123394f564c88870d4c`.
 
-Creates immutable provider-neutral entity plans with stable keys, state fields, observable kinds, units, and attribute slots.
+## S038 — Provider SDK contracts
 
-## S029 — Device planning
+Introduces immutable provider context, discovery request and page models, and a runtime-checkable adapter protocol covering discovery and dataset description.
 
-Groups entity plans into deterministic logical devices without importing Home Assistant.
+## S039 — Provider registry
 
-## S030 — Update strategy
+Registers adapters under normalized stable identifiers, rejects duplicate registrations, and exposes deterministic provider ordering.
 
-Represents snapshot, append-only, rolling-window, and historical update modes and conservatively infers a strategy from temporal and observation signals.
+## S040 — Provider failures
 
-## S031 — Polling heuristics
+Defines structured provider failure categories, retryability, and a single exception wrapper suitable for diagnostics and integration boundaries.
 
-Produces bounded polling intervals from declared cadence, live-data hints, and temporal structure.
+## S041 — Adapter validation
 
-## S032 — State-field selection
+Checks provider identity, capabilities, discovery, and description methods without performing network calls.
 
-Selects the highest-confidence observable as entity state with deterministic semantic and field-name tie-breaking.
+## S042 — Metadata mapping
 
-## S033 — Attribute selection
+Maps common provider metadata shapes into shared dataset and resource descriptors while enforcing stable identity and required titles.
 
-Selects deduplicated non-state fields while honoring exclusions and bounded attribute counts.
+## S043 — Provider service
 
-## S034 — Availability planning
+Combines registry resolution, adapter validation, capability negotiation, and discovery invocation behind one provider-neutral service boundary.
 
-Classifies observations as available, stale, or unknown using a poll-derived staleness window and timezone-safe timestamps.
-
-## S035 — Naming engine
-
-Generates deterministic device and entity display names from dataset, location, and observable semantics.
-
-## S036 — Planning diagnostics
-
-Captures selected values, reasons, and rejected alternatives in a shared immutable diagnostics model.
-
-## S037 — Planning core validation
+## S044 — Provider SDK validation
 
 **Status:** In progress.
 
-`tests/test_planning_core.py` covers composition across observable graphs, entity and device plans, update and polling strategy, state and attribute selection, availability, naming, and diagnostics. The current branch head must complete GitHub Actions successfully before this milestone is recorded as stable.
+`tests/test_provider_sdk.py` covers adapter registration, request validation, metadata mapping, contract validation, capability negotiation, structured unsupported failures, and asynchronous discovery invocation. The current branch head must complete GitHub Actions successfully before CKAN is moved behind the SDK.
