@@ -2,6 +2,8 @@ name: Validate integration
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "17 8 * * 1"
   push:
     branches:
       - main
