@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from typing import Any
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import (
     DEFAULT_SCAN_INTERVAL_MINUTES,
-    LOCATION_SAMPLE_LIMIT,
     PROFILE_MAX_PAGES,
     PROFILE_PAGE_SIZE,
 )
@@ -60,7 +60,7 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
         except (OpenDataError, ValueError) as err:
             raise UpdateFailed(str(err)) from err
 
-    async def _async_latest_values(self) -> dict | None:
+    async def _async_latest_values(self) -> dict[str, Any] | None:
         """Return the newest matching row using learned paging strategy."""
         if self.location_value is None:
             rows = await self.provider.async_rows(
@@ -76,15 +76,14 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
 
         profile = self.intelligence.profile if self.intelligence else DatasetProfile()
         row_count = profile.row_count
-        newest_region = profile.newest_region
-        if newest_region == "end" and row_count:
+        if profile.newest_region == "end" and row_count:
             start = max(0, row_count - PROFILE_PAGE_SIZE)
             return await self._async_scan_pages(start_offset=start, forward=False)
         return await self._async_scan_pages(start_offset=0, forward=True)
 
     async def _async_scan_pages(
         self, start_offset: int, forward: bool
-    ) -> dict | None:
+    ) -> dict[str, Any] | None:
         """Page until a matching location is found or the safety bound is reached."""
         offset = start_offset
         for _ in range(PROFILE_MAX_PAGES):
