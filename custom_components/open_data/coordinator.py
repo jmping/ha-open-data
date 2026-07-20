@@ -7,7 +7,8 @@ from datetime import timedelta
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .const import DEFAULT_SCAN_INTERVAL_MINUTES
+from .const import DEFAULT_SCAN_INTERVAL_MINUTES, LOCATION_SAMPLE_LIMIT
+from .locations import select_location_row
 from .models import OpenDataDataset, OpenDataSnapshot
 from .providers.base import OpenDataError, OpenDataProvider
 
@@ -22,6 +23,8 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
         dataset_id: str,
         resource_id: str | None,
         timestamp_field: str | None,
+        location_field: str | None = None,
+        location_value: str | None = None,
     ) -> None:
         super().__init__(
             hass,
@@ -33,6 +36,8 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
         self.dataset_id = dataset_id
         self.resource_id = resource_id
         self.timestamp_field = timestamp_field
+        self.location_field = location_field
+        self.location_value = location_value
         self.dataset: OpenDataDataset | None = None
 
     async def _async_update_data(self) -> OpenDataSnapshot:
@@ -42,9 +47,13 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
                     self.dataset_id, self.resource_id
                 )
                 self.resource_id = self.dataset.resource_id or self.resource_id
-            values = await self.provider.async_latest_row(
-                self.dataset_id, self.resource_id, self.timestamp_field
+            rows = await self.provider.async_rows(
+                self.dataset_id,
+                self.resource_id,
+                self.timestamp_field,
+                limit=LOCATION_SAMPLE_LIMIT if self.location_value is not None else 1,
             )
+            values = select_location_row(rows, self.location_field, self.location_value)
             return OpenDataSnapshot(dataset=self.dataset, values=values or {})
         except (OpenDataError, ValueError) as err:
             raise UpdateFailed(str(err)) from err
