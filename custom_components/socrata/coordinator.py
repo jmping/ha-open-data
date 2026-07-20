@@ -10,7 +10,7 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .api import SocrataClient, SocrataError
+from .api import SocrataClient, SocrataDatasetMetadata, SocrataError
 from .const import DEFAULT_SCAN_INTERVAL, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
@@ -44,10 +44,15 @@ class SocrataDataUpdateCoordinator(DataUpdateCoordinator[SocrataCoordinatorData]
         self.client = client
         self.dataset_id = dataset_id
         self.timestamp_field = timestamp_field
+        self.metadata: SocrataDatasetMetadata | None = None
 
     async def _async_update_data(self) -> SocrataCoordinatorData:
-        """Fetch the newest source row."""
+        """Fetch metadata once and then fetch the newest source row."""
         try:
+            if self.metadata is None:
+                self.metadata = await self.client.async_get_dataset_metadata(
+                    self.dataset_id
+                )
             row = await self.client.async_latest_row(
                 self.dataset_id, self.timestamp_field
             )
