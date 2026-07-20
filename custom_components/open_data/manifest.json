@@ -1,0 +1,11 @@
+{
+  "domain": "open_data",
+  "name": "Open Data",
+  "codeowners": ["@jmping"],
+  "config_flow": true,
+  "documentation": "https://github.com/jmping/ha-open-data",
+  "integration_type": "service",
+  "iot_class": "cloud_polling",
+  "requirements": [],
+  "version": "0.1.0"
+}
