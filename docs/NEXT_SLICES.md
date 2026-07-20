@@ -4,19 +4,28 @@ Only one slice may be marked **In progress**. Completed work is retained here fo
 
 | ID | Status | Slice | Exit criteria |
 |---|---|---|---|
-| S001 | Done | CKAN resource scoring | Automatic selection is deterministic, explicit selection is preserved, and focused tests exist. |
-| S002 | Validation | Automated test execution | The corrected pull-request workflow completes successfully. |
-| S003 | Done | Resource scoring robustness | Mixed CKAN metadata is handled deterministically with focused regression tests. |
-| S004 | Done | Timestamp field detection | A pure helper ranks likely timestamp fields with deterministic tests and no provider coupling. |
-| S005 | In progress | Coordinate field detection | Pure helpers identify latitude/longitude pairs and reject common false positives. |
-| S006 | Planned | Field semantic classification | Pure field-name/type classification composes timestamp and coordinate signals. |
-| S007 | Planned | Dataset profile model | A small immutable profile composes inferred field semantics without changing provider behavior. |
-| S008 | Planned | CKAN profile integration | CKAN metadata produces a dataset profile at one integration point with diagnostics coverage. |
+| S001 | Done | CKAN resource scoring | Deterministic automatic selection with focused tests. |
+| S002 | Validation | Automated test execution | The pull-request workflow completes successfully. |
+| S003 | Done | Resource scoring robustness | Mixed CKAN metadata is handled deterministically. |
+| S004 | Done | Timestamp field detection | Timestamp candidates are ranked without provider coupling. |
+| S005 | Done | Coordinate field detection | Latitude/longitude pairs are identified and false positives rejected. |
+| S006 | Done | Field semantic classification | Structural detectors compose into immutable field semantics. |
+| S007 | Done | Dataset profile model | Profiles expose timestamp, location, identifier, geometry, measures, and text. |
+| S008 | Done | Confidence normalization | Scores normalize into bounded confidence with reasons retained. |
+| S009 | Done | Unit detection | Common units canonicalize from metadata and labels. |
+| S010 | Done | Identifier detection | Stable identifier candidates are ranked with false-positive rejection. |
+| S011 | Done | Geometry detection | Geometry fields and types are recognized deterministically. |
+| S012 | Done | Dataset intelligence | Profiles infer spatial, temporal, observation, and metadata characteristics. |
+| S013 | Done | Generic resource ranking | Provider-neutral signals produce explainable deterministic ranking. |
+| S014 | Done | Descriptor models | Immutable portal, catalog, dataset, resource, and observable descriptors exist. |
+| S015 | In progress | Intelligence core validation | CI passes all accumulated intelligence-core and legacy tests; failures are corrected. |
+| S016 | Planned | Fixture corpus design | Define fixture schema and golden-profile conventions without provider integration. |
+| S017 | Planned | Property-based invariants | Add deterministic, no-crash, and bounded-confidence invariants. |
 
 ## Selection rule
 
-The next slice is chosen by reducing the largest current reliability risk before expanding functionality. A new provider or broad semantic layer begins a new milestone and is outside this backlog.
+Reliability work takes precedence over expansion. Cross-provider adapter integration begins only after S015 is complete and the intelligence-core milestone is stable.
 
 ## Current decision
 
-S005 is active. Timestamp and coordinate detection should exist as tested, independent primitives before S006 composes them into field semantics. S002 remains under validation and takes precedence if the corrected workflow reports another failure.
+S015 is active. The branch now contains all ten selected intelligence-core slices; the highest-value next work is evidence-driven correction from the pull-request workflow, not additional feature breadth.
