@@ -50,24 +50,47 @@ class SocrataProvider(JsonClient):
             raw=payload,
         )
 
-    async def async_rows(
+    async def async_rows_page(
         self,
         dataset_id: str,
         resource_id: str | None = None,
         timestamp_field: str | None = None,
         limit: int = 100,
+        offset: int = 0,
+        descending: bool | None = None,
     ) -> list[dict[str, Any]]:
+        """Return one page from a Socrata dataset."""
         dataset_id = self._dataset_id(dataset_id)
-        params = {"$limit": str(max(1, min(limit, 1000)))}
+        params = {
+            "$limit": str(max(1, min(limit, 1000))),
+            "$offset": str(max(0, offset)),
+        }
         if timestamp_field:
             field = timestamp_field.strip()
             if not _FIELD_NAME_PATTERN.fullmatch(field):
                 raise ValueError("Timestamp field is not a valid Socrata field")
-            params["$order"] = f"{field} DESC"
+            if descending is not None:
+                direction = "DESC" if descending else "ASC"
+                params["$order"] = f"{field} {direction}"
         payload = await self.async_get_json(f"/resource/{dataset_id}.json", params=params)
         if not isinstance(payload, list) or not all(isinstance(row, dict) for row in payload):
             raise OpenDataResponseError("Socrata query did not return rows")
         return payload
+
+    async def async_row_count(
+        self, dataset_id: str, resource_id: str | None = None
+    ) -> int | None:
+        """Return a Socrata row count using an aggregate query."""
+        dataset_id = self._dataset_id(dataset_id)
+        payload = await self.async_get_json(
+            f"/resource/{dataset_id}.json", params={"$select": "count(*) as count"}
+        )
+        if not isinstance(payload, list) or not payload or not isinstance(payload[0], dict):
+            return None
+        try:
+            return int(payload[0].get("count"))
+        except (TypeError, ValueError):
+            return None
 
     async def async_search_datasets(
         self, query: str, limit: int = 20
