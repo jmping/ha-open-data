@@ -1,4 +1,4 @@
-"""Config flow for Open Data."""
+"""Config and options flows for Open Data."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import voluptuous as vol
 
 from homeassistant import config_entries
 from homeassistant.data_entry_flow import FlowResult
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import SelectOptionDict, SelectSelector, SelectSelectorConfig
 
@@ -16,6 +17,7 @@ from .const import (
     CONF_PORTAL_URL,
     CONF_PROVIDER,
     CONF_RESOURCE_ID,
+    CONF_SELECTED_FIELDS,
     CONF_TIMESTAMP_FIELD,
     DOMAIN,
     PROVIDER_CKAN,
@@ -30,6 +32,13 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle an Open Data config flow."""
 
     VERSION = 1
+
+    @staticmethod
+    def async_get_options_flow(
+        config_entry: config_entries.ConfigEntry,
+    ) -> config_entries.OptionsFlow:
+        """Return the options flow."""
+        return OpenDataOptionsFlow(config_entry)
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -85,3 +94,35 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             }
         )
         return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
+
+
+class OpenDataOptionsFlow(config_entries.OptionsFlow):
+    """Choose which discovered fields become entities."""
+
+    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
+        self._config_entry = config_entry
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Manage field selection."""
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+
+        coordinator = self._config_entry.runtime_data
+        choices = {
+            field.name: field.label for field in coordinator.data.dataset.fields
+        }
+        current = list(
+            self._config_entry.options.get(CONF_SELECTED_FIELDS, choices.keys())
+        )
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {
+                    vol.Optional(
+                        CONF_SELECTED_FIELDS, default=current
+                    ): cv.multi_select(choices)
+                }
+            ),
+        )
