@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 import re
 from typing import Any
 from urllib.parse import urlparse
 
-from aiohttp import ClientError, ClientResponseError, ClientSession
+from aiohttp import ClientError, ClientResponseError, ClientSession, ContentTypeError
 
 _DATASET_ID_PATTERN = re.compile(r"^[a-z0-9]{4}-[a-z0-9]{4}$", re.IGNORECASE)
 _FIELD_NAME_PATTERN = re.compile(r"^:?[a-zA-Z_][a-zA-Z0-9_]*$")
+_REQUEST_TIMEOUT = 10
 _USER_AGENT = "Home Assistant Socrata Open Data integration"
 
 
@@ -150,18 +152,23 @@ class SocrataClient:
     ) -> Any:
         """Issue a GET request and decode JSON with stable exceptions."""
         try:
-            async with self._session.get(
-                url,
-                params=params,
-                headers={"User-Agent": _USER_AGENT},
-            ) as response:
-                response.raise_for_status()
-                return await response.json(content_type=None)
+            async with asyncio.timeout(_REQUEST_TIMEOUT):
+                async with self._session.get(
+                    url,
+                    params=params,
+                    headers={"User-Agent": _USER_AGENT},
+                ) as response:
+                    response.raise_for_status()
+                    return await response.json(content_type=None)
         except ClientResponseError as err:
             raise SocrataResponseError(
                 f"Socrata returned HTTP {err.status} for {url}"
             ) from err
+        except (ContentTypeError, ValueError) as err:
+            raise SocrataResponseError(
+                f"Socrata returned invalid JSON for {url}"
+            ) from err
         except (ClientError, TimeoutError) as err:
-            raise SocrataConnectionError(f"Unable to reach Socrata portal: {url}") from err
-        except ValueError as err:
-            raise SocrataResponseError(f"Socrata returned invalid JSON for {url}") from err
+            raise SocrataConnectionError(
+                f"Unable to reach Socrata portal: {url}"
+            ) from err
