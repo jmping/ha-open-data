@@ -48,15 +48,66 @@ jobs:
           import json
           from pathlib import Path
           import yaml
-          components = Path('custom_components')
+
+          components = Path("custom_components")
           domains = sorted(path.name for path in components.iterdir() if path.is_dir())
-          assert domains==['open_data']
+          if domains != ["open_data"]:
+              raise SystemExit(f"expected only custom_components/open_data, found: {domains}")
+
+          if not Path("LICENSE").is_file():
+              raise SystemExit("LICENSE is required")
+
+          hacs = json.loads(Path("hacs.json").read_text(encoding="utf-8"))
+          if hacs.get("name") != "Open Data":
+              raise SystemExit("hacs.json name must be Open Data")
+
+          root = components / "open_data"
+          manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+          required = {
+              "domain",
+              "name",
+              "version",
+              "config_flow",
+              "iot_class",
+              "documentation",
+              "issue_tracker",
+          }
+          missing = sorted(required - manifest.keys())
+          if missing:
+              raise SystemExit(f"manifest.json missing keys: {missing}")
+          if manifest["domain"] != "open_data":
+              raise SystemExit("manifest domain must be open_data")
+
+          manifest_keys = list(manifest)
+          expected_key_order = ["domain", "name", *sorted(manifest_keys[2:])]
+          if manifest_keys != expected_key_order:
+              raise SystemExit(
+                  f"manifest keys must be domain, name, then alphabetical: {manifest_keys}"
+              )
+
+          init_source = (root / "__init__.py").read_text(encoding="utf-8")
+          if "CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)" not in init_source:
+              raise SystemExit("integration must declare a config-entry-only CONFIG_SCHEMA")
+
+          services = yaml.safe_load((root / "services.yaml").read_text(encoding="utf-8"))
+          expected = {
+              "scan_portal",
+              "search_datasets",
+              "inspect_dataset",
+              "refresh_entry",
+              "feedback_preview",
+          }
+          missing_services = sorted(expected - set(services or {}))
+          if missing_services:
+              raise SystemExit(f"services.yaml missing services: {missing_services}")
           PY
+
   hassfest:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
       - uses: home-assistant/actions/hassfest@master
+
   hacs:
     runs-on: ubuntu-latest
     steps:
