@@ -39,10 +39,11 @@
     "step": {
       "init": {
         "title": "Configure open data source",
-        "description": "Portal entries show ranked public datasets. Selecting one launches a separate dataset integration. Dataset entries allow entity field selection.",
+        "description": "Portal entries show ranked public datasets. Dataset entries allow field selection and can lock polling to a discovered summary, station, site, or sensor. Locations are ranked with summaries first, then by straight-line coordinate distance from Home Assistant when coordinates are available.",
         "data": {
           "dataset_id": "Dataset",
-          "selected_fields": "Fields exposed as entities"
+          "selected_fields": "Fields exposed as entities",
+          "location_selection": "Data stream location"
         }
       }
     }
