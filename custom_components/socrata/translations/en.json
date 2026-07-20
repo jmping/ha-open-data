@@ -24,5 +24,16 @@
     "abort": {
       "already_configured": "This Socrata dataset is already configured."
     }
+  },
+  "entity": {
+    "sensor": {
+      "dataset_status": {
+        "name": "Dataset status",
+        "state": {
+          "data_available": "Data available",
+          "no_data": "No data"
+        }
+      }
+    }
   }
 }
