@@ -11,6 +11,7 @@ from aiohttp import ClientError, ClientResponseError, ClientSession
 
 _DATASET_ID_PATTERN = re.compile(r"^[a-z0-9]{4}-[a-z0-9]{4}$", re.IGNORECASE)
 _FIELD_NAME_PATTERN = re.compile(r"^:?[a-zA-Z_][a-zA-Z0-9_]*$")
+_USER_AGENT = "Home Assistant Socrata Open Data integration"
 
 
 class SocrataError(Exception):
@@ -149,7 +150,11 @@ class SocrataClient:
     ) -> Any:
         """Issue a GET request and decode JSON with stable exceptions."""
         try:
-            async with self._session.get(url, params=params) as response:
+            async with self._session.get(
+                url,
+                params=params,
+                headers={"User-Agent": _USER_AGENT},
+            ) as response:
                 response.raise_for_status()
                 return await response.json(content_type=None)
         except ClientResponseError as err:
