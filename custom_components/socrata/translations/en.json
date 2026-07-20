@@ -1,0 +1,28 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to a Socrata dataset",
+        "description": "Enter a Socrata portal and dataset identifier. This early vertical slice retrieves the newest row using the selected timestamp field.",
+        "data": {
+          "portal_url": "Portal URL",
+          "dataset_id": "Dataset ID",
+          "timestamp_field": "Timestamp field"
+        },
+        "data_description": {
+          "portal_url": "Base portal URL, for example https://data.example.gov.",
+          "dataset_id": "The Socrata four-by-four dataset identifier.",
+          "timestamp_field": "Field used to order rows newest-first. The default uses Socrata's system update timestamp."
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Unable to connect to the Socrata portal.",
+      "invalid_input": "The portal URL or dataset settings are invalid.",
+      "invalid_response": "The portal returned an invalid or unsupported response."
+    },
+    "abort": {
+      "already_configured": "This Socrata dataset is already configured."
+    }
+  }
+}
