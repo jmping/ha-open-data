@@ -1,135 +1,127 @@
-# ha-socrata
+# ha-open-data
 
-A vibe-coded Home Assistant integration for turning Socrata-powered open-data portals into useful environmental observability entities.
+A Home Assistant custom integration for turning public open-data portals into
+useful local observability entities.
 
 > [!IMPORTANT]
-> This project is intentionally and entirely vibe coded. Product direction, architecture, implementation, tests, documentation, and refactoring are being developed through iterative human–AI collaboration against real Home Assistant installations and real public datasets. The goal is not to pretend the design arrived fully formed; the repository should make the evolution visible while still holding the code to normal standards for correctness, safety, testing, and maintainability.
+> This project is under active development. Interfaces may change while the
+> first real datasets and providers are integrated.
 
 ## Why this exists
 
-This project started with a practical question: can public outdoor telemetry help explain what is happening inside a home?
+Home Assistant makes indoor sensing excellent. Municipalities, universities,
+counties, and utilities often publish nearby weather, air-quality, rainfall,
+water, traffic, and energy data. `ha-open-data` is intended to make that data
+feel native in Home Assistant rather than forcing every user to hand-build REST
+sensors and brittle templates.
 
-Home Assistant already makes indoor sensing excellent. Municipalities, universities, counties, and utilities often publish nearby weather, air-quality, rainfall, water, traffic, and energy data through Socrata. `ha-socrata` is intended to make that data feel native in Home Assistant rather than forcing every user to hand-build REST sensors and brittle templates.
+Ann Arbor, Michigan is the first reference deployment. The integration is
+provider-based so that CKAN, Socrata, and future open-data platforms can share
+the same Home Assistant entity and coordinator layers.
 
-Ann Arbor, Michigan is the first reference deployment. The architecture is intended to work with other Socrata portals without embedding city-specific behavior in the core client.
+## Initial providers
 
-## Product vision
+- CKAN
+- Socrata
 
-A user should eventually be able to enter a portal URL such as:
+Planned providers include ArcGIS, OpenDataSoft, and generic CSV/JSON resources.
 
-```text
-https://data.example.gov
-```
-
-The integration should then:
-
-1. verify that the portal is reachable;
-2. discover candidate datasets;
-3. identify useful environmental datasets;
-4. let the user select datasets and stations;
-5. create well-typed Home Assistant entities;
-6. retain provenance, freshness, station, and source metadata;
-7. make external conditions easy to correlate with indoor telemetry.
-
-The project is therefore best understood as an **environmental observability integration**, not merely a generic REST wrapper.
-
-## Initial scope
-
-The first implementation focuses on:
-
-- a small native async Socrata client built on Home Assistant's `aiohttp` session;
-- UI configuration through a Home Assistant config flow;
-- connection validation before configuration is saved;
-- a coordinator-based polling architecture;
-- a generic dataset sensor suitable for early end-to-end testing;
-- Ann Arbor adapters for weather, air quality, and rainfall after the generic path is stable.
-
-## Architecture
+## Current architecture
 
 ```text
 Home Assistant entities
         ↓
-Dataset adapters and field mappings
+Entity mapping and normalized snapshots
         ↓
-Update coordinator and provenance model
+Update coordinator
         ↓
-Async Socrata client
+Provider interface
         ↓
-Socrata SODA and metadata APIs
+CKAN / Socrata / future providers
 ```
 
-The boundaries are deliberate:
+Provider-specific code is responsible for catalog metadata, schema discovery,
+and record retrieval. Home Assistant entities consume normalized models and do
+not need to know which portal software is in use.
 
-- The Socrata client knows how to query Socrata, but nothing about weather or Home Assistant entities.
-- Dataset adapters understand semantic concepts such as temperature or PM2.5, but do not perform HTTP requests.
-- Home Assistant entities consume normalized adapter output and expose appropriate units, device classes, state classes, availability, and attributes.
+## Ann Arbor air quality
 
-See [`docs/PLAN.md`](docs/PLAN.md) for the implementation plan and decision log.
+The first production target is the City of Ann Arbor's hourly air-quality
+dataset.
 
-## Development status
+```text
+Portal:     https://ckan.a2gov.org
+Dataset:    air-quality-sensor-data
+Dataset ID: 3b531fba-bf1e-44a4-ae30-7caaaa76f705
+Resource:   d16be6d6-9738-4c1c-8a86-1849942953ad
+```
 
-This repository is in the scaffolding and vertical-slice stage. Interfaces will change while the first real datasets are integrated.
+The package contains one active CKAN DataStore resource. The integration uses
+`package_show` to resolve the package and automatically selects the active
+DataStore resource, so users normally only need the portal URL and dataset name.
+The UUIDs above are included for diagnostics and reproducibility.
 
-Current target:
+Example configuration-flow values:
 
-> Configure one Socrata dataset through the Home Assistant UI, fetch its newest row, and expose a diagnostic sensor with source and freshness metadata.
+```text
+Provider:   CKAN
+Portal URL: https://ckan.a2gov.org
+Dataset ID: air-quality-sensor-data
+```
 
-## Planned milestones
+A resource ID is optional. When omitted, the CKAN provider selects the first
+active DataStore resource returned by the package metadata.
 
-### 1. Foundation
+For time-series data, set the timestamp field once the dataset schema has been
+inspected. The coordinator then requests one row sorted by that field in
+descending order.
 
-- Repository structure and project documentation
-- Home Assistant manifest and config flow
-- Async client with explicit exceptions
-- Coordinator lifecycle
-- Basic tests and CI
+## CKAN behavior
 
-### 2. Generic vertical slice
+The CKAN provider currently supports:
 
-- Configure portal URL and dataset identifier
-- Validate metadata and data access
-- Retrieve the latest row
-- Expose a diagnostic entity and raw-field attributes
+1. `package_search` for catalog search;
+2. `package_show` using either a package name or UUID;
+3. automatic active DataStore resource selection;
+4. schema discovery through `datastore_search` with `limit=0`;
+5. latest-row retrieval through `datastore_search` with `limit=1`;
+6. optional descending sort by a validated timestamp field.
 
-### 3. Ann Arbor environmental adapters
+A manually supplied resource ID must belong to the selected package and must be
+DataStore-enabled. Invalid or non-DataStore resources are rejected during the
+config flow rather than failing later during polling.
 
-- Weather
-- Air quality
-- Rainfall
-- Station selection and source metadata
+## Product direction
 
-### 4. Discovery and mapping
+The next milestones are:
 
-- Search portal catalogs
-- Rank likely environmental datasets
-- Inspect field metadata
-- Suggest semantic mappings
-- Allow users to confirm or override mappings
-
-### 5. Broader observability
-
-Potential adapters include stream gauges, river levels, flooding, water quality, traffic, public solar generation, and other time-series datasets that make sense in Home Assistant.
-
-## Non-goals
-
-- Mirroring every Socrata row into Home Assistant
-- Treating arbitrary tabular datasets as meaningful sensor entities
-- Hiding source timestamps or silently presenting stale data as current
-- Building city-specific assumptions into the generic API client
-- Depending on an abandoned Socrata client library when the required HTTP surface is small
+1. verify the Ann Arbor air-quality schema and timestamp field;
+2. expose AQI, PM2.5, NO2, temperature, humidity, and freshness entities where
+   those fields are available;
+3. add station selection;
+4. add Ann Arbor weather datasets;
+5. add dataset search and selection directly to the config flow;
+6. add provider conformance tests and CI.
 
 ## Installation
 
-The integration is not ready for general installation yet. During development, copy `custom_components/socrata` into the Home Assistant configuration directory and restart Home Assistant.
+During development, copy `custom_components/open_data` into the Home Assistant
+configuration directory:
+
+```text
+<config>/custom_components/open_data
+```
+
+Restart Home Assistant and add **Open Data** from Settings → Devices & services.
 
 ## Contributing
 
-Early contributions are most useful when they include:
+Useful contributions include:
 
-- a public Socrata portal URL;
-- one or more dataset identifiers;
-- example rows and field metadata;
-- the desired Home Assistant entities;
-- notes about timestamps, units, stations, and update cadence.
+- public portal URLs and dataset identifiers;
+- sample package metadata and rows;
+- desired Home Assistant entities;
+- timestamp, units, station, and update-cadence information;
+- provider-specific edge cases and tests.
 
-Vibe coded does not mean unreviewed. Changes should remain understandable, testable, and reversible.
+Changes should remain understandable, testable, and reversible.
