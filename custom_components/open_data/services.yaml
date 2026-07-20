@@ -1,0 +1,108 @@
+scan_portal:
+  name: Scan portal
+  description: Scan broad public catalog slices and return normalized dataset candidates.
+  fields:
+    provider:
+      name: Provider
+      required: true
+      selector:
+        select:
+          options:
+            - ckan
+            - socrata
+    portal_url:
+      name: Portal URL
+      required: true
+      selector:
+        text:
+    limit:
+      name: Result limit
+      default: 50
+      selector:
+        number:
+          min: 1
+          max: 100
+          mode: box
+
+search_datasets:
+  name: Search datasets
+  description: Search one open-data portal and return normalized dataset metadata.
+  fields:
+    provider:
+      name: Provider
+      required: true
+      selector:
+        select:
+          options:
+            - ckan
+            - socrata
+    portal_url:
+      name: Portal URL
+      required: true
+      selector:
+        text:
+    query:
+      name: Query
+      selector:
+        text:
+    limit:
+      name: Result limit
+      default: 20
+      selector:
+        number:
+          min: 1
+          max: 100
+          mode: box
+
+inspect_dataset:
+  name: Inspect dataset
+  description: Resolve a dataset, resource, and field schema from a public portal.
+  fields:
+    provider:
+      name: Provider
+      required: true
+      selector:
+        select:
+          options:
+            - ckan
+            - socrata
+    portal_url:
+      name: Portal URL
+      required: true
+      selector:
+        text:
+    dataset_id:
+      name: Dataset ID
+      required: true
+      selector:
+        text:
+    resource_id:
+      name: Resource ID
+      selector:
+        text:
+
+refresh_entry:
+  name: Refresh entry
+  description: Request an immediate refresh of a loaded Open Data config entry.
+  fields:
+    entry_id:
+      name: Config entry ID
+      required: true
+      selector:
+        config_entry:
+          integration: open_data
+
+feedback_preview:
+  name: Preview feedback
+  description: Build a privacy-safe metadata report and show whether local deduplication would suppress it.
+  fields:
+    portal_id:
+      name: Portal ID
+      required: true
+      selector:
+        text:
+    metadata:
+      name: Public metadata
+      required: true
+      selector:
+        object:

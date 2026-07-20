@@ -12,13 +12,27 @@ from .const import (
     CONF_PROVIDER,
     CONF_RESOURCE_ID,
     CONF_TIMESTAMP_FIELD,
+    DOMAIN,
     PLATFORMS,
 )
 from .coordinator import OpenDataCoordinator
+from .feedback import FeedbackRegistry
 from .providers import create_provider
+from .services import async_register_services
 
+_DATA_FEEDBACK = "feedback_registry"
 
 type OpenDataConfigEntry = ConfigEntry[OpenDataCoordinator]
+
+
+async def async_setup(hass: HomeAssistant, config: dict) -> bool:
+    """Set up the Open Data integration and its global service API."""
+    domain_data = hass.data.setdefault(DOMAIN, {})
+    feedback = FeedbackRegistry(hass)
+    await feedback.async_load()
+    domain_data[_DATA_FEEDBACK] = feedback
+    await async_register_services(hass, feedback)
+    return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: OpenDataConfigEntry) -> bool:
@@ -43,7 +57,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: OpenDataConfigEntry) -> 
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: OpenDataConfigEntry) -> bool:
-    """Unload a config entry."""
+    """Unload an Open Data config entry."""
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
 
