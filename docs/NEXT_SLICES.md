@@ -4,28 +4,26 @@ Only one slice may be marked **In progress**. Completed work is retained here fo
 
 | ID | Status | Slice | Exit criteria |
 |---|---|---|---|
-| S001 | Done | CKAN resource scoring | Deterministic automatic selection with focused tests. |
-| S002 | Validation | Automated test execution | The pull-request workflow completes successfully. |
-| S003 | Done | Resource scoring robustness | Mixed CKAN metadata is handled deterministically. |
-| S004 | Done | Timestamp field detection | Timestamp candidates are ranked without provider coupling. |
-| S005 | Done | Coordinate field detection | Latitude/longitude pairs are identified and false positives rejected. |
-| S006 | Done | Field semantic classification | Structural detectors compose into immutable field semantics. |
-| S007 | Done | Dataset profile model | Profiles expose timestamp, location, identifier, geometry, measures, and text. |
-| S008 | Done | Confidence normalization | Scores normalize into bounded confidence with reasons retained. |
-| S009 | Done | Unit detection | Common units canonicalize from metadata and labels. |
-| S010 | Done | Identifier detection | Stable identifier candidates are ranked with false-positive rejection. |
-| S011 | Done | Geometry detection | Geometry fields and types are recognized deterministically. |
-| S012 | Done | Dataset intelligence | Profiles infer spatial, temporal, observation, and metadata characteristics. |
-| S013 | Done | Generic resource ranking | Provider-neutral signals produce explainable deterministic ranking. |
-| S014 | Done | Descriptor models | Immutable portal, catalog, dataset, resource, and observable descriptors exist. |
-| S015 | In progress | Intelligence core validation | CI passes all accumulated intelligence-core and legacy tests; failures are corrected. |
-| S016 | Planned | Fixture corpus design | Define fixture schema and golden-profile conventions without provider integration. |
-| S017 | Planned | Property-based invariants | Add deterministic, no-crash, and bounded-confidence invariants. |
+| S001–S014 | Done | Intelligence core | Provider-neutral structural inference, ranking, and descriptors exist. |
+| S015 | Done | Intelligence core validation | GitHub Actions run 29761386815 completed successfully. |
+| S016 | Done | Field alias normalization | Common open-data field aliases map to canonical concepts. |
+| S017 | Done | Observable inference | Measurement fields infer canonical observable kinds and units. |
+| S018 | Done | Dataset type inference | Observation, forecast, station metadata, event, and snapshot roles are inferred. |
+| S019 | Done | Location inference | Station, locality, region, and country fields are identified. |
+| S020 | Done | Dataset quality scoring | Structural completeness and metadata quality produce explainable bounded scores. |
+| S021 | Done | Dataset summary generation | Profiles produce deterministic human-readable summaries. |
+| S022 | Done | Explainability graph | Inference conclusions, reasons, confidence, and alternatives have a shared model. |
+| S023 | Done | Fixture corpus seed | A representative weather-observation metadata fixture is stored in the test corpus. |
+| S024 | Done | Golden profile tests | Fixture outputs are checked against a stable expected profile. |
+| S025 | Done | Capability negotiation | Provider features and unmet requirements are represented without adapter coupling. |
+| S026 | In progress | Knowledge core validation | CI passes all legacy, intelligence-core, and knowledge-core tests; failures are corrected. |
+| S027 | Planned | Property-based invariants | Add no-crash, deterministic-ordering, and bounded-confidence invariants. |
+| S028 | Planned | Fixture corpus expansion | Add air-quality, hydrology, forecast, event, and station-metadata fixtures. |
 
 ## Selection rule
 
-Reliability work takes precedence over expansion. Cross-provider adapter integration begins only after S015 is complete and the intelligence-core milestone is stable.
+Reliability work takes precedence over expansion. Cross-provider adapter integration begins only after S026 is complete and the knowledge-core milestone is stable.
 
 ## Current decision
 
-S015 is active. The branch now contains all ten selected intelligence-core slices; the highest-value next work is evidence-driven correction from the pull-request workflow, not additional feature breadth.
+S026 is active. The highest-value next action is evidence-driven correction from GitHub Actions rather than adding further feature breadth before this milestone is validated.
