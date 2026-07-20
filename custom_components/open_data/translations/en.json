@@ -3,29 +3,48 @@
   "config": {
     "step": {
       "user": {
-        "title": "Discover public datasets",
-        "description": "Choose the portal type and enter the institution's public data portal. Open Data will scan and rank useful datasets automatically.",
-        "data": {
-          "provider": "Provider",
-          "portal_url": "Portal URL"
+        "title": "Add an open data source",
+        "menu_options": {
+          "portal": "Discover datasets from a portal",
+          "dataset": "Add a dataset directly"
         }
       },
-      "discover": {
-        "title": "Choose a discovered dataset",
-        "description": "Found {count} ranked datasets on {portal}. Scores favor queryable environmental, weather, air-quality, water, climate, and energy data.",
+      "portal": {
+        "title": "Add an institution portal",
+        "description": "Enter the public portal root. The integration detects CKAN or Socrata and stores the portal as one catalog entry. Use Configure on that entry to discover datasets; every selected dataset becomes its own independently updating integration instance.",
         "data": {
-          "dataset_id": "Dataset"
+          "source_location": "Portal URL"
+        }
+      },
+      "dataset": {
+        "title": "Add a dataset directly",
+        "description": "Paste a CKAN or Socrata dataset page, API endpoint, or dataset identifier. A portal URL is only needed for a bare dataset identifier.",
+        "data": {
+          "source_location": "Dataset location or identifier",
+          "portal_url": "Portal URL for a bare identifier (optional)"
         }
       }
     },
     "error": {
       "cannot_connect": "Unable to connect to the portal.",
-      "invalid_dataset": "The portal or selected dataset is invalid.",
-      "no_datasets": "No suitable queryable datasets were discovered on this portal.",
+      "invalid_portal": "The location is not a supported CKAN or Socrata portal.",
+      "invalid_dataset": "The dataset location could not be resolved or validated.",
       "unknown": "Unexpected error. Check the Home Assistant logs."
     },
     "abort": {
-      "already_configured": "This open data resource is already configured."
+      "already_configured": "This portal or dataset is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Configure open data source",
+        "description": "Portal entries show ranked public datasets. Selecting one launches a separate dataset integration. Dataset entries allow entity field selection.",
+        "data": {
+          "dataset_id": "Dataset",
+          "selected_fields": "Fields exposed as entities"
+        }
+      }
     }
   },
   "entity": {
