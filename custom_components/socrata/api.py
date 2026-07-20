@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import Any
 from urllib.parse import urlparse
 
 from aiohttp import ClientError, ClientResponseError, ClientSession
+
+_DATASET_ID_PATTERN = re.compile(r"^[a-z0-9]{4}-[a-z0-9]{4}$", re.IGNORECASE)
+_FIELD_NAME_PATTERN = re.compile(r"^:?[a-zA-Z_][a-zA-Z0-9_]*$")
 
 
 class SocrataError(Exception):
@@ -38,10 +42,34 @@ def normalize_portal_url(portal_url: str) -> str:
         value = f"https://{value}"
 
     parsed = urlparse(value)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+    ):
         raise ValueError("Portal URL must contain a valid HTTP(S) hostname")
 
-    return f"{parsed.scheme}://{parsed.netloc}"
+    if parsed.path not in {"", "/"} or parsed.query or parsed.fragment:
+        raise ValueError("Portal URL must be a portal root URL")
+
+    return f"{parsed.scheme.lower()}://{parsed.netloc.lower()}"
+
+
+def validate_dataset_id(dataset_id: str) -> str:
+    """Validate and normalize a Socrata four-by-four dataset identifier."""
+    normalized = dataset_id.strip().lower()
+    if not _DATASET_ID_PATTERN.fullmatch(normalized):
+        raise ValueError("Dataset ID must use Socrata's four-by-four format")
+    return normalized
+
+
+def validate_field_name(field_name: str) -> str:
+    """Validate a column identifier used in a generated SoQL order clause."""
+    normalized = field_name.strip()
+    if not _FIELD_NAME_PATTERN.fullmatch(normalized):
+        raise ValueError("Timestamp field is not a valid Socrata field identifier")
+    return normalized
 
 
 class SocrataClient:
@@ -56,6 +84,7 @@ class SocrataClient:
         self, dataset_id: str
     ) -> SocrataDatasetMetadata:
         """Fetch metadata for one dataset."""
+        dataset_id = validate_dataset_id(dataset_id)
         url = f"{self.portal_url}/api/views/{dataset_id}"
         payload = await self._async_get_json(url)
         if not isinstance(payload, dict):
@@ -83,6 +112,7 @@ class SocrataClient:
         limit: int = 100,
     ) -> list[dict[str, Any]]:
         """Execute a SODA query and return JSON rows."""
+        dataset_id = validate_dataset_id(dataset_id)
         if limit < 1:
             raise ValueError("limit must be greater than zero")
 
@@ -106,6 +136,7 @@ class SocrataClient:
         self, dataset_id: str, timestamp_field: str
     ) -> dict[str, Any] | None:
         """Return the newest row according to a selected timestamp field."""
+        timestamp_field = validate_field_name(timestamp_field)
         rows = await self.async_query(
             dataset_id,
             order=f"{timestamp_field} DESC",
