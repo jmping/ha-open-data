@@ -77,6 +77,13 @@ def parse_reference(value: str, portal_url: str | None = None) -> OpenDataRefere
                 if _SOCRATA_ID.fullmatch(dataset_id):
                     return OpenDataReference(PROVIDER_SOCRATA, portal, dataset_id)
 
+    # Socrata's normal web pages often put the four-by-four ID at the end of
+    # an otherwise arbitrary category/title path.
+    for segment in reversed(segments):
+        dataset_id = segment.split(".", 1)[0].lower()
+        if _SOCRATA_ID.fullmatch(dataset_id):
+            return OpenDataReference(PROVIDER_SOCRATA, portal, dataset_id)
+
     if segments[:3] == ["api", "catalog", "v1"]:
         return OpenDataReference(PROVIDER_SOCRATA, portal, is_portal=True)
 
