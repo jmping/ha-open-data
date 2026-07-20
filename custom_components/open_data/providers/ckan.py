@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..models import OpenDataDataset, OpenDataField
-from .base import OpenDataResponseError
+from .base import OpenDataResponseError, ProviderCapabilities
 from .common import JsonClient
 
 
@@ -13,6 +13,13 @@ class CkanProvider(JsonClient):
     """Provider for CKAN Action and DataStore APIs."""
 
     provider_name = "CKAN"
+    capabilities = ProviderCapabilities(
+        supports_search=True,
+        supports_schema=True,
+        supports_latest_row=True,
+        supports_spatial_queries=False,
+        supports_incremental_updates=False,
+    )
 
     async def _action(self, action: str, params: dict[str, str]) -> Any:
         payload = await self.async_get_json(
@@ -21,6 +28,16 @@ class CkanProvider(JsonClient):
         if not isinstance(payload, dict) or payload.get("success") is not True:
             raise OpenDataResponseError(f"CKAN action {action} failed")
         return payload.get("result")
+
+    async def async_verify_portal(self) -> None:
+        """Require a valid CKAN status response before using the portal."""
+        result = await self._action("status_show", {})
+        if not isinstance(result, dict) or not isinstance(
+            result.get("site_title"), str
+        ):
+            raise OpenDataResponseError(
+                "Host did not return a recognizable CKAN status response"
+            )
 
     async def async_get_dataset(
         self, dataset_id: str, resource_id: str | None = None
@@ -103,9 +120,10 @@ class CkanProvider(JsonClient):
     async def async_search_datasets(
         self, query: str, limit: int = 20
     ) -> list[OpenDataDataset]:
-        """Search the CKAN catalog."""
+        """Search the CKAN catalog with a bounded result count."""
+        bounded_limit = min(max(int(limit), 1), 100)
         result = await self._action(
-            "package_search", {"q": query, "rows": str(limit)}
+            "package_search", {"q": query, "rows": str(bounded_limit)}
         )
         packages = result.get("results", []) if isinstance(result, dict) else []
         return [
@@ -115,7 +133,7 @@ class CkanProvider(JsonClient):
                 description=package.get("notes"),
                 raw=package,
             )
-            for package in packages
+            for package in packages[:bounded_limit]
             if isinstance(package, dict) and package.get("name")
         ]
 
