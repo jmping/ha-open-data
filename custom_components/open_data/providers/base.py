@@ -33,6 +33,21 @@ class OpenDataProvider(ABC):
         """Return normalized metadata and schema."""
 
     @abstractmethod
+    async def async_rows_page(
+        self,
+        dataset_id: str,
+        resource_id: str | None = None,
+        timestamp_field: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+        descending: bool | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return one bounded page of rows.
+
+        ``descending`` applies to ``timestamp_field`` when provided. ``None``
+        preserves the provider's native row order.
+        """
+
     async def async_rows(
         self,
         dataset_id: str,
@@ -41,6 +56,20 @@ class OpenDataProvider(ABC):
         limit: int = 100,
     ) -> list[dict[str, Any]]:
         """Return recent rows for discovery and stream selection."""
+        return await self.async_rows_page(
+            dataset_id,
+            resource_id,
+            timestamp_field,
+            limit=limit,
+            offset=0,
+            descending=True if timestamp_field else None,
+        )
+
+    @abstractmethod
+    async def async_row_count(
+        self, dataset_id: str, resource_id: str | None = None
+    ) -> int | None:
+        """Return the current row count when the provider exposes it."""
 
     async def async_latest_row(
         self,
