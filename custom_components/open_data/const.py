@@ -7,12 +7,17 @@ from homeassistant.const import Platform
 DOMAIN = "open_data"
 PLATFORMS = [Platform.SENSOR]
 
+CONF_ENTRY_TYPE = "entry_type"
 CONF_PROVIDER = "provider"
 CONF_PORTAL_URL = "portal_url"
 CONF_DATASET_ID = "dataset_id"
 CONF_RESOURCE_ID = "resource_id"
 CONF_TIMESTAMP_FIELD = "timestamp_field"
 CONF_SELECTED_FIELDS = "selected_fields"
+CONF_SOURCE_LOCATION = "source_location"
+
+ENTRY_TYPE_PORTAL = "portal"
+ENTRY_TYPE_DATASET = "dataset"
 
 PROVIDER_SOCRATA = "socrata"
 PROVIDER_CKAN = "ckan"
