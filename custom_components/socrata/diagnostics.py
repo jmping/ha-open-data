@@ -15,7 +15,8 @@ async def async_get_config_entry_diagnostics(
 ) -> dict[str, Any]:
     """Return diagnostics without exposing source-row values."""
     coordinator = entry.runtime_data
-    row = coordinator.data.row
+    data = coordinator.data
+    row = data.row if data is not None else None
     metadata = coordinator.metadata
 
     return {
@@ -26,7 +27,9 @@ async def async_get_config_entry_diagnostics(
         },
         "coordinator": {
             "last_update_success": coordinator.last_update_success,
-            "retrieved_at": coordinator.data.retrieved_at.isoformat(),
+            "retrieved_at": (
+                data.retrieved_at.isoformat() if data is not None else None
+            ),
             "source_row_present": row is not None,
             "source_row_fields": sorted(row) if row is not None else [],
         },
