@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
+import logging
 from typing import Any
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
-from homeassistant.util import dt as dt_util
 
 from .api import SocrataClient, SocrataError
 from .const import DEFAULT_SCAN_INTERVAL, DOMAIN
+
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(slots=True, frozen=True)
@@ -35,7 +37,7 @@ class SocrataDataUpdateCoordinator(DataUpdateCoordinator[SocrataCoordinatorData]
         """Initialize the coordinator."""
         super().__init__(
             hass,
-            logger=__import__("logging").getLogger(__name__),
+            logger=_LOGGER,
             name=f"{DOMAIN}:{dataset_id}",
             update_interval=DEFAULT_SCAN_INTERVAL,
         )
@@ -52,4 +54,4 @@ class SocrataDataUpdateCoordinator(DataUpdateCoordinator[SocrataCoordinatorData]
         except SocrataError as err:
             raise UpdateFailed(str(err)) from err
 
-        return SocrataCoordinatorData(row=row, retrieved_at=dt_util.utcnow())
+        return SocrataCoordinatorData(row=row, retrieved_at=datetime.now(UTC))
