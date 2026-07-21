@@ -135,3 +135,47 @@ def test_hydrology_profile_recognizes_gauge_vocabulary() -> None:
         "streamflow",
         "water_temperature",
     }
+
+
+def test_authoritative_nyc_source_outranks_community_copy() -> None:
+    source = OpenDataDataset(
+        dataset_id="abcd-1234",
+        title="Pedestrian Counts",
+        description="Counts published by the City of New York Department of Transportation",
+        raw={
+            "resource": {
+                "type": "dataset",
+                "rowsUpdatedAt": 1,
+                "columns_field_name": ["counter_id", "date", "count"],
+            },
+            "classification": {"domain_metadata": ["NYC Open Data"]},
+        },
+    )
+    copy = OpenDataDataset(
+        dataset_id="wxyz-9876",
+        title="Pedestrian Counts - Community View",
+        description="Community created filtered view",
+        raw={
+            "resource": {"type": "filter", "parent_fxf": "abcd-1234"},
+            "classification": {"domain_metadata": ["community created"]},
+        },
+    )
+
+    assert score_dataset(source).score > score_dataset(copy).score
+    assert "source dataset" in score_dataset(source).reasons
+    assert "derived or community copy" in score_dataset(copy).reasons
+
+
+def test_geometry_map_view_is_below_queryable_table() -> None:
+    table = OpenDataDataset(
+        dataset_id="roads-0001",
+        title="Speed Limits",
+        raw={"resource": {"type": "dataset", "columns_field_name": ["segment_id"]}},
+    )
+    map_view = OpenDataDataset(
+        dataset_id="roads-0002",
+        title="Speed Limits Map",
+        raw={"resource": {"type": "map", "parent_fxf": "roads-0001"}},
+    )
+
+    assert score_dataset(table).score > score_dataset(map_view).score
