@@ -32,6 +32,23 @@ _DATA_FEEDBACK = "feedback_registry"
 type OpenDataConfigEntry = ConfigEntry[OpenDataCoordinator]
 
 
+def _normalize_selected_records(raw_records: object) -> tuple[str, ...]:
+    """Return distinct, non-empty selector values in their saved order."""
+    if isinstance(raw_records, str):
+        candidates = (raw_records,)
+    elif isinstance(raw_records, (list, tuple, set, frozenset)):
+        candidates = raw_records
+    else:
+        return ()
+    return tuple(
+        dict.fromkeys(
+            value
+            for item in candidates
+            if (value := str(item).strip())
+        )
+    )
+
+
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """Set up the Open Data integration and its global service API."""
     domain_data = hass.data.setdefault(DOMAIN, {})
@@ -52,10 +69,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: OpenDataConfigEntry) -> 
     raw_records = entry.options.get(
         CONF_SELECTED_RECORDS, entry.data.get(CONF_SELECTED_RECORDS, ())
     )
-    if isinstance(raw_records, str):
-        selected_records = (raw_records,)
-    else:
-        selected_records = tuple(dict.fromkeys(str(item) for item in raw_records))
+    selected_records = _normalize_selected_records(raw_records)
 
     configured_identity = entry.options.get(CONF_IDENTITY_FIELD) or entry.data.get(
         CONF_IDENTITY_FIELD
@@ -64,11 +78,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: OpenDataConfigEntry) -> 
         CONF_DISPLAY_FIELD
     )
     identity_field = effective_identity_field(configured_identity, configured_display)
+    display_field = configured_display if configured_display != identity_field else None
 
     # Record values saved under an observation ID cannot be reused after repairing
     # the identity to a stable place name. Let the user select the desired places
     # from the rebuilt options flow instead of issuing invalid per-row queries.
-    if identity_field != configured_identity:
+    if identity_field != configured_identity or identity_field is None:
         selected_records = ()
 
     coordinator = OpenDataCoordinator(
@@ -80,7 +95,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: OpenDataConfigEntry) -> 
         or entry.data.get(CONF_TIMESTAMP_FIELD)
         or None,
         identity_field,
-        configured_display,
+        display_field,
         selected_records,
         tuple(entry.data.get(CONF_HIERARCHY_FIELDS, ())),
     )
