@@ -1,0 +1,69 @@
+{
+  "entries": [
+    {
+      "corpus_id": "seed-korean-air",
+      "dataset_id": "korean-air-quality",
+      "fields": [
+        {"data_type": "datetime", "description": null, "label": "측정일시", "name": "측정일시"},
+        {"data_type": "string", "description": null, "label": "측정소명", "name": "측정소명"},
+        {"data_type": "number", "description": null, "label": "초미세먼지농도", "name": "초미세먼지농도"},
+        {"data_type": "number", "description": null, "label": "미세먼지농도", "name": "미세먼지농도"}
+      ],
+      "language": "ko",
+      "portal_url": "https://data.example.kr",
+      "profile_hint": "air_quality",
+      "provider": "fixture",
+      "sample_rows": [],
+      "title": "대기질 측정"
+    },
+    {
+      "corpus_id": "seed-thai-weather",
+      "dataset_id": "thai-weather",
+      "fields": [
+        {"data_type": "datetime", "description": null, "label": "วันที่ตรวจวัด", "name": "วันที่ตรวจวัด"},
+        {"data_type": "string", "description": null, "label": "สถานีตรวจวัด", "name": "สถานีตรวจวัด"},
+        {"data_type": "number", "description": null, "label": "อุณหภูมิอากาศ", "name": "อุณหภูมิอากาศ"},
+        {"data_type": "number", "description": null, "label": "ความชื้นสัมพัทธ์", "name": "ความชื้นสัมพัทธ์"}
+      ],
+      "language": "th",
+      "portal_url": "https://data.example.go.th",
+      "profile_hint": "weather",
+      "provider": "fixture",
+      "sample_rows": [],
+      "title": "ข้อมูลอากาศ"
+    },
+    {
+      "corpus_id": "seed-spanish-traffic",
+      "dataset_id": "spanish-traffic",
+      "fields": [
+        {"data_type": "datetime", "description": null, "label": "fecha_hora", "name": "fecha_hora"},
+        {"data_type": "string", "description": null, "label": "estacion_id", "name": "estacion_id"},
+        {"data_type": "number", "description": null, "label": "intensidad", "name": "intensidad"},
+        {"data_type": "number", "description": null, "label": "velocidad_media", "name": "velocidad_media"}
+      ],
+      "language": "es",
+      "portal_url": "https://datos.example.es",
+      "profile_hint": "traffic",
+      "provider": "fixture",
+      "sample_rows": [],
+      "title": "Tráfico"
+    },
+    {
+      "corpus_id": "seed-generic-geo",
+      "dataset_id": "generic-assets",
+      "fields": [
+        {"data_type": "integer", "description": null, "label": "OBJECTID", "name": "OBJECTID"},
+        {"data_type": "string", "description": null, "label": "GlobalID", "name": "GlobalID"},
+        {"data_type": "geometry", "description": null, "label": "Shape", "name": "Shape"},
+        {"data_type": "datetime", "description": null, "label": "last_edited_date", "name": "last_edited_date"}
+      ],
+      "language": "en",
+      "portal_url": "https://example.opendata.arcgis.com",
+      "profile_hint": null,
+      "provider": "arcgis",
+      "sample_rows": [],
+      "title": "Municipal assets"
+    }
+  ],
+  "version": 1
+}
