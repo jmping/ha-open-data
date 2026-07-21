@@ -4,18 +4,16 @@ from __future__ import annotations
 
 import asyncio
 from datetime import timedelta
-import logging
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import DEFAULT_SCAN_INTERVAL_MINUTES
+from .entity_identity import looks_like_observation_id
 from .models import OpenDataDataset, OpenDataSnapshot
 from .providers.base import OpenDataError, OpenDataProvider
 
 _MAX_CONCURRENT_RECORD_REQUESTS = 6
-_MAX_LABEL_ROWS = 2000
-_LOGGER = logging.getLogger(__name__)
 
 
 class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
@@ -35,7 +33,7 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
     ) -> None:
         super().__init__(
             hass,
-            logger=_LOGGER,
+            logger=__import__("logging").getLogger(__name__),
             name=f"Open Data {dataset_id}",
             update_interval=timedelta(minutes=DEFAULT_SCAN_INTERVAL_MINUTES),
         )
@@ -45,7 +43,12 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
         self.timestamp_field = timestamp_field
         self.identity_field = identity_field
         self.display_field = display_field
-        self.selected_records = tuple(dict.fromkeys(str(item) for item in selected_records))
+        # Observation IDs identify historical rows, not persistent Home Assistant
+        # entities. Even old configurations that saved those values must fall back
+        # to a single latest-dataset snapshot instead of creating one entity per row.
+        self.selected_records = (
+            () if looks_like_observation_id(identity_field) else selected_records
+        )
         self.hierarchy_fields = hierarchy_fields
         self.dataset: OpenDataDataset | None = None
         self.record_labels: dict[str, str] = {}
@@ -59,10 +62,7 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
             self.identity_field,
             self.display_field,
             self.hierarchy_fields,
-            limit=min(
-                _MAX_LABEL_ROWS,
-                max(100, len(self.selected_records) * 4),
-            ),
+            limit=max(100, len(self.selected_records) * 4),
         )
         selected = set(self.selected_records)
         labels: dict[str, list[str]] = {}
@@ -118,44 +118,32 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
 
             if self.identity_field and self.selected_records:
                 semaphore = asyncio.Semaphore(_MAX_CONCURRENT_RECORD_REQUESTS)
-                raw_results = await asyncio.gather(
+                results = await asyncio.gather(
                     *(
                         self._async_latest_record(record_id, semaphore)
                         for record_id in self.selected_records
                     ),
                     return_exceptions=True,
                 )
-                results: list[tuple[str, dict]] = []
-                failures: list[BaseException] = []
-                for result in raw_results:
-                    if isinstance(result, BaseException):
-                        failures.append(result)
-                    else:
-                        results.append(result)
-
-                # One unavailable or malformed record should not take down every
-                # other selected location. Only fail the coordinator when all
-                # requests failed and there is no usable snapshot to publish.
-                if failures and not results:
-                    first_failure = failures[0]
-                    if isinstance(first_failure, (OpenDataError, ValueError)):
-                        raise first_failure
-                    raise UpdateFailed(str(first_failure)) from first_failure
-                if failures:
-                    _LOGGER.warning(
-                        "Skipped %s of %s selected Open Data records during refresh",
-                        len(failures),
-                        len(raw_results),
+                records: dict[str, dict] = {}
+                failures = 0
+                for record_id, result in zip(self.selected_records, results, strict=True):
+                    if isinstance(result, Exception):
+                        failures += 1
+                        self.logger.warning(
+                            "Unable to refresh open-data record %s: %s",
+                            record_id,
+                            result,
+                        )
+                        continue
+                    returned_id, values = result
+                    if values:
+                        records[returned_id] = values
+                if failures == len(results) and results:
+                    first_error = next(
+                        result for result in results if isinstance(result, Exception)
                     )
-
-                # A selected record is not necessarily a current entity. Providers
-                # may return no row for old observation IDs, unavailable stations,
-                # or values that no longer exist after the identity field changes.
-                records = {
-                    record_id: values
-                    for record_id, values in results
-                    if values
-                }
+                    raise UpdateFailed(str(first_error))
                 labels = {
                     record_id: self.record_labels.get(record_id, record_id)
                     for record_id in records
