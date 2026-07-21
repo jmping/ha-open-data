@@ -42,6 +42,7 @@ class ProviderCapabilities:
     supports_sample_rows: bool = False
     supports_distinct_values: bool = False
     supports_observation_sampling: bool = False
+    supports_entity_observation_retrieval: bool = False
 
 
 class OpenDataProvider(ABC):
@@ -101,6 +102,34 @@ class OpenDataProvider(ABC):
         del entity_field, timestamp_field
         limit = max(50, entity_limit * observations_per_entity)
         return await self.async_sample_rows(dataset_id, resource_id, limit=limit)
+
+    async def async_fetch_observations(
+        self,
+        dataset_id: str,
+        resource_id: str | None = None,
+        *,
+        entity_field: str,
+        entity_values: tuple[str, ...],
+        timestamp_field: str | None = None,
+        observations_per_entity: int = 25,
+    ) -> list[dict[str, Any]]:
+        """Return history for exactly the requested entities.
+
+        The compatibility implementation issues one filtered latest-row request per
+        entity. Providers with historical query support must override this method so
+        selected entities cannot be omitted by distinct-value sampling.
+        """
+        rows: list[dict[str, Any]] = []
+        for value in dict.fromkeys(entity_values):
+            row = await self.async_latest_row(
+                dataset_id,
+                resource_id,
+                timestamp_field,
+                filters={entity_field: value},
+            )
+            if row:
+                rows.append(row)
+        return rows
 
     async def async_distinct_rows(
         self,
