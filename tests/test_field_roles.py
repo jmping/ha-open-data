@@ -68,3 +68,93 @@ def test_context_attributes_are_bounded_and_safe() -> None:
 
     assert len(attributes) == 30
     assert attributes["field_0"] == 0
+
+
+def test_nyc_traffic_speed_orientation() -> None:
+    result = roles.classify_field_roles(
+        ("link_id", "roadway_name", "measurement_date", "speed", "travel_time", "volume"),
+        [{
+            "link_id": 123,
+            "roadway_name": "FDR Drive",
+            "measurement_date": "2026-01-01T08:00:00",
+            "speed": 31.4,
+            "travel_time": 184,
+            "volume": 422,
+        }],
+        structural_fields=("link_id",),
+    )
+
+    assert result.metric_fields == ("speed", "travel_time", "volume")
+    assert result.time_fields == ("measurement_date",)
+    assert result.context_fields == ("link_id", "roadway_name")
+
+
+def test_nyc_air_quality_orientation() -> None:
+    result = roles.classify_field_roles(
+        ("indicator_id", "geo_place_name", "start_date", "data_value", "measure_info"),
+        [{
+            "indicator_id": 365,
+            "geo_place_name": "Manhattan",
+            "start_date": "2025-01-01",
+            "data_value": 8.7,
+            "measure_info": "mcg/m3",
+        }],
+        structural_fields=("indicator_id", "geo_place_name"),
+    )
+
+    assert result.metric_fields == ("data_value",)
+    assert result.time_fields == ("start_date",)
+    assert result.context_fields == ("indicator_id", "geo_place_name", "measure_info")
+
+
+def test_nyc_tree_inventory_is_not_entity_explosion() -> None:
+    result = roles.classify_field_roles(
+        ("tree_id", "spc_common", "boroname", "latitude", "longitude", "tree_dbh", "health"),
+        [{
+            "tree_id": 1001,
+            "spc_common": "London planetree",
+            "boroname": "Queens",
+            "latitude": 40.7,
+            "longitude": -73.8,
+            "tree_dbh": 14,
+            "health": "Good",
+        }],
+        structural_fields=("tree_id",),
+    )
+
+    assert result.metric_fields == ("tree_dbh",)
+    assert set(result.context_fields) == {
+        "tree_id", "spc_common", "boroname", "latitude", "longitude", "health"
+    }
+
+
+def test_nyc_crime_event_coordinates_remain_context() -> None:
+    result = roles.classify_field_roles(
+        ("incident_key", "event_date", "borough", "latitude", "longitude", "offense"),
+        [{
+            "incident_key": 999,
+            "event_date": "2025-06-01",
+            "borough": "BROOKLYN",
+            "latitude": 40.65,
+            "longitude": -73.95,
+            "offense": "ROBBERY",
+        }],
+        structural_fields=("incident_key",),
+    )
+
+    assert result.metric_fields == ()
+    assert result.time_fields == ("event_date",)
+    assert set(result.context_fields) == {
+        "incident_key", "borough", "latitude", "longitude", "offense"
+    }
+
+
+def test_numeric_strings_with_commas_are_measurements() -> None:
+    result = roles.classify_field_roles(
+        ("community_district", "collected_tonnage"),
+        [{"community_district": "01", "collected_tonnage": "1,234.5"}],
+        structural_fields=("community_district",),
+    )
+
+    assert result.metric_fields == ("collected_tonnage",)
+    assert result.context_fields == ("community_district",)
