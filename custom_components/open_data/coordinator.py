@@ -113,6 +113,7 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
     async def _async_latest_record(
         self, record_id: str, semaphore: asyncio.Semaphore
     ) -> tuple[str, dict]:
+        """Fetch one latest observation without overwhelming a portal."""
         async with semaphore:
             values = await self.provider.async_latest_row(
                 self.dataset_id,
@@ -124,27 +125,25 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
 
     async def _async_semantic_snapshot(self) -> OpenDataSnapshot:
         """Fetch enough recent physical rows to recover all current logical streams."""
-        entity_limit = (
-            max(len(self.selected_records), 1)
-            if self.selected_records
-            else self.estimated_entity_count
-        )
         per_entity = max(25, self.retrieval_dimension_multiplier * 4)
-        rows = await self.provider.async_sample_observations(
-            self.dataset_id,
-            self.resource_id,
-            entity_field=self.identity_field,
-            timestamp_field=self.timestamp_field,
-            entity_limit=entity_limit,
-            observations_per_entity=per_entity,
-        )
         if self.selected_records and self.identity_field:
-            selected = set(self.selected_records)
-            rows = [
-                row
-                for row in rows
-                if str(row.get(self.identity_field)) in selected
-            ]
+            rows = await self.provider.async_fetch_observations(
+                self.dataset_id,
+                self.resource_id,
+                entity_field=self.identity_field,
+                entity_values=self.selected_records,
+                timestamp_field=self.timestamp_field,
+                observations_per_entity=per_entity,
+            )
+        else:
+            rows = await self.provider.async_sample_observations(
+                self.dataset_id,
+                self.resource_id,
+                entity_field=self.identity_field,
+                timestamp_field=self.timestamp_field,
+                entity_limit=self.estimated_entity_count,
+                observations_per_entity=per_entity,
+            )
         observations = normalize_observations(
             rows,
             shape=self.observation_shape,
@@ -160,6 +159,8 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
             if observation.entity_id is not None:
                 records.setdefault(observation.entity_id, observation.source_row)
                 self.record_labels.setdefault(observation.entity_id, observation.entity_id)
+        for record_id in self.selected_records:
+            self.record_labels.setdefault(record_id, record_id)
         first = next((item.source_row for item in observations.values()), {})
         return OpenDataSnapshot(
             dataset=self.dataset,
