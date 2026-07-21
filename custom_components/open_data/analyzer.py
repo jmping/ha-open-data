@@ -7,7 +7,7 @@ import re
 from typing import Any, Iterable
 
 from .models import OpenDataDataset
-from .ontology import match_dataset_profile
+from .ontology import map_fields, match_dataset_profile
 
 _IDENTIFIER_TERMS = (
     "station_id", "site_id", "monitor_id", "sensor_id", "gage_id", "gauge_id",
@@ -26,7 +26,10 @@ _TIME_TERMS = (
     "timestamp", "datetime", "date_time", "observation_time", "obs_time",
     "sample_time", "measured_at", "updated_at", "date", "time",
 )
-_GEOMETRY_TYPES = {"point", "multipoint", "line", "multiline", "polygon", "multipolygon", "location"}
+_GEOMETRY_TYPES = {
+    "point", "multipoint", "line", "multiline", "linestring", "multilinestring",
+    "polygon", "multipolygon", "location",
+}
 
 
 def _norm(value: str) -> str:
@@ -76,7 +79,9 @@ def _best_field(field_names: Iterable[str], preferred: tuple[str, ...]) -> str |
     return None
 
 
-def _geometry(dataset: OpenDataDataset, sample_rows: list[dict[str, Any]]) -> tuple[str | None, str | None]:
+def _geometry(
+    dataset: OpenDataDataset, sample_rows: list[dict[str, Any]]
+) -> tuple[str | None, str | None]:
     for field in dataset.fields:
         data_type = _norm(field.data_type)
         if data_type in _GEOMETRY_TYPES or "geometry" in data_type:
@@ -97,11 +102,17 @@ def analyze_dataset(
     rows = sample_rows or []
     fields = tuple(field.name for field in dataset.fields)
     profile = match_dataset_profile(dataset)
-    mappings = {mapping.source_field: mapping.canonical_metric for mapping in profile.field_mappings}
+    mappings = {
+        mapping.source_field: mapping.canonical_metric
+        for mapping in map_fields(dataset.fields)
+    }
 
-    timestamp = next((name for name, metric in mappings.items() if metric == "timestamp"), None)
-    timestamp = timestamp or _best_field(fields, _TIME_TERMS)
-    station = next((name for name, metric in mappings.items() if metric == "station"), None)
+    timestamp = next(
+        (name for name, metric in mappings.items() if metric == "timestamp"), None
+    ) or _best_field(fields, _TIME_TERMS)
+    station = next(
+        (name for name, metric in mappings.items() if metric == "station"), None
+    )
     identity = station or _best_field(fields, _IDENTIFIER_TERMS)
     display = _best_field(fields, _DISPLAY_TERMS)
     if display == identity:
@@ -109,20 +120,23 @@ def analyze_dataset(
 
     geometry_field, geometry_type = _geometry(dataset, rows)
     hierarchy = tuple(
-        name for name in fields
+        name
+        for name in fields
         if name not in {identity, display, timestamp, geometry_field}
         and any(term == _norm(name) or term in _norm(name) for term in _HIERARCHY_TERMS)
     )
-
     metric_fields = tuple(
-        name for name, metric in mappings.items()
+        name
+        for name, metric in mappings.items()
         if metric not in {"station", "timestamp", "latitude", "longitude"}
     )
     structural = {identity, display, timestamp, geometry_field, *hierarchy}
     ignored = tuple(
-        name for name in fields
+        name
+        for name in fields
         if name in structural
-        or _norm(name) in {"shape_starea", "shape_stlength", "objectid", "geometry", "the_geom"}
+        or _norm(name)
+        in {"shape_starea", "shape_stlength", "objectid", "geometry", "the_geom"}
     )
 
     if timestamp and identity and metric_fields:
@@ -131,7 +145,7 @@ def analyze_dataset(
         kind = "locations"
     elif geometry_type in {"polygon", "multipolygon"}:
         kind = "geographic_features"
-    elif geometry_type in {"line", "multiline"}:
+    elif geometry_type in {"line", "multiline", "linestring", "multilinestring"}:
         kind = "linear_features"
     elif timestamp:
         kind = "events"
@@ -140,7 +154,7 @@ def analyze_dataset(
     else:
         kind = "table"
 
-    confidence = profile.confidence
+    confidence = profile.confidence if profile else 0.0
     if identity:
         confidence = min(1.0, confidence + 0.15)
     if timestamp:
@@ -150,8 +164,8 @@ def analyze_dataset(
 
     return DatasetStructure(
         kind=kind,
-        profile_id=profile.profile_id,
-        confidence=confidence,
+        profile_id=profile.profile_id if profile else None,
+        confidence=round(confidence, 3),
         identity_field=identity,
         display_field=display,
         timestamp_field=timestamp,
@@ -178,8 +192,11 @@ def build_selectable_records(
         raw_label = row.get(structure.display_field) if structure.display_field else None
         label = str(raw_label) if raw_label not in (None, "") else value
         hierarchy = tuple(
-            (field, str(row[field])) for field in structure.hierarchy_fields
+            (field, str(row[field]))
+            for field in structure.hierarchy_fields
             if row.get(field) not in (None, "")
         )
-        found.setdefault(value, SelectableRecord(value=value, label=label, hierarchy=hierarchy))
+        found.setdefault(
+            value, SelectableRecord(value=value, label=label, hierarchy=hierarchy)
+        )
     return sorted(found.values(), key=lambda item: item.label.casefold())
