@@ -21,6 +21,7 @@ from .const import (
     PLATFORMS,
 )
 from .coordinator import OpenDataCoordinator
+from .entity_identity import effective_identity_field
 from .feedback import FeedbackRegistry
 from .providers import create_provider
 from .services import async_register_services
@@ -54,7 +55,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: OpenDataConfigEntry) -> 
     if isinstance(raw_records, str):
         selected_records = (raw_records,)
     else:
-        selected_records = tuple(str(item) for item in raw_records)
+        selected_records = tuple(dict.fromkeys(str(item) for item in raw_records))
+
+    configured_identity = entry.options.get(CONF_IDENTITY_FIELD) or entry.data.get(
+        CONF_IDENTITY_FIELD
+    )
+    configured_display = entry.options.get(CONF_DISPLAY_FIELD) or entry.data.get(
+        CONF_DISPLAY_FIELD
+    )
+    identity_field = effective_identity_field(configured_identity, configured_display)
+
+    # Record values saved under an observation ID cannot be reused after repairing
+    # the identity to a stable place name. Let the user select the desired places
+    # from the rebuilt options flow instead of issuing invalid per-row queries.
+    if identity_field != configured_identity:
+        selected_records = ()
+
     coordinator = OpenDataCoordinator(
         hass,
         provider,
@@ -63,10 +79,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: OpenDataConfigEntry) -> 
         entry.options.get(CONF_TIMESTAMP_FIELD)
         or entry.data.get(CONF_TIMESTAMP_FIELD)
         or None,
-        entry.options.get(CONF_IDENTITY_FIELD)
-        or entry.data.get(CONF_IDENTITY_FIELD),
-        entry.options.get(CONF_DISPLAY_FIELD)
-        or entry.data.get(CONF_DISPLAY_FIELD),
+        identity_field,
+        configured_display,
         selected_records,
         tuple(entry.data.get(CONF_HIERARCHY_FIELDS, ())),
     )
