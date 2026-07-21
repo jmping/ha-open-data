@@ -11,6 +11,7 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -33,6 +34,39 @@ from .const import (
 from .coordinator import OpenDataCoordinator
 from .field_roles import classify_field_roles, context_attributes
 from .ontology import metric_definitions
+
+
+async def _async_prune_stale_entities(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    desired_unique_ids: set[str],
+) -> None:
+    """Remove entities and orphaned devices no longer selected by this entry."""
+    entity_registry = er.async_get(hass)
+    stale = [
+        entity
+        for entity in entity_registry.entities.values()
+        if entity.config_entry_id == entry.entry_id
+        and entity.platform == DOMAIN
+        and entity.unique_id not in desired_unique_ids
+    ]
+    stale_device_ids = {entity.device_id for entity in stale if entity.device_id}
+    for entity in stale:
+        entity_registry.async_remove(entity.entity_id)
+
+    if not stale_device_ids:
+        return
+
+    remaining_device_ids = {
+        entity.device_id
+        for entity in entity_registry.entities.values()
+        if entity.device_id is not None
+    }
+    device_registry = dr.async_get(hass)
+    for device_id in stale_device_ids - remaining_device_ids:
+        device = device_registry.async_get(device_id)
+        if device is not None and entry.entry_id in device.config_entries:
+            device_registry.async_remove_device(device_id)
 
 
 async def async_setup_entry(
@@ -88,8 +122,8 @@ async def async_setup_entry(
         field for field in snapshot.dataset.fields if field.name in metric_names
     )
 
-    # If classification cannot identify a metric, keep the dataset status and
-    # context useful rather than recreating every source column as a sensor.
+    # If classification cannot identify a metric, keep source context available
+    # on valid status sensors rather than recreating every column as a sensor.
     context_fields = tuple(
         field
         for field in roles.context_fields
@@ -114,7 +148,9 @@ async def async_setup_entry(
                 )
                 for field in fields
             )
-    else:
+    elif not (coordinator.identity_field and coordinator.selected_records):
+        # A configured record selection with no returned observations should
+        # produce zero entities, not a misleading dataset-level empty entity.
         entities.append(OpenDataStatusSensor(entry, coordinator, None, context_fields))
         entities.extend(
             OpenDataFieldSensor(
@@ -128,7 +164,13 @@ async def async_setup_entry(
             )
             for field in fields
         )
-    async_add_entities(entities)
+
+    desired_unique_ids = {
+        entity.unique_id for entity in entities if entity.unique_id is not None
+    }
+    await _async_prune_stale_entities(hass, entry, desired_unique_ids)
+    if entities:
+        async_add_entities(entities)
 
 
 class OpenDataSensorBase(CoordinatorEntity[OpenDataCoordinator], SensorEntity):
