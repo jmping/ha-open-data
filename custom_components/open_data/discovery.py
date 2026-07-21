@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import re
 from typing import Any, Iterable
 
+from .catalog_quality import catalog_quality
 from .models import OpenDataDataset
 from .ontology import FieldMapping, match_dataset_profile
 
@@ -33,6 +34,12 @@ _ENVIRONMENT_TERMS: dict[str, int] = {
     "hourly": 14,
     "real time": 18,
     "realtime": 18,
+    "traffic count": 24,
+    "pedestrian count": 24,
+    "bicycle count": 24,
+    "speed": 14,
+    "water quality": 26,
+    "noise": 16,
 }
 
 _LOW_VALUE_TERMS: dict[str, int] = {
@@ -49,6 +56,8 @@ _FIELD_TERMS: dict[str, int] = {
     "date": 6,
     "time": 6,
     "station": 10,
+    "sensor": 10,
+    "counter": 10,
     "latitude": 8,
     "longitude": 8,
     "temperature": 16,
@@ -60,6 +69,10 @@ _FIELD_TERMS: dict[str, int] = {
     "rain": 14,
     "precip": 14,
     "wind": 12,
+    "count": 12,
+    "speed": 12,
+    "volume": 10,
+    "concentration": 12,
 }
 
 
@@ -126,6 +139,10 @@ def score_dataset(dataset: OpenDataDataset) -> DatasetCandidate:
             if term in field_names:
                 score += weight
                 reasons.append(f"field:{term}")
+
+    quality = catalog_quality(dataset)
+    score += quality.adjustment
+    reasons.extend(quality.reasons)
 
     profile = match_dataset_profile(dataset)
     if profile is not None:
