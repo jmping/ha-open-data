@@ -19,6 +19,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import (
     CONF_DISPLAY_FIELD,
     CONF_FIELD_MAPPINGS,
+    CONF_FIELD_ROLES,
     CONF_IDENTITY_FIELD,
     CONF_IGNORED_FIELDS,
     CONF_LOCATION_FIELDS,
@@ -109,6 +110,9 @@ async def async_setup_entry(
         structural_fields=structural_fields,
         timestamp_fields=timestamp_fields,
         ignored_fields=ignored,
+        explicit_roles=entry.options.get(
+            CONF_FIELD_ROLES, entry.data.get(CONF_FIELD_ROLES, {})
+        ),
     )
     fields_by_name = {field.name: field for field in snapshot.dataset.fields}
 
@@ -126,7 +130,11 @@ async def async_setup_entry(
     # on valid status sensors rather than recreating every column as a sensor.
     context_fields = tuple(
         field
-        for field in roles.context_fields
+        for field in (
+            *roles.location_fields,
+            *roles.measurement_name_fields,
+            *roles.context_fields,
+        )
         if field in fields_by_name and field not in ignored
     )
 
