@@ -24,7 +24,13 @@ USER_AGENT = "Home Assistant Open Data integration"
 
 
 def normalize_portal_url(portal_url: str) -> str:
-    """Normalize and validate a public portal URL."""
+    """Normalize and validate a public portal URL.
+
+    Search and catalog pages commonly arrive with harmless pagination/filter query
+    strings. Provider discovery operates on the canonical path, so those query and
+    fragment components are intentionally discarded rather than rejecting an
+    otherwise valid user-supplied portal URL.
+    """
     value = portal_url.strip().rstrip("/")
     if "://" not in value:
         value = f"https://{value}"
@@ -39,8 +45,6 @@ def normalize_portal_url(portal_url: str) -> str:
         or not hostname
         or parsed.username is not None
         or parsed.password is not None
-        or parsed.query
-        or parsed.fragment
     ):
         raise ValueError("Portal URL must contain a valid HTTP(S) hostname")
     if hostname.casefold() == "localhost" or hostname.casefold().endswith(".localhost"):
