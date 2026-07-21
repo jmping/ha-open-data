@@ -24,7 +24,11 @@ _HIERARCHY_TERMS = (
 )
 _TIME_TERMS = (
     "timestamp", "datetime", "date_time", "observation_time", "obs_time",
-    "sample_time", "measured_at", "updated_at", "date", "time",
+    "sample_time", "measured_at", "updated_at", "created_at", "date", "time",
+)
+_LOCATION_TERMS = (
+    "latitude", "longitude", "lat", "lon", "lng", "location", "coordinates",
+    "geometry", "the_geom", "address", "street_address", "zip", "zipcode",
 )
 _GEOMETRY_TYPES = {
     "point", "multipoint", "line", "multiline", "linestring", "multilinestring",
@@ -60,23 +64,36 @@ class DatasetStructure:
     hierarchy_fields: tuple[str, ...]
     metric_fields: tuple[str, ...]
     ignored_fields: tuple[str, ...]
+    identity_fields: tuple[str, ...] = ()
+    display_fields: tuple[str, ...] = ()
+    timestamp_fields: tuple[str, ...] = ()
+    location_fields: tuple[str, ...] = ()
 
     @property
     def supports_record_selection(self) -> bool:
         return self.identity_field is not None
 
 
-def _best_field(field_names: Iterable[str], preferred: tuple[str, ...]) -> str | None:
+def _candidate_fields(field_names: Iterable[str], preferred: tuple[str, ...]) -> tuple[str, ...]:
     normalized = {name: _norm(name) for name in field_names}
-    for term in preferred:
-        for name, norm in normalized.items():
+    scored: list[tuple[int, int, str]] = []
+    for name, norm in normalized.items():
+        best: tuple[int, int] | None = None
+        for index, term in enumerate(preferred):
             if norm == term:
-                return name
-    for term in preferred:
-        for name, norm in normalized.items():
+                best = (0, index)
+                break
             if norm.endswith(f"_{term}") or norm.startswith(f"{term}_"):
-                return name
-    return None
+                candidate = (1, index)
+                if best is None or candidate < best:
+                    best = candidate
+            elif term in norm:
+                candidate = (2, index)
+                if best is None or candidate < best:
+                    best = candidate
+        if best is not None:
+            scored.append((best[0], best[1], name))
+    return tuple(item[2] for item in sorted(scored, key=lambda item: (item[0], item[1], item[2].casefold())))
 
 
 def _geometry(
@@ -107,18 +124,29 @@ def analyze_dataset(
         for mapping in map_fields(dataset.fields)
     }
 
-    timestamp = next(
+    identity_fields = _candidate_fields(fields, _IDENTIFIER_TERMS)
+    display_fields = _candidate_fields(fields, _DISPLAY_TERMS)
+    timestamp_fields = _candidate_fields(fields, _TIME_TERMS)
+    location_fields = _candidate_fields(fields, _LOCATION_TERMS)
+
+    mapped_timestamp = next(
         (name for name, metric in mappings.items() if metric == "timestamp"), None
-    ) or _best_field(fields, _TIME_TERMS)
-    station = next(
+    )
+    mapped_station = next(
         (name for name, metric in mappings.items() if metric == "station"), None
     )
-    identity = station or _best_field(fields, _IDENTIFIER_TERMS)
-    display = _best_field(fields, _DISPLAY_TERMS)
-    if display == identity:
-        display = None
+    timestamp = mapped_timestamp or (timestamp_fields[0] if timestamp_fields else None)
+    identity = mapped_station or (identity_fields[0] if identity_fields else None)
+    if mapped_station and mapped_station not in identity_fields:
+        identity_fields = (mapped_station, *identity_fields)
+    if mapped_timestamp and mapped_timestamp not in timestamp_fields:
+        timestamp_fields = (mapped_timestamp, *timestamp_fields)
 
+    display = next((name for name in display_fields if name != identity), None)
     geometry_field, geometry_type = _geometry(dataset, rows)
+    if geometry_field and geometry_field not in location_fields:
+        location_fields = (*location_fields, geometry_field)
+
     hierarchy = tuple(
         name
         for name in fields
@@ -130,7 +158,10 @@ def analyze_dataset(
         for name, metric in mappings.items()
         if metric not in {"station", "timestamp", "latitude", "longitude"}
     )
-    structural = {identity, display, timestamp, geometry_field, *hierarchy}
+    structural = {
+        identity, display, timestamp, geometry_field, *identity_fields, *display_fields,
+        *timestamp_fields, *location_fields, *hierarchy,
+    }
     ignored = tuple(
         name
         for name in fields
@@ -174,6 +205,10 @@ def analyze_dataset(
         hierarchy_fields=hierarchy,
         metric_fields=metric_fields,
         ignored_fields=ignored,
+        identity_fields=identity_fields,
+        display_fields=display_fields,
+        timestamp_fields=timestamp_fields,
+        location_fields=location_fields,
     )
 
 
