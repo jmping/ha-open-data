@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from typing import Any
 
 import voluptuous as vol
@@ -12,27 +13,39 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import SelectOptionDict, SelectSelector, SelectSelectorConfig
 
-from .analyzer import DatasetStructure, analyze_dataset, build_selectable_records
+from .analysis_pipeline import async_analyze_dataset
+from .analyzer import DatasetStructure, build_selectable_records
 from .const import (
     CONF_DATASET_ID,
     CONF_DATASET_KIND,
+    CONF_DATASET_ORDERING,
     CONF_DISPLAY_FIELD,
     CONF_DISPLAY_FIELDS,
+    CONF_ESTIMATED_ENTITY_COUNT,
     CONF_FIELD_MAPPINGS,
     CONF_HIERARCHY_FIELDS,
     CONF_IDENTITY_FIELD,
     CONF_IDENTITY_FIELDS,
     CONF_IGNORED_FIELDS,
     CONF_LOCATION_FIELDS,
+    CONF_METRIC_DIMENSION_FIELDS,
     CONF_METRIC_FIELDS,
+    CONF_OBSERVATION_CONFIDENCE,
+    CONF_OBSERVATION_DIMENSION_FIELDS,
+    CONF_OBSERVATION_SHAPE,
     CONF_PORTAL_URL,
     CONF_PROFILE_ID,
     CONF_PROVIDER,
     CONF_RESOURCE_ID,
+    CONF_RETRIEVAL_DIMENSION_MULTIPLIER,
+    CONF_RETRIEVAL_TARGET_ROWS,
+    CONF_SAMPLING_REPORT,
     CONF_SELECTED_FIELDS,
     CONF_SELECTED_RECORDS,
     CONF_TIMESTAMP_FIELD,
     CONF_TIMESTAMP_FIELDS,
+    CONF_UNIT_FIELDS,
+    CONF_VALUE_FIELDS,
     DOMAIN,
 )
 from .discovery import DatasetCandidate, rank_datasets, score_dataset
@@ -210,10 +223,11 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         dataset = await provider.async_get_dataset(
             discovered.dataset_id, discovered.resource_id
         )
-        sample_rows = await provider.async_sample_rows(
-            dataset.dataset_id, dataset.resource_id, limit=50
-        )
-        structure = analyze_dataset(dataset, sample_rows)
+        analysis = await async_analyze_dataset(provider, dataset)
+        structure = analysis.structure
+        observations = analysis.observations
+        population = analysis.sampling.entity_population
+        plan = analysis.sampling.retrieval_plan
         candidate = score_dataset(dataset)
         unique_id = (
             f"{self._provider_name}:{self._portal_url}:"
@@ -231,6 +245,21 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             CONF_TIMESTAMP_FIELDS: list(structure.timestamp_fields),
             CONF_LOCATION_FIELDS: list(structure.location_fields),
             CONF_HIERARCHY_FIELDS: list(structure.hierarchy_fields),
+            CONF_OBSERVATION_SHAPE: observations.shape.value,
+            CONF_OBSERVATION_CONFIDENCE: observations.confidence,
+            CONF_METRIC_DIMENSION_FIELDS: list(
+                observations.metric_dimension_fields
+            ),
+            CONF_VALUE_FIELDS: list(observations.value_fields),
+            CONF_OBSERVATION_DIMENSION_FIELDS: list(
+                observations.observation_dimension_fields
+            ),
+            CONF_UNIT_FIELDS: list(observations.unit_fields),
+            CONF_ESTIMATED_ENTITY_COUNT: population.estimated_entities,
+            CONF_DATASET_ORDERING: plan.ordering.value,
+            CONF_RETRIEVAL_TARGET_ROWS: plan.target_rows,
+            CONF_RETRIEVAL_DIMENSION_MULTIPLIER: plan.dimension_multiplier,
+            CONF_SAMPLING_REPORT: asdict(analysis.sampling),
         }
         if dataset.resource_id:
             data[CONF_RESOURCE_ID] = dataset.resource_id
