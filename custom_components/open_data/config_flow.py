@@ -12,14 +12,18 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import SelectOptionDict, SelectSelector, SelectSelectorConfig
 
-from .analyzer import analyze_dataset, build_selectable_records
+from .analyzer import DatasetStructure, analyze_dataset, build_selectable_records
 from .const import (
     CONF_DATASET_ID,
     CONF_DATASET_KIND,
     CONF_DISPLAY_FIELD,
+    CONF_DISPLAY_FIELDS,
     CONF_FIELD_MAPPINGS,
     CONF_IDENTITY_FIELD,
+    CONF_IDENTITY_FIELDS,
     CONF_IGNORED_FIELDS,
+    CONF_LOCATION_FIELDS,
+    CONF_METRIC_FIELDS,
     CONF_PORTAL_URL,
     CONF_PROFILE_ID,
     CONF_PROVIDER,
@@ -27,13 +31,18 @@ from .const import (
     CONF_SELECTED_FIELDS,
     CONF_SELECTED_RECORDS,
     CONF_TIMESTAMP_FIELD,
+    CONF_TIMESTAMP_FIELDS,
     DOMAIN,
 )
 from .discovery import DatasetCandidate, rank_datasets, score_dataset
 from .models import OpenDataDataset
 from .portal_inspector import async_discover_catalog, async_inspect_portal
 from .providers import create_provider
-from .providers.base import OpenDataConnectionError, OpenDataResponseError, OpenDataSecurityError
+from .providers.base import (
+    OpenDataConnectionError,
+    OpenDataResponseError,
+    OpenDataSecurityError,
+)
 
 _DISCOVERY_LIMIT = 50
 _CATALOG_LIMIT = 500
@@ -76,7 +85,8 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "unknown"
             else:
                 self._candidates = {
-                    item.dataset.dataset_id: item for item in candidates[:_DISCOVERY_LIMIT]
+                    item.dataset.dataset_id: item
+                    for item in candidates[:_DISCOVERY_LIMIT]
                 }
                 if self._candidates:
                     return await self.async_step_discover()
@@ -213,6 +223,11 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             CONF_DATASET_ID: dataset.dataset_id,
             CONF_DATASET_KIND: structure.kind,
             CONF_IGNORED_FIELDS: list(structure.ignored_fields),
+            CONF_METRIC_FIELDS: list(structure.metric_fields),
+            CONF_IDENTITY_FIELDS: list(structure.identity_fields),
+            CONF_DISPLAY_FIELDS: list(structure.display_fields),
+            CONF_TIMESTAMP_FIELDS: list(structure.timestamp_fields),
+            CONF_LOCATION_FIELDS: list(structure.location_fields),
         }
         if dataset.resource_id:
             data[CONF_RESOURCE_ID] = dataset.resource_id
@@ -244,10 +259,19 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 class OpenDataOptionsFlow(config_entries.OptionsFlow):
-    """Choose records/locations and metrics exposed as entities."""
+    """Choose structural fields, records/locations, and metrics."""
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         self._config_entry = config_entry
+
+    @staticmethod
+    def _field_selector(values: list[str]) -> SelectSelector:
+        return SelectSelector(
+            SelectSelectorConfig(
+                options=[SelectOptionDict(value=value, label=value) for value in values],
+                multiple=False,
+            )
+        )
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -258,13 +282,15 @@ class OpenDataOptionsFlow(config_entries.OptionsFlow):
         coordinator = self._config_entry.runtime_data
         dataset = coordinator.data.dataset
         ignored = set(self._config_entry.data.get(CONF_IGNORED_FIELDS, ()))
+        metrics = set(self._config_entry.data.get(CONF_METRIC_FIELDS, ()))
         choices = {
             field.name: field.label
             for field in dataset.fields
             if field.name not in ignored
         }
+        default_fields = metrics & choices.keys() or choices.keys()
         current_fields = list(
-            self._config_entry.options.get(CONF_SELECTED_FIELDS, choices.keys())
+            self._config_entry.options.get(CONF_SELECTED_FIELDS, default_fields)
         )
         schema: dict[Any, Any] = {
             vol.Optional(CONF_SELECTED_FIELDS, default=current_fields): cv.multi_select(
@@ -272,27 +298,59 @@ class OpenDataOptionsFlow(config_entries.OptionsFlow):
             )
         }
 
-        identity = self._config_entry.data.get(CONF_IDENTITY_FIELD)
+        identity_fields = list(self._config_entry.data.get(CONF_IDENTITY_FIELDS, ()))
+        display_fields = list(self._config_entry.data.get(CONF_DISPLAY_FIELDS, ()))
+        timestamp_fields = list(self._config_entry.data.get(CONF_TIMESTAMP_FIELDS, ()))
+        identity = self._config_entry.options.get(
+            CONF_IDENTITY_FIELD, self._config_entry.data.get(CONF_IDENTITY_FIELD)
+        )
+        display = self._config_entry.options.get(
+            CONF_DISPLAY_FIELD, self._config_entry.data.get(CONF_DISPLAY_FIELD)
+        )
+        timestamp = self._config_entry.options.get(
+            CONF_TIMESTAMP_FIELD, self._config_entry.data.get(CONF_TIMESTAMP_FIELD)
+        )
+
+        if identity_fields:
+            schema[vol.Optional(CONF_IDENTITY_FIELD, default=identity)] = self._field_selector(
+                identity_fields
+            )
+        if display_fields:
+            schema[vol.Optional(CONF_DISPLAY_FIELD, default=display)] = self._field_selector(
+                display_fields
+            )
+        if timestamp_fields:
+            schema[vol.Optional(CONF_TIMESTAMP_FIELD, default=timestamp)] = self._field_selector(
+                timestamp_fields
+            )
+
         if identity:
-            provider = coordinator.provider
-            rows = await provider.async_distinct_rows(
+            rows = await coordinator.provider.async_distinct_rows(
                 dataset.dataset_id,
                 dataset.resource_id,
                 identity,
-                self._config_entry.data.get(CONF_DISPLAY_FIELD),
+                display,
                 tuple(),
                 limit=_RECORD_LIMIT,
             )
-            structure = analyze_dataset(dataset, rows[:50])
+            structure = DatasetStructure(
+                kind=self._config_entry.data.get(CONF_DATASET_KIND, "records"),
+                profile_id=self._config_entry.data.get(CONF_PROFILE_ID),
+                confidence=1.0,
+                identity_field=identity,
+                display_field=display,
+                timestamp_field=timestamp,
+                geometry_field=None,
+                geometry_type=None,
+                hierarchy_fields=tuple(),
+                metric_fields=tuple(metrics),
+                ignored_fields=tuple(ignored),
+            )
             records = build_selectable_records(rows, structure)
-            record_choices = {
-                record.value: record.label for record in records
-            }
+            record_choices = {record.value: record.label for record in records}
             if record_choices:
                 current_records = list(
-                    self._config_entry.options.get(
-                        CONF_SELECTED_RECORDS, record_choices.keys()
-                    )
+                    self._config_entry.options.get(CONF_SELECTED_RECORDS, ())
                 )
                 schema[
                     vol.Optional(CONF_SELECTED_RECORDS, default=current_records)
