@@ -6,12 +6,10 @@ from dataclasses import dataclass
 from functools import lru_cache
 from importlib.resources import files
 import json
-import re
+import unicodedata
 from typing import Any
 
 from ..models import OpenDataDataset, OpenDataField
-
-_NORMALIZE_PATTERN = re.compile(r"[^a-z0-9]+")
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,8 +56,25 @@ class ProfileMatch:
 
 
 def normalize_identifier(value: str) -> str:
-    """Normalize field names and aliases for deterministic comparison."""
-    return _NORMALIZE_PATTERN.sub("_", value.casefold()).strip("_")
+    """Normalize Unicode field names and aliases for deterministic comparison.
+
+    NFKC preserves meaningful non-Latin scripts while folding compatibility forms
+    such as full-width Latin characters. Punctuation and whitespace become a
+    single underscore, so Arabic, Hebrew, CJK, and accented European aliases can
+    participate in the same exact-match ontology as English identifiers.
+    """
+    normalized = unicodedata.normalize("NFKC", value).casefold()
+    parts: list[str] = []
+    pending_separator = False
+    for character in normalized:
+        if character.isalnum():
+            if pending_separator and parts:
+                parts.append("_")
+            parts.append(character)
+            pending_separator = False
+        else:
+            pending_separator = True
+    return "".join(parts).strip("_")
 
 
 @lru_cache(maxsize=1)
@@ -79,7 +94,7 @@ def _load_ontology() -> tuple[dict[str, MetricDefinition], tuple[ProfileDefiniti
         metadata = {key: value for key, value in raw.items() if key != "aliases"}
         metrics[metric_id] = MetricDefinition(
             metric_id=metric_id,
-            aliases=frozenset(aliases),
+            aliases=frozenset(item for item in aliases if item),
             metadata=metadata,
         )
 
@@ -87,7 +102,10 @@ def _load_ontology() -> tuple[dict[str, MetricDefinition], tuple[ProfileDefiniti
         ProfileDefinition(
             profile_id=item["id"],
             title=item["title"],
-            metadata_terms=tuple(term.casefold() for term in item.get("metadata_terms", [])),
+            metadata_terms=tuple(
+                unicodedata.normalize("NFKC", term).casefold()
+                for term in item.get("metadata_terms", [])
+            ),
             core_metrics=tuple(item.get("core", [])),
             support_metrics=tuple(item.get("support", [])),
         )
@@ -115,17 +133,19 @@ def _field_text(field: OpenDataField) -> tuple[str, ...]:
 
 
 def map_fields(fields: tuple[OpenDataField, ...]) -> tuple[FieldMapping, ...]:
-    """Map source fields to canonical metrics using exact normalized aliases."""
+    """Map source fields to canonical metrics using exact normalized aliases.
+
+    Multiple source columns may legitimately represent the same canonical role
+    (for example a station code and station name), so canonical metrics are not
+    globally claimed by the first matching field.
+    """
     metrics, _profiles = _load_ontology()
     mappings: list[FieldMapping] = []
-    claimed_metrics: set[str] = set()
 
     for field in fields:
         candidates = _field_text(field)
         best: FieldMapping | None = None
         for metric in metrics.values():
-            if metric.metric_id in claimed_metrics:
-                continue
             confidence = 0.0
             if candidates and candidates[0] in metric.aliases:
                 confidence = 1.0
@@ -142,7 +162,6 @@ def map_fields(fields: tuple[OpenDataField, ...]) -> tuple[FieldMapping, ...]:
                 )
         if best is not None:
             mappings.append(best)
-            claimed_metrics.add(best.canonical_metric)
 
     return tuple(mappings)
 
@@ -165,7 +184,7 @@ def _dataset_metadata_text(dataset: OpenDataDataset) -> str:
                     )
         elif isinstance(value, dict):
             values.extend(str(item) for item in value.values() if isinstance(item, str))
-    return " ".join(values).casefold()
+    return unicodedata.normalize("NFKC", " ".join(values)).casefold()
 
 
 def match_dataset_profile(dataset: OpenDataDataset) -> ProfileMatch | None:
@@ -188,7 +207,10 @@ def match_dataset_profile(dataset: OpenDataDataset) -> ProfileMatch | None:
         metadata_ratio = min(len(metadata_hits), 2) / 2
 
         if dataset.fields:
-            confidence = min(1.0, 0.65 * core_ratio + 0.20 * support_ratio + 0.15 * metadata_ratio)
+            confidence = min(
+                1.0,
+                0.65 * core_ratio + 0.20 * support_ratio + 0.15 * metadata_ratio,
+            )
             if not matched_core:
                 confidence *= 0.45
         else:
@@ -198,7 +220,10 @@ def match_dataset_profile(dataset: OpenDataDataset) -> ProfileMatch | None:
             continue
 
         reasons = tuple(
-            [*(f"metric:{item}" for item in matched_core), *(f"term:{item}" for item in metadata_hits[:2])]
+            [
+                *(f"metric:{item}" for item in matched_core),
+                *(f"term:{item}" for item in metadata_hits[:2]),
+            ]
         )
         candidate = ProfileMatch(
             profile_id=profile.profile_id,
@@ -207,7 +232,8 @@ def match_dataset_profile(dataset: OpenDataDataset) -> ProfileMatch | None:
             mappings=tuple(
                 mapping
                 for mapping in mappings
-                if mapping.canonical_metric in set(profile.core_metrics + profile.support_metrics)
+                if mapping.canonical_metric
+                in set(profile.core_metrics + profile.support_metrics)
             ),
             matched_core=matched_core,
             matched_support=matched_support,
