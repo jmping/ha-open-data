@@ -10,6 +10,10 @@ from ..models import OpenDataDataset, OpenDataField
 from .base import OpenDataResponseError, ProviderCapabilities
 from .common import JsonClient
 
+_PAGE_SIZE = 1000
+_MAX_ENTITY_REQUEST = 10000
+_MAX_OBSERVATIONS_PER_ENTITY = 20000
+
 
 class CkanProvider(JsonClient):
     """Provider for CKAN Action and DataStore APIs."""
@@ -36,6 +40,72 @@ class CkanProvider(JsonClient):
         if not isinstance(payload, dict) or payload.get("success") is not True:
             raise OpenDataResponseError(f"CKAN action {action} failed")
         return payload.get("result")
+
+    async def _paged_datastore_rows(
+        self,
+        resource_id: str,
+        *,
+        limit: int,
+        params: dict[str, str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Retrieve a bounded CKAN DataStore result using offset pagination."""
+        requested = max(1, int(limit))
+        rows: list[dict[str, Any]] = []
+        offset = 0
+        while len(rows) < requested:
+            page_limit = min(_PAGE_SIZE, requested - len(rows))
+            page_params = dict(params or {})
+            page_params.update(
+                {
+                    "resource_id": resource_id,
+                    "limit": str(page_limit),
+                    "offset": str(offset),
+                }
+            )
+            result = await self._action("datastore_search", page_params)
+            records = result.get("records", []) if isinstance(result, dict) else []
+            if not isinstance(records, list) or not all(
+                isinstance(row, dict) for row in records
+            ):
+                raise OpenDataResponseError("CKAN paged query did not return records")
+            rows.extend(records)
+            if len(records) < page_limit:
+                break
+            offset += len(records)
+        return rows[:requested]
+
+    async def _paged_distinct_values(
+        self,
+        resource_id: str,
+        entity_field: str,
+        *,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        """Page a distinct entity query without truncating at one SQL page."""
+        requested = max(1, int(limit))
+        rows: list[dict[str, Any]] = []
+        offset = 0
+        quoted_entity = f'"{entity_field}"'
+        while len(rows) < requested:
+            page_limit = min(_PAGE_SIZE, requested - len(rows))
+            sql = (
+                f"SELECT DISTINCT {quoted_entity} FROM \"{resource_id}\" "
+                f"WHERE {quoted_entity} IS NOT NULL ORDER BY {quoted_entity} "
+                f"LIMIT {page_limit} OFFSET {offset}"
+            )
+            result = await self._action("datastore_search_sql", {"sql": sql})
+            records = result.get("records", []) if isinstance(result, dict) else []
+            if not isinstance(records, list) or not all(
+                isinstance(row, dict) for row in records
+            ):
+                raise OpenDataResponseError(
+                    "CKAN distinct entity query did not return records"
+                )
+            rows.extend(records)
+            if len(records) < page_limit:
+                break
+            offset += len(records)
+        return rows[:requested]
 
     async def async_verify_portal(self) -> None:
         result = await self._action("status_show", {})
@@ -108,17 +178,10 @@ class CkanProvider(JsonClient):
         limit: int = 50,
     ) -> list[dict[str, Any]]:
         dataset = await self.async_get_dataset(dataset_id, resource_id)
-        result = await self._action(
-            "datastore_search",
-            {
-                "resource_id": dataset.resource_id or "",
-                "limit": str(min(max(limit, 1), 1000)),
-            },
+        return await self._paged_datastore_rows(
+            dataset.resource_id or "",
+            limit=limit,
         )
-        records = result.get("records", []) if isinstance(result, dict) else []
-        if not isinstance(records, list) or not all(isinstance(row, dict) for row in records):
-            raise OpenDataResponseError("CKAN sample query did not return records")
-        return records
 
     async def async_sample_observations(
         self,
@@ -130,64 +193,47 @@ class CkanProvider(JsonClient):
         entity_limit: int = 20,
         observations_per_entity: int = 25,
     ) -> list[dict[str, Any]]:
-        """Sample recent history across multiple CKAN DataStore entities."""
+        """Retrieve bounded history across requested CKAN entities with pagination."""
         dataset = await self.async_get_dataset(dataset_id, resource_id)
         safe_fields = {field.name for field in dataset.fields}
-        entity_limit = min(max(entity_limit, 1), 50)
-        per_entity = min(max(observations_per_entity, 2), 100)
+        requested_entities = min(max(int(entity_limit), 1), _MAX_ENTITY_REQUEST)
+        per_entity = min(
+            max(int(observations_per_entity), 1), _MAX_OBSERVATIONS_PER_ENTITY
+        )
         if entity_field and entity_field not in safe_fields:
             raise ValueError("Entity field is not present in the CKAN resource")
         if timestamp_field and timestamp_field not in safe_fields:
             raise ValueError("Timestamp field is not present in the CKAN resource")
 
         if not entity_field:
-            params = {
-                "resource_id": dataset.resource_id or "",
-                "limit": str(min(entity_limit * per_entity, 1000)),
-            }
+            params: dict[str, str] = {}
             if timestamp_field:
                 params["sort"] = f'"{timestamp_field}" desc'
-            result = await self._action("datastore_search", params)
-            records = result.get("records", []) if isinstance(result, dict) else []
-            if not isinstance(records, list) or not all(
-                isinstance(row, dict) for row in records
-            ):
-                raise OpenDataResponseError("CKAN observation query did not return records")
-            return records
+            return await self._paged_datastore_rows(
+                dataset.resource_id or "",
+                limit=requested_entities * per_entity,
+                params=params,
+            )
 
-        quoted_entity = f'"{entity_field}"'
-        sql = (
-            f'SELECT DISTINCT {quoted_entity} FROM "{dataset.resource_id}" '
-            f"WHERE {quoted_entity} IS NOT NULL ORDER BY {quoted_entity} "
-            f"LIMIT {entity_limit}"
+        entities = await self._paged_distinct_values(
+            dataset.resource_id or "",
+            entity_field,
+            limit=requested_entities,
         )
-        result = await self._action("datastore_search_sql", {"sql": sql})
-        entities = result.get("records", []) if isinstance(result, dict) else []
-        if not isinstance(entities, list) or not all(
-            isinstance(row, dict) for row in entities
-        ):
-            raise OpenDataResponseError("CKAN entity sample did not return records")
-
         semaphore = asyncio.Semaphore(6)
 
         async def fetch_entity(value: str) -> list[dict[str, Any]]:
             params = {
-                "resource_id": dataset.resource_id or "",
-                "limit": str(per_entity),
-                "filters": json.dumps({entity_field: value}, separators=(",", ":")),
+                "filters": json.dumps({entity_field: value}, separators=(",", ":"))
             }
             if timestamp_field:
                 params["sort"] = f'"{timestamp_field}" desc'
             async with semaphore:
-                page = await self._action("datastore_search", params)
-            records = page.get("records", []) if isinstance(page, dict) else []
-            if not isinstance(records, list) or not all(
-                isinstance(row, dict) for row in records
-            ):
-                raise OpenDataResponseError(
-                    "CKAN per-entity observation query did not return records"
+                return await self._paged_datastore_rows(
+                    dataset.resource_id or "",
+                    limit=per_entity,
+                    params=params,
                 )
-            return records
 
         values = [
             str(row[entity_field])
@@ -216,15 +262,28 @@ class CkanProvider(JsonClient):
         if not set(requested).issubset(safe_fields):
             raise ValueError("Distinct field is not present in the CKAN resource")
         quoted = ", ".join(f'"{field}"' for field in requested)
-        sql = (
-            f'SELECT DISTINCT {quoted} FROM "{dataset.resource_id}" '
-            f'ORDER BY "{identity_field}" LIMIT {min(max(limit, 1), 1000)}'
-        )
-        result = await self._action("datastore_search_sql", {"sql": sql})
-        records = result.get("records", []) if isinstance(result, dict) else []
-        if not isinstance(records, list) or not all(isinstance(row, dict) for row in records):
-            raise OpenDataResponseError("CKAN distinct query did not return records")
-        return records
+        bounded_limit = max(1, int(limit))
+        rows: list[dict[str, Any]] = []
+        offset = 0
+        while len(rows) < bounded_limit:
+            page_limit = min(_PAGE_SIZE, bounded_limit - len(rows))
+            sql = (
+                f'SELECT DISTINCT {quoted} FROM "{dataset.resource_id}" '
+                f'ORDER BY "{identity_field}" LIMIT {page_limit} OFFSET {offset}'
+            )
+            result = await self._action("datastore_search_sql", {"sql": sql})
+            records = result.get("records", []) if isinstance(result, dict) else []
+            if not isinstance(records, list) or not all(
+                isinstance(row, dict) for row in records
+            ):
+                raise OpenDataResponseError(
+                    "CKAN distinct query did not return records"
+                )
+            rows.extend(records)
+            if len(records) < page_limit:
+                break
+            offset += len(records)
+        return rows[:bounded_limit]
 
     @staticmethod
     def _normalize_packages(packages: Any) -> list[OpenDataDataset]:
@@ -286,7 +345,9 @@ class CkanProvider(JsonClient):
             if selected is None:
                 raise OpenDataResponseError("Requested CKAN resource was not found")
             if not selected.get("datastore_active"):
-                raise OpenDataResponseError("Requested CKAN resource is not DataStore-enabled")
+                raise OpenDataResponseError(
+                    "Requested CKAN resource is not DataStore-enabled"
+                )
             return selected
         selected = next(
             (
