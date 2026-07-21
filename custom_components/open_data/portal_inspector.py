@@ -36,6 +36,7 @@ _LINK_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _URL_PATTERN = re.compile(r"https?://[^\s'\"<>]+", re.IGNORECASE)
+_ESCAPED_URL_PATTERN = re.compile(r"https?:\\/\\/[^\s'\"<>]+", re.IGNORECASE)
 _COMMON_PORTAL_PATHS = {
     "browse",
     "catalog",
@@ -51,6 +52,11 @@ _COMMON_PORTAL_PATHS = {
     "search",
     "view",
 }
+_PORTAL_HOST_SUFFIXES = (
+    ".ckan.org",
+    ".socrata.com",
+    ".tylertech.com",
+)
 _CATALOG_PROBE_LIMIT = 1
 _CATALOG_CACHE: dict[str, tuple[float, tuple[OpenDataDataset, ...]]] = {}
 
@@ -102,6 +108,14 @@ def _candidate_roots(portal_url: str) -> list[str]:
     return candidates
 
 
+def _decode_embedded_link(raw_link: str) -> str:
+    """Normalize URLs embedded in JSON, script data, and HTML attributes."""
+    candidate = html.unescape(raw_link.strip())
+    candidate = candidate.replace("\\/", "/")
+    candidate = candidate.replace("\\u0026", "&").replace("\\u003d", "=")
+    return candidate.rstrip("\\,;)")
+
+
 async def _async_linked_portal_candidates(
     session: ClientSession, page_url: str
 ) -> list[str]:
@@ -126,12 +140,16 @@ async def _async_linked_portal_candidates(
         return []
 
     text = html.unescape(body.decode(response.charset or "utf-8", errors="ignore"))
-    raw_links = _LINK_PATTERN.findall(text) + _URL_PATTERN.findall(text)
+    raw_links = (
+        _LINK_PATTERN.findall(text)
+        + _URL_PATTERN.findall(text)
+        + _ESCAPED_URL_PATTERN.findall(text)
+    )
     candidates: list[str] = []
-    source_host = urlparse(validated).hostname or ""
+    source_host = (urlparse(validated).hostname or "").lower()
 
     for raw_link in raw_links:
-        absolute = urljoin(validated, raw_link.strip())
+        absolute = urljoin(validated, _decode_embedded_link(raw_link))
         try:
             normalized = normalize_portal_url(absolute)
         except (ValueError, OpenDataSecurityError):
@@ -144,10 +162,11 @@ async def _async_linked_portal_candidates(
         looks_like_portal = (
             host != source_host
             or host.startswith(("data.", "ckan.", "opendata."))
-            or host.endswith((".socrata.com", ".ckan.org"))
+            or host.endswith(_PORTAL_HOST_SUFFIXES)
             or any(f"/{segment}" in path for segment in _COMMON_PORTAL_PATHS)
             or "/api/3/" in path
             or "/api/catalog/" in path
+            or "/api/views/" in path
             or "/resource/" in path
             or "/dataset/" in path
         )
@@ -156,7 +175,7 @@ async def _async_linked_portal_candidates(
         for candidate in _candidate_roots(normalized):
             if candidate not in candidates:
                 candidates.append(candidate)
-        if len(candidates) >= 40:
+        if len(candidates) >= 50:
             break
     return candidates
 
