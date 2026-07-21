@@ -4,17 +4,16 @@
     "step": {
       "user": {
         "title": "Discover public datasets",
-        "description": "Choose the portal type and enter the institution's public data portal. Open Data will scan and rank useful datasets automatically.",
+        "description": "Enter an institution's public data portal URL. Open Data will detect the provider and rank useful datasets automatically.",
         "data": {
-          "provider": "Provider",
           "portal_url": "Portal URL"
         }
       },
       "discover": {
-        "title": "Choose a discovered dataset",
-        "description": "Found {count} ranked datasets on {portal}. Scores favor queryable environmental, weather, air-quality, water, climate, and energy data.",
+        "title": "Choose discovered datasets",
+        "description": "Found {count} ranked datasets on {portal} using {provider}. Scores favor queryable environmental, weather, air-quality, water, climate, and energy data.",
         "data": {
-          "dataset_id": "Dataset"
+          "dataset_ids": "Datasets"
         }
       }
     },
@@ -26,6 +25,21 @@
     },
     "abort": {
       "already_configured": "This open data resource is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Choose records and metrics",
+        "description": "Dataset structure: {kind}. Current identity field: {identity}. Select the structural fields, records or stations, and measurements to expose.",
+        "data": {
+          "identity_field": "Record or station identifier",
+          "display_field": "Record or station name",
+          "timestamp_field": "Observation timestamp",
+          "selected_records": "Records, stations, or locations",
+          "selected_fields": "Measurements"
+        }
+      }
     }
   },
   "entity": {
