@@ -10,35 +10,35 @@ from homeassistant import config_entries
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.selector import (
-    SelectOptionDict,
-    SelectSelector,
-    SelectSelectorConfig,
-)
+from homeassistant.helpers.selector import SelectOptionDict, SelectSelector, SelectSelectorConfig
 
+from .analyzer import analyze_dataset, build_selectable_records
 from .const import (
     CONF_DATASET_ID,
+    CONF_DATASET_KIND,
+    CONF_DISPLAY_FIELD,
     CONF_FIELD_MAPPINGS,
+    CONF_IDENTITY_FIELD,
+    CONF_IGNORED_FIELDS,
     CONF_PORTAL_URL,
     CONF_PROFILE_ID,
     CONF_PROVIDER,
     CONF_RESOURCE_ID,
     CONF_SELECTED_FIELDS,
+    CONF_SELECTED_RECORDS,
+    CONF_TIMESTAMP_FIELD,
     DOMAIN,
 )
 from .discovery import DatasetCandidate, rank_datasets, score_dataset
 from .models import OpenDataDataset
 from .portal_inspector import async_discover_catalog, async_inspect_portal
 from .providers import create_provider
-from .providers.base import (
-    OpenDataConnectionError,
-    OpenDataResponseError,
-    OpenDataSecurityError,
-)
+from .providers.base import OpenDataConnectionError, OpenDataResponseError, OpenDataSecurityError
 
 _DISCOVERY_LIMIT = 50
 _CATALOG_LIMIT = 500
 _VALIDATION_LIMIT = 150
+_RECORD_LIMIT = 500
 CONF_DATASET_IDS = "dataset_ids"
 CONF_TITLE = "title"
 
@@ -49,7 +49,6 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
 
     def __init__(self) -> None:
-        """Initialize flow state."""
         self._provider_name: str | None = None
         self._portal_url: str | None = None
         self._candidates: dict[str, DatasetCandidate] = {}
@@ -58,19 +57,15 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def async_get_options_flow(
         config_entry: config_entries.ConfigEntry,
     ) -> config_entries.OptionsFlow:
-        """Return the options flow."""
         return OpenDataOptionsFlow(config_entry)
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Scan a portal, auto-detect its provider, and discover usable datasets."""
         errors: dict[str, str] = {}
         if user_input is not None:
             try:
-                candidates = await self._async_discover_catalog(
-                    user_input[CONF_PORTAL_URL]
-                )
+                candidates = await self._async_discover_catalog(user_input[CONF_PORTAL_URL])
             except OpenDataSecurityError:
                 errors["base"] = "invalid_dataset"
             except OpenDataConnectionError:
@@ -81,20 +76,20 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "unknown"
             else:
                 self._candidates = {
-                    item.dataset.dataset_id: item
-                    for item in candidates[:_DISCOVERY_LIMIT]
+                    item.dataset.dataset_id: item for item in candidates[:_DISCOVERY_LIMIT]
                 }
                 if self._candidates:
                     return await self.async_step_discover()
                 errors["base"] = "no_datasets"
-
-        schema = vol.Schema({vol.Required(CONF_PORTAL_URL): str})
-        return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
+        return self.async_show_form(
+            step_id="user",
+            data_schema=vol.Schema({vol.Required(CONF_PORTAL_URL): str}),
+            errors=errors,
+        )
 
     async def async_step_discover(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Select one or more automatically discovered datasets."""
         errors: dict[str, str] = {}
         if user_input is not None:
             selected_ids = user_input[CONF_DATASET_IDS]
@@ -159,29 +154,20 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             },
         )
 
-    async def async_step_import(
-        self, import_data: dict[str, Any]
-    ) -> FlowResult:
-        """Create an additional selected dataset entry."""
+    async def async_step_import(self, import_data: dict[str, Any]) -> FlowResult:
         await self.async_set_unique_id(import_data["unique_id"])
         self._abort_if_unique_id_configured()
         return self.async_create_entry(
             title=import_data[CONF_TITLE], data=import_data["data"]
         )
 
-    async def _async_discover_catalog(
-        self, portal_url: str
-    ) -> list[DatasetCandidate]:
-        """Rank the full catalog, then validate the best pollable datasets."""
+    async def _async_discover_catalog(self, portal_url: str) -> list[DatasetCandidate]:
         inspected = await async_inspect_portal(
             async_get_clientsession(self.hass), portal_url
         )
         self._portal_url = inspected.description.portal_url
         self._provider_name = inspected.description.provider
-        datasets, _errors = await async_discover_catalog(
-            inspected, limit=_CATALOG_LIMIT
-        )
-
+        datasets, _errors = await async_discover_catalog(inspected, limit=_CATALOG_LIMIT)
         ranked = rank_datasets(datasets)
         usable: list[DatasetCandidate] = []
         for candidate in ranked[:_VALIDATION_LIMIT]:
@@ -195,14 +181,12 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if len(usable) >= _DISCOVERY_LIMIT:
                 break
         return sorted(
-            usable,
-            key=lambda item: (-item.score, item.dataset.title.casefold()),
+            usable, key=lambda item: (-item.score, item.dataset.title.casefold())
         )
 
     async def _async_prepare_dataset_entry(
         self, discovered: OpenDataDataset
     ) -> dict[str, Any]:
-        """Revalidate a selected dataset and prepare config-entry data."""
         if self._provider_name is None or self._portal_url is None:
             raise ValueError("Discovery flow is missing provider state")
         provider = create_provider(
@@ -214,6 +198,10 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         dataset = await provider.async_get_dataset(
             discovered.dataset_id, discovered.resource_id
         )
+        sample_rows = await provider.async_sample_rows(
+            dataset.dataset_id, dataset.resource_id, limit=50
+        )
+        structure = analyze_dataset(dataset, sample_rows)
         candidate = score_dataset(dataset)
         unique_id = (
             f"{self._provider_name}:{self._portal_url}:"
@@ -223,9 +211,17 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             CONF_PROVIDER: self._provider_name,
             CONF_PORTAL_URL: self._portal_url,
             CONF_DATASET_ID: dataset.dataset_id,
+            CONF_DATASET_KIND: structure.kind,
+            CONF_IGNORED_FIELDS: list(structure.ignored_fields),
         }
         if dataset.resource_id:
             data[CONF_RESOURCE_ID] = dataset.resource_id
+        if structure.identity_field:
+            data[CONF_IDENTITY_FIELD] = structure.identity_field
+        if structure.display_field:
+            data[CONF_DISPLAY_FIELD] = structure.display_field
+        if structure.timestamp_field:
+            data[CONF_TIMESTAMP_FIELD] = structure.timestamp_field
         if candidate.profile_id:
             data[CONF_PROFILE_ID] = candidate.profile_id
             data[CONF_FIELD_MAPPINGS] = [
@@ -237,15 +233,10 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 }
                 for mapping in candidate.field_mappings
             ]
-        return {
-            "unique_id": unique_id,
-            CONF_TITLE: dataset.title,
-            "data": data,
-        }
+        return {"unique_id": unique_id, CONF_TITLE: dataset.title, "data": data}
 
     @staticmethod
     def _candidate_label(candidate: DatasetCandidate) -> str:
-        """Build a compact, explainable selector label."""
         reasons = ", ".join(candidate.reasons[:3])
         suffix = f" — {reasons}" if reasons else ""
         title = candidate.dataset.title[:100]
@@ -253,7 +244,7 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 class OpenDataOptionsFlow(config_entries.OptionsFlow):
-    """Choose which discovered fields become entities."""
+    """Choose records/locations and metrics exposed as entities."""
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         self._config_entry = config_entry
@@ -261,24 +252,57 @@ class OpenDataOptionsFlow(config_entries.OptionsFlow):
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Manage field selection."""
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
 
         coordinator = self._config_entry.runtime_data
+        dataset = coordinator.data.dataset
+        ignored = set(self._config_entry.data.get(CONF_IGNORED_FIELDS, ()))
         choices = {
-            field.name: field.label for field in coordinator.data.dataset.fields
+            field.name: field.label
+            for field in dataset.fields
+            if field.name not in ignored
         }
-        current = list(
+        current_fields = list(
             self._config_entry.options.get(CONF_SELECTED_FIELDS, choices.keys())
         )
+        schema: dict[Any, Any] = {
+            vol.Optional(CONF_SELECTED_FIELDS, default=current_fields): cv.multi_select(
+                choices
+            )
+        }
+
+        identity = self._config_entry.data.get(CONF_IDENTITY_FIELD)
+        if identity:
+            provider = coordinator.provider
+            rows = await provider.async_distinct_rows(
+                dataset.dataset_id,
+                dataset.resource_id,
+                identity,
+                self._config_entry.data.get(CONF_DISPLAY_FIELD),
+                tuple(),
+                limit=_RECORD_LIMIT,
+            )
+            structure = analyze_dataset(dataset, rows[:50])
+            records = build_selectable_records(rows, structure)
+            record_choices = {
+                record.value: record.label for record in records
+            }
+            if record_choices:
+                current_records = list(
+                    self._config_entry.options.get(
+                        CONF_SELECTED_RECORDS, record_choices.keys()
+                    )
+                )
+                schema[
+                    vol.Optional(CONF_SELECTED_RECORDS, default=current_records)
+                ] = cv.multi_select(record_choices)
+
         return self.async_show_form(
             step_id="init",
-            data_schema=vol.Schema(
-                {
-                    vol.Optional(
-                        CONF_SELECTED_FIELDS, default=current
-                    ): cv.multi_select(choices)
-                }
-            ),
+            data_schema=vol.Schema(schema),
+            description_placeholders={
+                "kind": self._config_entry.data.get(CONF_DATASET_KIND, "table"),
+                "identity": identity or "none",
+            },
         )
