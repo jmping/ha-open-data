@@ -213,44 +213,43 @@ def test_irrelevant_and_unassigned_fields_are_not_context_or_metrics() -> None:
     assert result.irrelevant_fields == ("internal_id",)
 
 
-def test_multiple_fields_can_share_every_role() -> None:
-    fields = (
-        "station_id", "latitude",
-        "observed_date", "observed_time",
-        "pm25", "pm10",
-        "pollutant", "measurement_type",
-        "vendor", "quality_flag",
-        "internal_id", "import_sequence",
-        "fixed_version", "constant_label",
+def test_category_assignments_only_require_relevant_fields() -> None:
+    assignments = roles.assignments_from_categories(
+        ("station", "observed_at", "pm25", "pm10", "fixed_vendor", "internal_id"),
+        {
+            "location": ("station",),
+            "time": ("observed_at",),
+            "data": ("pm25", "pm10"),
+            "measurement_name": (),
+            "descriptive": (),
+            "irrelevant": ("internal_id",),
+        },
     )
-    explicit_roles = {
-        "station_id": "location",
-        "latitude": "location",
-        "observed_date": "time",
-        "observed_time": "time",
+
+    assert assignments == {
+        "station": "location",
+        "observed_at": "time",
         "pm25": "data",
         "pm10": "data",
-        "pollutant": "measurement_name",
-        "measurement_type": "measurement_name",
-        "vendor": "descriptive",
-        "quality_flag": "descriptive",
+        "fixed_vendor": "unassigned",
         "internal_id": "irrelevant",
-        "import_sequence": "irrelevant",
-        "fixed_version": "unassigned",
-        "constant_label": "unassigned",
     }
 
-    result = roles.classify_field_roles(
-        fields,
-        [{field: index for index, field in enumerate(fields)}],
-        explicit_roles=explicit_roles,
+
+def test_all_categories_may_be_empty() -> None:
+    assignments = roles.assignments_from_categories(
+        ("constant", "helper"),
+        {role: () for role in roles.ASSIGNABLE_FIELD_ROLES},
     )
 
-    assert result.location_fields == ("station_id", "latitude")
-    assert result.time_fields == ("observed_date", "observed_time")
-    assert result.metric_fields == ("pm25", "pm10")
-    assert result.measurement_name_fields == ("pollutant", "measurement_type")
-    assert result.context_fields == ("vendor", "quality_flag")
-    assert result.irrelevant_fields == ("internal_id", "import_sequence")
-    assert result.unassigned_fields == ("fixed_version", "constant_label")
-    assert result.as_assignments() == explicit_roles
+    assert assignments == {"constant": "unassigned", "helper": "unassigned"}
+
+
+def test_field_cannot_be_selected_in_multiple_categories() -> None:
+    import pytest
+
+    with pytest.raises(ValueError, match="more than one role"):
+        roles.assignments_from_categories(
+            ("station",),
+            {"location": ("station",), "descriptive": ("station",)},
+        )
