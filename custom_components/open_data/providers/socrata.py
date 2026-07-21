@@ -20,10 +20,15 @@ class SocrataProvider(JsonClient):
     provider_name = "Socrata"
     capabilities = ProviderCapabilities(
         supports_search=True,
+        supports_catalog_paging=True,
         supports_schema=True,
         supports_latest_row=True,
+        supports_timeseries=True,
+        supports_station_filtering=True,
         supports_spatial_queries=True,
         supports_incremental_updates=True,
+        supports_statistics=True,
+        supports_streaming=False,
     )
 
     @property
