@@ -118,15 +118,26 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
                         for record_id in self.selected_records
                     )
                 )
-                records = dict(results)
-                for record_id in self.selected_records:
-                    self.record_labels.setdefault(record_id, record_id)
-                first = next((row for row in records.values() if row), {})
+                # A selected record is not necessarily a current entity. Providers
+                # may return no row for old observation IDs, unavailable stations,
+                # or values that no longer exist after the identity field changes.
+                # Keep only records with an actual latest observation so setup does
+                # not create empty Home Assistant entities for them.
+                records = {
+                    record_id: values
+                    for record_id, values in results
+                    if values
+                }
+                labels = {
+                    record_id: self.record_labels.get(record_id, record_id)
+                    for record_id in records
+                }
+                first = next(iter(records.values()), {})
                 return OpenDataSnapshot(
                     dataset=self.dataset,
                     values=first,
                     records=records,
-                    record_labels=dict(self.record_labels),
+                    record_labels=labels,
                 )
 
             values = await self.provider.async_latest_row(
