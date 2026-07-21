@@ -11,20 +11,26 @@ _TIME_COMPONENTS = {
     "year", "month", "day", "hour", "minute", "second", "quarter", "week",
     "weekday", "date", "time", "timestamp", "datetime", "observed_at",
     "observation_time", "sample_date", "sample_time", "created_at", "updated_at",
+    "created_date", "closed_date", "due_date", "resolution_action_updated_date",
+    "date_collected", "received_date", "recorded_at", "measurement_time",
 }
 _CONTEXT_TERMS = (
     "agency", "vendor", "owner", "program", "project", "source", "status",
     "station", "site", "location", "beach", "waterbody", "water_body", "river",
     "lake", "county", "city", "municipality", "township", "state", "region",
-    "watershed", "basin", "district", "precinct", "ward", "address", "zip",
+    "watershed", "basin", "district", "precinct", "ward", "borough", "address",
+    "street", "cross_street", "intersection", "community_board", "zip", "zipcode",
     "latitude", "longitude", "lat", "lon", "lng", "geometry", "sample_no",
-    "sample_number", "sample_id", "permit", "facility", "name", "label", "id",
+    "sample_number", "sample_id", "kit_id", "unique_key", "permit", "facility",
+    "descriptor", "complaint_type", "resolution", "name", "label", "id",
 )
 _MEASUREMENT_TERMS = (
     "temperature", "humidity", "pressure", "concentration", "level", "height",
     "depth", "flow", "speed", "velocity", "rain", "precip", "wind", "battery",
     "voltage", "current", "power", "energy", "count", "total", "sum", "average",
     "mean", "median", "rate", "index", "score", "reading", "measurement", "value",
+    "lead", "copper", "turbidity", "conductivity", "oxygen", "ph", "tonnage",
+    "tons", "weight", "volume", "distance", "duration", "occupancy", "capacity",
     "pfas", "pfoa", "pfos", "pfna", "pfba", "pfhpa", "pfhxa", "pfhxs", "pfpea",
     "pfteda", "6_2_fts", "wave",
 )
