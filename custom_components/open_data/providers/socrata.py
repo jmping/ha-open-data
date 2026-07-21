@@ -7,11 +7,16 @@ from typing import Any
 from urllib.parse import urlparse
 
 from ..models import OpenDataDataset, OpenDataField
-from .base import OpenDataResponseError, ProviderCapabilities
+from .base import (
+    OpenDataConnectionError,
+    OpenDataResponseError,
+    ProviderCapabilities,
+)
 from .common import JsonClient
 
 _DATASET_ID_PATTERN = re.compile(r"^[a-z0-9]{4}-[a-z0-9]{4}$", re.IGNORECASE)
 _FIELD_NAME_PATTERN = re.compile(r"^:?[a-zA-Z_][a-zA-Z0-9_]*$")
+_SOCRATA_DISCOVERY_ROOT = "https://api.us.socrata.com"
 
 
 class SocrataProvider(JsonClient):
@@ -32,6 +37,10 @@ class SocrataProvider(JsonClient):
         supports_sample_rows=True,
         supports_distinct_values=True,
     )
+
+    def __init__(self, session, portal_url: str) -> None:
+        super().__init__(session, portal_url)
+        self._discovery_client = JsonClient(session, _SOCRATA_DISCOVERY_ROOT)
 
     @property
     def _search_context(self) -> str:
@@ -55,10 +64,27 @@ class SocrataProvider(JsonClient):
     def _literal(value: str) -> str:
         return "'" + str(value).replace("'", "''") + "'"
 
+    async def _async_catalog_json(self, params: dict[str, str]) -> Any:
+        """Read the portal catalog, falling back to Socrata discovery.
+
+        Some large deployments, including NYC Open Data, serve SODA data and
+        metadata from the tenant host but expose catalog discovery through the
+        regional Socrata discovery service. Trying the tenant first preserves
+        compatibility with portals that proxy ``/api/catalog/v1`` locally.
+        """
+        try:
+            payload = await self.async_get_json("/api/catalog/v1", params=params)
+            if isinstance(payload, dict) and isinstance(payload.get("results"), list):
+                return payload
+        except (OpenDataConnectionError, OpenDataResponseError):
+            pass
+        return await self._discovery_client.async_get_json(
+            "/api/catalog/v1", params=params
+        )
+
     async def async_verify_portal(self) -> None:
-        payload = await self.async_get_json(
-            "/api/catalog/v1",
-            params={"search_context": self._search_context, "limit": "1"},
+        payload = await self._async_catalog_json(
+            {"search_context": self._search_context, "limit": "1"}
         )
         if (
             not isinstance(payload, dict)
@@ -183,13 +209,12 @@ class SocrataProvider(JsonClient):
         self, query: str, limit: int = 20
     ) -> list[OpenDataDataset]:
         bounded_limit = min(max(int(limit), 1), 100)
-        payload = await self.async_get_json(
-            "/api/catalog/v1",
-            params={
+        payload = await self._async_catalog_json(
+            {
                 "search_context": self._search_context,
                 "q": query,
                 "limit": str(bounded_limit),
-            },
+            }
         )
         return self._normalize_catalog_results(payload)[:bounded_limit]
 
@@ -199,13 +224,12 @@ class SocrataProvider(JsonClient):
         found: dict[str, OpenDataDataset] = {}
         offset = 0
         while len(found) < bounded_limit:
-            payload = await self.async_get_json(
-                "/api/catalog/v1",
-                params={
+            payload = await self._async_catalog_json(
+                {
                     "search_context": self._search_context,
                     "limit": str(page_size),
                     "offset": str(offset),
-                },
+                }
             )
             page = self._normalize_catalog_results(payload)
             if not page:
