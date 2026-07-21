@@ -9,9 +9,11 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import (
     CONF_DATASET_ID,
+    CONF_IDENTITY_FIELD,
     CONF_PORTAL_URL,
     CONF_PROVIDER,
     CONF_RESOURCE_ID,
+    CONF_SELECTED_RECORDS,
     CONF_TIMESTAMP_FIELD,
     DOMAIN,
     PLATFORMS,
@@ -44,12 +46,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: OpenDataConfigEntry) -> 
         async_get_clientsession(hass),
         entry.data[CONF_PORTAL_URL],
     )
+    selected_records = entry.options.get(CONF_SELECTED_RECORDS, ())
+    if isinstance(selected_records, str):
+        selected_record = selected_records
+    else:
+        selected_record = next(iter(selected_records), None)
     coordinator = OpenDataCoordinator(
         hass,
         provider,
         entry.data[CONF_DATASET_ID],
         entry.data.get(CONF_RESOURCE_ID),
         entry.data.get(CONF_TIMESTAMP_FIELD) or None,
+        entry.data.get(CONF_IDENTITY_FIELD),
+        selected_record,
     )
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = coordinator
