@@ -50,6 +50,7 @@ from .field_roles import (
     FIELD_ROLE_MEASUREMENT_NAME,
     FIELD_ROLE_TIME,
     FIELD_ROLE_UNASSIGNED,
+    assignments_from_categories,
     classify_field_roles,
 )
 from .models import OpenDataDataset
@@ -67,7 +68,7 @@ _CATALOG_LIMIT = 500
 _VALIDATION_LIMIT = 150
 _RECORD_LIMIT = 500
 _AUTO_RECORD_LIMIT = 100
-_FIELD_ROLE_PREFIX = "field_role__"
+_FIELD_ROLE_CATEGORY_PREFIX = "field_role_fields__"
 _FIELD_ROLE_OPTIONS = (
     (FIELD_ROLE_LOCATION, "Location"),
     (FIELD_ROLE_TIME, "Time"),
@@ -75,7 +76,6 @@ _FIELD_ROLE_OPTIONS = (
     (FIELD_ROLE_MEASUREMENT_NAME, "Measurement name (long format)"),
     (FIELD_ROLE_DESCRIPTIVE, "Descriptive"),
     (FIELD_ROLE_IRRELEVANT, "Irrelevant"),
-    (FIELD_ROLE_UNASSIGNED, "Unassigned"),
 )
 CONF_DATASET_IDS = "dataset_ids"
 CONF_TITLE = "title"
@@ -342,18 +342,6 @@ class OpenDataOptionsFlow(config_entries.OptionsFlow):
             )
         )
 
-    @staticmethod
-    def _role_selector() -> SelectSelector:
-        return SelectSelector(
-            SelectSelectorConfig(
-                options=[
-                    SelectOptionDict(value=value, label=label)
-                    for value, label in _FIELD_ROLE_OPTIONS
-                ],
-                multiple=False,
-            )
-        )
-
     def _current(self, key: str) -> Any:
         return self._config_entry.options.get(key, self._config_entry.data.get(key))
 
@@ -361,16 +349,26 @@ class OpenDataOptionsFlow(config_entries.OptionsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Select structural fields before deriving record choices."""
+        errors: dict[str, str] = {}
         if user_input is not None:
             submitted = dict(user_input)
-            field_roles = {
-                key.removeprefix(_FIELD_ROLE_PREFIX): submitted.pop(key)
-                for key in tuple(submitted)
-                if key.startswith(_FIELD_ROLE_PREFIX)
-            }
-            submitted[CONF_FIELD_ROLES] = field_roles
-            self._structure_options = submitted
-            return await self.async_step_structure()
+            dataset = self._config_entry.runtime_data.data.dataset
+            fields_by_role: dict[str, list[str]] = {}
+            for role, _label in _FIELD_ROLE_OPTIONS:
+                key = f"{_FIELD_ROLE_CATEGORY_PREFIX}{role}"
+                selected = submitted.pop(key, ())
+                if isinstance(selected, str):
+                    selected = [selected]
+                fields_by_role[role] = list(selected or ())
+            try:
+                submitted[CONF_FIELD_ROLES] = assignments_from_categories(
+                    (field.name for field in dataset.fields), fields_by_role
+                )
+            except ValueError:
+                errors["base"] = "invalid_field_roles"
+            else:
+                self._structure_options = submitted
+                return await self.async_step_structure()
 
         coordinator = self._config_entry.runtime_data
         dataset = coordinator.data.dataset
@@ -433,16 +431,21 @@ class OpenDataOptionsFlow(config_entries.OptionsFlow):
             schema[vol.Optional(CONF_TIMESTAMP_FIELD, default=timestamp)] = self._field_selector(
                 timestamp_fields
             )
-        for field in dataset.fields:
-            role_key = f"{_FIELD_ROLE_PREFIX}{field.name}"
-            schema[vol.Required(
+        role_fields = [field.name for field in dataset.fields]
+        for role, _label in _FIELD_ROLE_OPTIONS:
+            role_key = f"{_FIELD_ROLE_CATEGORY_PREFIX}{role}"
+            schema[vol.Optional(
                 role_key,
-                default=current_roles.get(field.name, FIELD_ROLE_UNASSIGNED),
-            )] = self._role_selector()
+                default=[
+                    field for field in role_fields
+                    if current_roles.get(field, FIELD_ROLE_UNASSIGNED) == role
+                ],
+            )] = self._fields_selector(role_fields)
 
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(schema),
+            errors=errors,
             description_placeholders={
                 "kind": self._config_entry.data.get(CONF_DATASET_KIND, "table"),
                 "identity": identity or "none",
