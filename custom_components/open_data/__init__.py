@@ -21,7 +21,7 @@ from .const import (
     PLATFORMS,
 )
 from .coordinator import OpenDataCoordinator
-from .entity_identity import effective_identity_field
+from .entity_identity import effective_identity_field, normalize_selected_records
 from .feedback import FeedbackRegistry
 from .providers import create_provider
 from .services import async_register_services
@@ -52,17 +52,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: OpenDataConfigEntry) -> 
     raw_records = entry.options.get(
         CONF_SELECTED_RECORDS, entry.data.get(CONF_SELECTED_RECORDS, ())
     )
-    if isinstance(raw_records, str):
-        raw_values = (raw_records,)
-    else:
-        raw_values = tuple(raw_records)
-    selected_records = tuple(
-        dict.fromkeys(
-            value
-            for item in raw_values
-            if (value := str(item).strip())
-        )
-    )
+    selected_records = normalize_selected_records(raw_records)
 
     configured_identity = entry.options.get(CONF_IDENTITY_FIELD) or entry.data.get(
         CONF_IDENTITY_FIELD
