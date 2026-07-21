@@ -102,3 +102,60 @@ def test_selectable_records_use_display_and_hierarchy() -> None:
         ("A1", "Huron River"),
         ("B2", "Mill Creek"),
     ]
+
+
+def test_repeated_record_grid_reveals_multiple_location_and_time_fields() -> None:
+    dataset = OpenDataDataset(
+        dataset_id="cryptic-observations",
+        title="Measurements",
+        fields=(
+            OpenDataField("loc_cd", "Location Code"),
+            OpenDataField("loc_label", "Location Label"),
+            OpenDataField("bundle_at", "Bundle At"),
+            OpenDataField("sample_day", "Sample Day"),
+            OpenDataField("reading", "Reading"),
+        ),
+    )
+    rows = []
+    for location, label in (("A1", "Huron"), ("B2", "Mill Creek")):
+        for day, instant in (
+            ("2026-07-18", "2026-07-18T12:00:00Z"),
+            ("2026-07-19", "2026-07-19T12:00:00Z"),
+            ("2026-07-20", "2026-07-20T12:00:00Z"),
+        ):
+            rows.append(
+                {
+                    "loc_cd": location,
+                    "loc_label": label,
+                    "bundle_at": instant,
+                    "sample_day": day,
+                    "reading": 1.5,
+                }
+            )
+
+    structure = analyzer.analyze_dataset(dataset, rows)
+
+    assert {"loc_cd", "loc_label"}.issubset(structure.location_fields)
+    assert {"bundle_at", "sample_day"}.issubset(structure.timestamp_fields)
+    assert structure.identity_field in {"loc_cd", "loc_label"}
+    assert structure.timestamp_field in {"bundle_at", "sample_day"}
+
+
+def test_single_location_samples_do_not_claim_a_location_time_grid() -> None:
+    dataset = OpenDataDataset(
+        dataset_id="single-site",
+        title="Measurements",
+        fields=(
+            OpenDataField("opaque_code", "Opaque Code"),
+            OpenDataField("observed", "Observed"),
+            OpenDataField("reading", "Reading"),
+        ),
+    )
+    rows = [
+        {"opaque_code": "ONLY", "observed": f"2026-07-{day:02d}", "reading": day}
+        for day in range(1, 6)
+    ]
+
+    structure = analyzer.analyze_dataset(dataset, rows)
+
+    assert "opaque_code" not in structure.identity_fields
