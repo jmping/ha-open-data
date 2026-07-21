@@ -16,15 +16,22 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
+    CONF_DISPLAY_FIELD,
     CONF_FIELD_MAPPINGS,
+    CONF_IDENTITY_FIELD,
     CONF_IGNORED_FIELDS,
+    CONF_LOCATION_FIELDS,
+    CONF_METRIC_FIELDS,
     CONF_PORTAL_URL,
     CONF_PROFILE_ID,
     CONF_PROVIDER,
     CONF_SELECTED_FIELDS,
+    CONF_TIMESTAMP_FIELD,
+    CONF_TIMESTAMP_FIELDS,
     DOMAIN,
 )
 from .coordinator import OpenDataCoordinator
+from .field_roles import classify_field_roles, context_attributes
 from .ontology import metric_definitions
 
 
@@ -33,16 +40,13 @@ async def async_setup_entry(
     entry: ConfigEntry[OpenDataCoordinator],
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    """Create sensors from the discovered dataset schema."""
+    """Create measurement sensors while retaining descriptive source context."""
     coordinator = entry.runtime_data
     snapshot = coordinator.data
     if snapshot is None:
         return
 
     ignored = set(entry.data.get(CONF_IGNORED_FIELDS, ()))
-    choices = tuple(field for field in snapshot.dataset.fields if field.name not in ignored)
-    selected = set(entry.options.get(CONF_SELECTED_FIELDS, ()))
-    fields = tuple(field for field in choices if not selected or field.name in selected)
     mappings = {
         item["source_field"]: item
         for item in entry.data.get(CONF_FIELD_MAPPINGS, [])
@@ -50,11 +54,54 @@ async def async_setup_entry(
         and isinstance(item.get("source_field"), str)
         and isinstance(item.get("canonical_metric"), str)
     }
+    configured_metrics = set(entry.data.get(CONF_METRIC_FIELDS, ())) | set(mappings)
+    structural_fields = {
+        entry.options.get(CONF_IDENTITY_FIELD) or entry.data.get(CONF_IDENTITY_FIELD),
+        entry.options.get(CONF_DISPLAY_FIELD) or entry.data.get(CONF_DISPLAY_FIELD),
+        *entry.data.get(CONF_LOCATION_FIELDS, ()),
+    }
+    structural_fields.discard(None)
+    timestamp_fields = {
+        entry.options.get(CONF_TIMESTAMP_FIELD) or entry.data.get(CONF_TIMESTAMP_FIELD),
+        *entry.data.get(CONF_TIMESTAMP_FIELDS, ()),
+    }
+    timestamp_fields.discard(None)
+
+    role_rows = list(snapshot.records.values()) if snapshot.records else [snapshot.values]
+    roles = classify_field_roles(
+        (field.name for field in snapshot.dataset.fields),
+        role_rows,
+        configured_metrics=configured_metrics,
+        structural_fields=structural_fields,
+        timestamp_fields=timestamp_fields,
+        ignored_fields=ignored,
+    )
+    fields_by_name = {field.name: field for field in snapshot.dataset.fields}
+
+    selected = set(entry.options.get(CONF_SELECTED_FIELDS, ()))
+    metric_names = set(roles.metric_fields)
+    if selected:
+        # Options may narrow measurements, but old options cannot turn metadata
+        # such as year, vendor, or station IDs back into sensors.
+        metric_names &= selected
+    fields = tuple(
+        field for field in snapshot.dataset.fields if field.name in metric_names
+    )
+
+    # If classification cannot identify a metric, keep the dataset status and
+    # context useful rather than recreating every source column as a sensor.
+    context_fields = tuple(
+        field
+        for field in roles.context_fields
+        if field in fields_by_name and field not in ignored
+    )
 
     entities: list[SensorEntity] = []
     if snapshot.records:
         for record_id in snapshot.records:
-            entities.append(OpenDataStatusSensor(entry, coordinator, record_id))
+            entities.append(
+                OpenDataStatusSensor(entry, coordinator, record_id, context_fields)
+            )
             entities.extend(
                 OpenDataFieldSensor(
                     entry,
@@ -63,11 +110,12 @@ async def async_setup_entry(
                     field.label,
                     mappings.get(field.name),
                     record_id,
+                    context_fields,
                 )
                 for field in fields
             )
     else:
-        entities.append(OpenDataStatusSensor(entry, coordinator))
+        entities.append(OpenDataStatusSensor(entry, coordinator, None, context_fields))
         entities.extend(
             OpenDataFieldSensor(
                 entry,
@@ -75,6 +123,8 @@ async def async_setup_entry(
                 field.name,
                 field.label,
                 mappings.get(field.name),
+                None,
+                context_fields,
             )
             for field in fields
         )
@@ -91,6 +141,7 @@ class OpenDataSensorBase(CoordinatorEntity[OpenDataCoordinator], SensorEntity):
         entry: ConfigEntry,
         coordinator: OpenDataCoordinator,
         record_id: str | None = None,
+        context_fields: tuple[str, ...] = (),
     ) -> None:
         super().__init__(coordinator)
         snapshot = coordinator.data
@@ -102,6 +153,11 @@ class OpenDataSensorBase(CoordinatorEntity[OpenDataCoordinator], SensorEntity):
         resource = dataset.resource_id or "default"
         base_identifier = f"{provider}:{portal}:{dataset.dataset_id}:{resource}"
         self._record_id = record_id
+        self._context_fields = context_fields
+        self._dataset_title = dataset.title
+        self._provider = provider
+        self._portal = portal
+        self._resource_id = dataset.resource_id
         self._identifier = (
             f"{base_identifier}:record:{record_id}" if record_id is not None else base_identifier
         )
@@ -129,6 +185,31 @@ class OpenDataSensorBase(CoordinatorEntity[OpenDataCoordinator], SensorEntity):
             return snapshot.values
         return snapshot.records.get(self._record_id, {})
 
+    def _source_attributes(self) -> dict[str, Any]:
+        """Return context that explains what this entity represents."""
+        attributes: dict[str, Any] = {
+            "dataset": self._dataset_title,
+            "provider": self._provider,
+            "source_url": self._portal,
+        }
+        if self._resource_id:
+            attributes["resource_id"] = self._resource_id
+        if self._record_id is not None:
+            attributes["record_id"] = self._record_id
+            snapshot = self.coordinator.data
+            if snapshot is not None:
+                attributes["record_label"] = snapshot.record_labels.get(
+                    self._record_id, self._record_id
+                )
+        attributes.update(
+            context_attributes(self._record_values(), self._context_fields)
+        )
+        return attributes
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return self._source_attributes()
+
 
 class OpenDataStatusSensor(OpenDataSensorBase):
     """Expose whether the dataset or selected record returned a row."""
@@ -140,8 +221,9 @@ class OpenDataStatusSensor(OpenDataSensorBase):
         entry: ConfigEntry,
         coordinator: OpenDataCoordinator,
         record_id: str | None = None,
+        context_fields: tuple[str, ...] = (),
     ) -> None:
-        super().__init__(entry, coordinator, record_id)
+        super().__init__(entry, coordinator, record_id, context_fields)
         self._attr_unique_id = f"{self._identifier}:status"
 
     @property
@@ -150,7 +232,7 @@ class OpenDataStatusSensor(OpenDataSensorBase):
 
 
 class OpenDataFieldSensor(OpenDataSensorBase):
-    """Expose one field from the latest row for a dataset or selected record."""
+    """Expose one measurement from the latest row."""
 
     def __init__(
         self,
@@ -160,9 +242,11 @@ class OpenDataFieldSensor(OpenDataSensorBase):
         field_label: str,
         mapping: dict[str, Any] | None = None,
         record_id: str | None = None,
+        context_fields: tuple[str, ...] = (),
     ) -> None:
-        super().__init__(entry, coordinator, record_id)
+        super().__init__(entry, coordinator, record_id, context_fields)
         self._field_name = field_name
+        self._mapping_attributes: dict[str, Any] = {}
         self._attr_name = field_label
         self._attr_unique_id = f"{self._identifier}:{field_name}"
 
@@ -170,30 +254,33 @@ class OpenDataFieldSensor(OpenDataSensorBase):
             return
         canonical_metric = mapping["canonical_metric"]
         definition = metric_definitions().get(canonical_metric)
-        if definition is None:
-            return
-        device_class = definition.metadata.get("device_class")
-        state_class = definition.metadata.get("state_class")
-        native_unit = definition.metadata.get("native_unit_of_measurement")
-        try:
-            if device_class:
-                self._attr_device_class = SensorDeviceClass(device_class)
-        except ValueError:
-            pass
-        try:
-            if state_class:
-                self._attr_state_class = SensorStateClass(state_class)
-        except ValueError:
-            pass
-        if native_unit:
-            self._attr_native_unit_of_measurement = native_unit
-        self._attr_extra_state_attributes = {
+        if definition is not None:
+            device_class = definition.metadata.get("device_class")
+            state_class = definition.metadata.get("state_class")
+            native_unit = definition.metadata.get("native_unit_of_measurement")
+            try:
+                if device_class:
+                    self._attr_device_class = SensorDeviceClass(device_class)
+            except ValueError:
+                pass
+            try:
+                if state_class:
+                    self._attr_state_class = SensorStateClass(state_class)
+            except ValueError:
+                pass
+            if native_unit:
+                self._attr_native_unit_of_measurement = native_unit
+        self._mapping_attributes = {
             "canonical_metric": canonical_metric,
             "mapping_method": mapping.get("mapping_method", "synonym"),
             "mapping_confidence": mapping.get("confidence"),
         }
-        if record_id is not None:
-            self._attr_extra_state_attributes["record_id"] = record_id
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        attributes = self._source_attributes()
+        attributes.update(self._mapping_attributes)
+        return attributes
 
     @property
     def native_value(self) -> Any:
