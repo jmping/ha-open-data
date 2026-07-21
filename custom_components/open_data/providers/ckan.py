@@ -33,6 +33,7 @@ class CkanProvider(JsonClient):
         supports_sample_rows=True,
         supports_distinct_values=True,
         supports_observation_sampling=True,
+        supports_entity_observation_retrieval=True,
     )
 
     async def _action(self, action: str, params: dict[str, str]) -> Any:
@@ -89,7 +90,7 @@ class CkanProvider(JsonClient):
         while len(rows) < requested:
             page_limit = min(_PAGE_SIZE, requested - len(rows))
             sql = (
-                f"SELECT DISTINCT {quoted_entity} FROM \"{resource_id}\" "
+                f'SELECT DISTINCT {quoted_entity} FROM "{resource_id}" '
                 f"WHERE {quoted_entity} IS NOT NULL ORDER BY {quoted_entity} "
                 f"LIMIT {page_limit} OFFSET {offset}"
             )
@@ -183,6 +184,45 @@ class CkanProvider(JsonClient):
             limit=limit,
         )
 
+    async def async_fetch_observations(
+        self,
+        dataset_id: str,
+        resource_id: str | None = None,
+        *,
+        entity_field: str,
+        entity_values: tuple[str, ...],
+        timestamp_field: str | None = None,
+        observations_per_entity: int = 25,
+    ) -> list[dict[str, Any]]:
+        """Retrieve history for exactly the requested CKAN entities."""
+        dataset = await self.async_get_dataset(dataset_id, resource_id)
+        safe_fields = {field.name for field in dataset.fields}
+        if entity_field not in safe_fields:
+            raise ValueError("Entity field is not present in the CKAN resource")
+        if timestamp_field and timestamp_field not in safe_fields:
+            raise ValueError("Timestamp field is not present in the CKAN resource")
+        per_entity = min(
+            max(int(observations_per_entity), 1), _MAX_OBSERVATIONS_PER_ENTITY
+        )
+        values = tuple(dict.fromkeys(str(value) for value in entity_values))[
+            :_MAX_ENTITY_REQUEST
+        ]
+        semaphore = asyncio.Semaphore(6)
+
+        async def fetch_entity(value: str) -> list[dict[str, Any]]:
+            params = {
+                "filters": json.dumps({entity_field: value}, separators=(",", ":"))
+            }
+            if timestamp_field:
+                params["sort"] = f'"{timestamp_field}" desc'
+            async with semaphore:
+                return await self._paged_datastore_rows(
+                    dataset.resource_id or "", limit=per_entity, params=params
+                )
+
+        pages = await asyncio.gather(*(fetch_entity(value) for value in values))
+        return [row for page in pages for row in page]
+
     async def async_sample_observations(
         self,
         dataset_id: str,
@@ -220,28 +260,19 @@ class CkanProvider(JsonClient):
             entity_field,
             limit=requested_entities,
         )
-        semaphore = asyncio.Semaphore(6)
-
-        async def fetch_entity(value: str) -> list[dict[str, Any]]:
-            params = {
-                "filters": json.dumps({entity_field: value}, separators=(",", ":"))
-            }
-            if timestamp_field:
-                params["sort"] = f'"{timestamp_field}" desc'
-            async with semaphore:
-                return await self._paged_datastore_rows(
-                    dataset.resource_id or "",
-                    limit=per_entity,
-                    params=params,
-                )
-
-        values = [
+        values = tuple(
             str(row[entity_field])
             for row in entities
             if row.get(entity_field) not in (None, "")
-        ]
-        pages = await asyncio.gather(*(fetch_entity(value) for value in values))
-        return [row for page in pages for row in page]
+        )
+        return await self.async_fetch_observations(
+            dataset_id,
+            resource_id,
+            entity_field=entity_field,
+            entity_values=values,
+            timestamp_field=timestamp_field,
+            observations_per_entity=per_entity,
+        )
 
     async def async_distinct_rows(
         self,
