@@ -52,11 +52,6 @@ _COMMON_PORTAL_PATHS = {
     "search",
     "view",
 }
-_PORTAL_HOST_SUFFIXES = (
-    ".ckan.org",
-    ".socrata.com",
-    ".tylertech.com",
-)
 _CATALOG_PROBE_LIMIT = 1
 _CATALOG_CACHE: dict[str, tuple[float, tuple[OpenDataDataset, ...]]] = {}
 
@@ -108,12 +103,23 @@ def _candidate_roots(portal_url: str) -> list[str]:
     return candidates
 
 
-def _decode_embedded_link(raw_link: str) -> str:
-    """Normalize URLs embedded in JSON, script data, and HTML attributes."""
-    candidate = html.unescape(raw_link.strip())
-    candidate = candidate.replace("\\/", "/")
-    candidate = candidate.replace("\\u0026", "&").replace("\\u003d", "=")
-    return candidate.rstrip("\\,;)")
+def _sibling_portal_candidates(portal_url: str) -> list[str]:
+    """Return conventional data subdomains for a municipal landing host."""
+    normalized = normalize_portal_url(portal_url)
+    parsed = urlparse(normalized)
+    host = (parsed.hostname or "").lower()
+    if not host:
+        return []
+    if host.startswith("www."):
+        host = host[4:]
+    if host.startswith(("data.", "opendata.", "ckan.")):
+        return []
+
+    scheme = parsed.scheme or "https"
+    return [
+        f"{scheme}://data.{host}",
+        f"{scheme}://opendata.{host}",
+    ]
 
 
 async def _async_linked_portal_candidates(
@@ -140,16 +146,13 @@ async def _async_linked_portal_candidates(
         return []
 
     text = html.unescape(body.decode(response.charset or "utf-8", errors="ignore"))
-    raw_links = (
-        _LINK_PATTERN.findall(text)
-        + _URL_PATTERN.findall(text)
-        + _ESCAPED_URL_PATTERN.findall(text)
-    )
+    escaped_links = [item.replace("\\/", "/") for item in _ESCAPED_URL_PATTERN.findall(text)]
+    raw_links = _LINK_PATTERN.findall(text) + _URL_PATTERN.findall(text) + escaped_links
     candidates: list[str] = []
-    source_host = (urlparse(validated).hostname or "").lower()
+    source_host = urlparse(validated).hostname or ""
 
     for raw_link in raw_links:
-        absolute = urljoin(validated, _decode_embedded_link(raw_link))
+        absolute = urljoin(validated, raw_link.strip())
         try:
             normalized = normalize_portal_url(absolute)
         except (ValueError, OpenDataSecurityError):
@@ -162,7 +165,7 @@ async def _async_linked_portal_candidates(
         looks_like_portal = (
             host != source_host
             or host.startswith(("data.", "ckan.", "opendata."))
-            or host.endswith(_PORTAL_HOST_SUFFIXES)
+            or host.endswith((".socrata.com", ".ckan.org"))
             or any(f"/{segment}" in path for segment in _COMMON_PORTAL_PATHS)
             or "/api/3/" in path
             or "/api/catalog/" in path
@@ -175,7 +178,7 @@ async def _async_linked_portal_candidates(
         for candidate in _candidate_roots(normalized):
             if candidate not in candidates:
                 candidates.append(candidate)
-        if len(candidates) >= 50:
+        if len(candidates) >= 40:
             break
     return candidates
 
@@ -195,15 +198,18 @@ async def async_inspect_portal(
     """Resolve aliases/pages, detect the provider, and return its canonical root.
 
     A municipal landing page can expose a recognizable API shell while its real
-    catalog lives on another linked host. Candidate roots are therefore verified
-    for both provider signature and a non-empty catalog before they are accepted.
+    catalog lives on another linked or conventional data host. Candidate roots are
+    therefore verified for both provider signature and a non-empty catalog.
     """
     supplied = normalize_portal_url(portal_url)
     resolved = await async_resolve_portal_redirects(session, supplied)
 
     candidates: list[str] = []
     for source in (resolved, supplied):
-        for candidate in _candidate_roots(source):
+        for candidate in (
+            *_candidate_roots(source),
+            *_sibling_portal_candidates(source),
+        ):
             if candidate not in candidates:
                 candidates.append(candidate)
 
@@ -243,10 +249,10 @@ async def async_inspect_portal(
         raise connection_error
     if recognized_without_catalog:
         raise OpenDataResponseError(
-            "Recognized a portal API, but its catalog was empty; linked data hosts were also checked"
+            "Recognized a portal API, but its catalog was empty; linked and conventional data hosts were also checked"
         )
     raise OpenDataResponseError(
-        "URL and linked pages did not resolve to a CKAN or Socrata catalog"
+        "URL, linked pages, and conventional data hosts did not resolve to a CKAN or Socrata catalog"
     )
 
 
