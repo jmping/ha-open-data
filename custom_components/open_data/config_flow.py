@@ -19,6 +19,7 @@ from .const import (
     CONF_DISPLAY_FIELD,
     CONF_DISPLAY_FIELDS,
     CONF_FIELD_MAPPINGS,
+    CONF_FIELD_ROLES,
     CONF_HIERARCHY_FIELDS,
     CONF_IDENTITY_FIELD,
     CONF_IDENTITY_FIELDS,
@@ -36,6 +37,16 @@ from .const import (
     DOMAIN,
 )
 from .discovery import DatasetCandidate, rank_datasets, score_dataset
+from .field_roles import (
+    FIELD_ROLE_DATA,
+    FIELD_ROLE_DESCRIPTIVE,
+    FIELD_ROLE_IRRELEVANT,
+    FIELD_ROLE_LOCATION,
+    FIELD_ROLE_MEASUREMENT_NAME,
+    FIELD_ROLE_TIME,
+    FIELD_ROLE_UNASSIGNED,
+    classify_field_roles,
+)
 from .models import OpenDataDataset
 from .portal_inspector import async_discover_catalog, async_inspect_portal
 from .providers import create_provider
@@ -50,6 +61,16 @@ _CATALOG_LIMIT = 500
 _VALIDATION_LIMIT = 150
 _RECORD_LIMIT = 500
 _AUTO_RECORD_LIMIT = 100
+_FIELD_ROLE_PREFIX = "field_role__"
+_FIELD_ROLE_OPTIONS = (
+    (FIELD_ROLE_LOCATION, "Location"),
+    (FIELD_ROLE_TIME, "Time"),
+    (FIELD_ROLE_DATA, "Data / measurement"),
+    (FIELD_ROLE_MEASUREMENT_NAME, "Measurement name (long format)"),
+    (FIELD_ROLE_DESCRIPTIVE, "Descriptive"),
+    (FIELD_ROLE_IRRELEVANT, "Irrelevant"),
+    (FIELD_ROLE_UNASSIGNED, "Unassigned"),
+)
 CONF_DATASET_IDS = "dataset_ids"
 CONF_TITLE = "title"
 
@@ -232,6 +253,20 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             CONF_LOCATION_FIELDS: list(structure.location_fields),
             CONF_HIERARCHY_FIELDS: list(structure.hierarchy_fields),
         }
+        structural_fields = {
+            structure.identity_field,
+            structure.display_field,
+            *structure.location_fields,
+        }
+        structural_fields.discard(None)
+        data[CONF_FIELD_ROLES] = classify_field_roles(
+            (field.name for field in dataset.fields),
+            sample_rows,
+            configured_metrics=structure.metric_fields,
+            structural_fields=structural_fields,
+            timestamp_fields=structure.timestamp_fields,
+            ignored_fields=structure.ignored_fields,
+        ).as_assignments()
         if dataset.resource_id:
             data[CONF_RESOURCE_ID] = dataset.resource_id
         if structure.identity_field:
@@ -290,6 +325,18 @@ class OpenDataOptionsFlow(config_entries.OptionsFlow):
             )
         )
 
+    @staticmethod
+    def _role_selector() -> SelectSelector:
+        return SelectSelector(
+            SelectSelectorConfig(
+                options=[
+                    SelectOptionDict(value=value, label=label)
+                    for value, label in _FIELD_ROLE_OPTIONS
+                ],
+                multiple=False,
+            )
+        )
+
     def _current(self, key: str) -> Any:
         return self._config_entry.options.get(key, self._config_entry.data.get(key))
 
@@ -298,7 +345,14 @@ class OpenDataOptionsFlow(config_entries.OptionsFlow):
     ) -> FlowResult:
         """Select structural fields before deriving record choices."""
         if user_input is not None:
-            self._structure_options = dict(user_input)
+            submitted = dict(user_input)
+            field_roles = {
+                key.removeprefix(_FIELD_ROLE_PREFIX): submitted.pop(key)
+                for key in tuple(submitted)
+                if key.startswith(_FIELD_ROLE_PREFIX)
+            }
+            submitted[CONF_FIELD_ROLES] = field_roles
+            self._structure_options = submitted
             return await self.async_step_records()
 
         coordinator = self._config_entry.runtime_data
@@ -320,6 +374,31 @@ class OpenDataOptionsFlow(config_entries.OptionsFlow):
                 (*self._config_entry.data.get(CONF_TIMESTAMP_FIELDS, ()), *all_fields)
             )
         )
+        current_roles = self._current(CONF_FIELD_ROLES) or {}
+        if not current_roles:
+            role_rows = (
+                list(coordinator.data.records.values())
+                if coordinator.data.records
+                else [coordinator.data.values]
+            )
+            structural_fields = {
+                self._current(CONF_IDENTITY_FIELD),
+                self._current(CONF_DISPLAY_FIELD),
+                *self._config_entry.data.get(CONF_LOCATION_FIELDS, ()),
+            }
+            structural_fields.discard(None)
+            current_roles = classify_field_roles(
+                all_fields,
+                role_rows,
+                configured_metrics=self._config_entry.data.get(
+                    CONF_METRIC_FIELDS, ()
+                ),
+                structural_fields=structural_fields,
+                timestamp_fields=self._config_entry.data.get(
+                    CONF_TIMESTAMP_FIELDS, ()
+                ),
+                ignored_fields=ignored,
+            ).as_assignments()
 
         schema: dict[Any, Any] = {}
         identity = self._current(CONF_IDENTITY_FIELD)
@@ -337,6 +416,12 @@ class OpenDataOptionsFlow(config_entries.OptionsFlow):
             schema[vol.Optional(CONF_TIMESTAMP_FIELD, default=timestamp)] = self._field_selector(
                 timestamp_fields
             )
+        for field in dataset.fields:
+            role_key = f"{_FIELD_ROLE_PREFIX}{field.name}"
+            schema[vol.Required(
+                role_key,
+                default=current_roles.get(field.name, FIELD_ROLE_UNASSIGNED),
+            )] = self._role_selector()
 
         return self.async_show_form(
             step_id="init",
@@ -357,14 +442,23 @@ class OpenDataOptionsFlow(config_entries.OptionsFlow):
 
         coordinator = self._config_entry.runtime_data
         dataset = coordinator.data.dataset
-        ignored = set(self._config_entry.data.get(CONF_IGNORED_FIELDS, ()))
-        metrics = set(self._config_entry.data.get(CONF_METRIC_FIELDS, ()))
+        field_roles = self._structure_options.get(
+            CONF_FIELD_ROLES,
+            self._current(CONF_FIELD_ROLES) or {},
+        )
+        ignored = {
+            field for field, role in field_roles.items()
+            if role in {FIELD_ROLE_IRRELEVANT, FIELD_ROLE_UNASSIGNED}
+        }
+        metrics = {
+            field for field, role in field_roles.items() if role == FIELD_ROLE_DATA
+        }
         choices = {
             field.name: field.label
             for field in dataset.fields
-            if field.name not in ignored
+            if field.name in metrics
         }
-        default_fields = metrics & choices.keys() or choices.keys()
+        default_fields = metrics & choices.keys()
         current_fields = list(
             self._config_entry.options.get(CONF_SELECTED_FIELDS, default_fields)
         )
