@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 from typing import Any
 from urllib.parse import urlparse
@@ -31,6 +32,7 @@ class SocrataProvider(JsonClient):
         supports_streaming=False,
         supports_sample_rows=True,
         supports_distinct_values=True,
+        supports_observation_sampling=True,
     )
 
     @property
@@ -128,11 +130,82 @@ class SocrataProvider(JsonClient):
         dataset_id = self._dataset_id(dataset_id)
         payload = await self.async_get_json(
             f"/resource/{dataset_id}.json",
-            params={"$limit": str(min(max(limit, 1), 200))},
+            params={"$limit": str(min(max(limit, 1), 1000))},
         )
         if not isinstance(payload, list) or not all(isinstance(row, dict) for row in payload):
             raise OpenDataResponseError("Socrata sample query did not return rows")
         return payload
+
+    async def async_sample_observations(
+        self,
+        dataset_id: str,
+        resource_id: str | None = None,
+        *,
+        entity_field: str | None = None,
+        timestamp_field: str | None = None,
+        entity_limit: int = 20,
+        observations_per_entity: int = 25,
+    ) -> list[dict[str, Any]]:
+        """Sample recent history across multiple entities when dimensions are known."""
+        dataset_id = self._dataset_id(dataset_id)
+        entity_limit = min(max(entity_limit, 1), 50)
+        per_entity = min(max(observations_per_entity, 2), 100)
+        if not entity_field:
+            params = {"$limit": str(min(entity_limit * per_entity, 1000))}
+            if timestamp_field:
+                params["$order"] = f"{self._field(timestamp_field)} DESC"
+            payload = await self.async_get_json(
+                f"/resource/{dataset_id}.json", params=params
+            )
+            if not isinstance(payload, list) or not all(
+                isinstance(row, dict) for row in payload
+            ):
+                raise OpenDataResponseError("Socrata observation query did not return rows")
+            return payload
+
+        identity = self._field(entity_field)
+        entities = await self.async_get_json(
+            f"/resource/{dataset_id}.json",
+            params={
+                "$select": f"distinct {identity}",
+                "$where": f"{identity} is not null",
+                "$order": identity,
+                "$limit": str(entity_limit),
+            },
+        )
+        if not isinstance(entities, list) or not all(
+            isinstance(row, dict) for row in entities
+        ):
+            raise OpenDataResponseError("Socrata entity sample did not return rows")
+
+        semaphore = asyncio.Semaphore(6)
+
+        async def fetch_entity(value: str) -> list[dict[str, Any]]:
+            params = {
+                "$where": f"{identity}={self._literal(value)}",
+                "$limit": str(per_entity),
+            }
+            if timestamp_field:
+                params["$order"] = f"{self._field(timestamp_field)} DESC"
+            async with semaphore:
+                payload = await self.async_get_json(
+                    f"/resource/{dataset_id}.json", params=params
+                )
+            if not isinstance(payload, list) or not all(
+                isinstance(row, dict) for row in payload
+            ):
+                raise OpenDataResponseError(
+                    "Socrata per-entity observation query did not return rows"
+                )
+            return payload
+
+        values = [
+            str(row[entity_field])
+            for row in entities
+            if row.get(entity_field) not in (None, "")
+        ]
+        pages = await asyncio.gather(*(fetch_entity(value) for value in values))
+        return [row for page in pages for row in page]
 
     async def async_distinct_rows(
         self,
