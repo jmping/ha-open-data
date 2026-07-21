@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 import re
 from typing import Any, Iterable
 
@@ -34,10 +35,17 @@ _GEOMETRY_TYPES = {
     "point", "multipoint", "line", "multiline", "linestring", "multilinestring",
     "polygon", "multipolygon", "location",
 }
+_DATETIME_PATTERN = re.compile(
+    r"^\d{4}-\d{1,2}-\d{1,2}(?:[T\s]\d{1,2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?$"
+)
 
 
 def _norm(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", value.casefold()).strip("_")
+
+
+def _scalar(value: Any) -> bool:
+    return isinstance(value, (str, int, float, bool)) and value not in ("", None)
 
 
 @dataclass(slots=True, frozen=True)
@@ -93,7 +101,108 @@ def _candidate_fields(field_names: Iterable[str], preferred: tuple[str, ...]) ->
                     best = candidate
         if best is not None:
             scored.append((best[0], best[1], name))
-    return tuple(item[2] for item in sorted(scored, key=lambda item: (item[0], item[1], item[2].casefold())))
+    return tuple(
+        item[2]
+        for item in sorted(scored, key=lambda item: (item[0], item[1], item[2].casefold()))
+    )
+
+
+def _looks_like_datetime(values: list[Any]) -> bool:
+    strings = [str(value).strip() for value in values if _scalar(value)]
+    if not strings:
+        return False
+    matches = 0
+    for value in strings[:50]:
+        if _DATETIME_PATTERN.match(value):
+            matches += 1
+            continue
+        try:
+            datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        matches += 1
+    return matches / min(len(strings), 50) >= 0.7
+
+
+def _pair_score(rows: list[dict[str, Any]], location_field: str, time_field: str) -> float:
+    pairs = [
+        (str(row[location_field]), str(row[time_field]))
+        for row in rows
+        if _scalar(row.get(location_field)) and _scalar(row.get(time_field))
+    ]
+    if len(pairs) < 4:
+        return 0.0
+
+    locations = {location for location, _time in pairs}
+    times = {time for _location, time in pairs}
+    if len(locations) < 2 or len(times) < 2:
+        return 0.0
+
+    locations_by_time: dict[str, set[str]] = {}
+    times_by_location: dict[str, set[str]] = {}
+    for location, time in pairs:
+        locations_by_time.setdefault(time, set()).add(location)
+        times_by_location.setdefault(location, set()).add(time)
+
+    multi_location_times = sum(len(items) > 1 for items in locations_by_time.values())
+    multi_time_locations = sum(len(items) > 1 for items in times_by_location.values())
+    cross_time = multi_location_times / len(locations_by_time)
+    cross_location = multi_time_locations / len(times_by_location)
+    pair_uniqueness = len(set(pairs)) / len(pairs)
+
+    # Strong station/time grids have repeated locations across times, repeated times
+    # across locations, and usually one row per location/time combination.
+    return round(0.45 * cross_time + 0.45 * cross_location + 0.10 * pair_uniqueness, 3)
+
+
+def _data_structural_candidates(
+    fields: tuple[str, ...], rows: list[dict[str, Any]]
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Infer location and time fields from repeated row bundles."""
+    if len(rows) < 4:
+        return (), ()
+
+    values_by_field = {
+        field: [row.get(field) for row in rows if _scalar(row.get(field))]
+        for field in fields
+    }
+    time_candidates = {
+        field for field, values in values_by_field.items() if _looks_like_datetime(values)
+    }
+    time_candidates.update(_candidate_fields(fields, _TIME_TERMS))
+
+    location_candidates = {
+        field
+        for field, values in values_by_field.items()
+        if 2 <= len({str(value) for value in values}) < len(values)
+    }
+    location_candidates.update(_candidate_fields(fields, _IDENTIFIER_TERMS))
+    location_candidates.update(_candidate_fields(fields, _DISPLAY_TERMS))
+    location_candidates.update(_candidate_fields(fields, _HIERARCHY_TERMS))
+
+    location_scores: dict[str, float] = {}
+    time_scores: dict[str, float] = {}
+    for location_field in location_candidates:
+        for time_field in time_candidates:
+            if location_field == time_field:
+                continue
+            score = _pair_score(rows, location_field, time_field)
+            if score < 0.55:
+                continue
+            location_scores[location_field] = max(location_scores.get(location_field, 0.0), score)
+            time_scores[time_field] = max(time_scores.get(time_field, 0.0), score)
+
+    ranked_locations = tuple(
+        field for field, _score in sorted(
+            location_scores.items(), key=lambda item: (-item[1], item[0].casefold())
+        )
+    )
+    ranked_times = tuple(
+        field for field, _score in sorted(
+            time_scores.items(), key=lambda item: (-item[1], item[0].casefold())
+        )
+    )
+    return ranked_locations, ranked_times
 
 
 def _geometry(
@@ -128,6 +237,10 @@ def analyze_dataset(
     display_fields = _candidate_fields(fields, _DISPLAY_TERMS)
     timestamp_fields = _candidate_fields(fields, _TIME_TERMS)
     location_fields = _candidate_fields(fields, _LOCATION_TERMS)
+    data_locations, data_times = _data_structural_candidates(fields, rows)
+
+    identity_fields = tuple(dict.fromkeys((*data_locations, *identity_fields)))
+    timestamp_fields = tuple(dict.fromkeys((*data_times, *timestamp_fields)))
 
     mapped_timestamp = next(
         (name for name, metric in mappings.items() if metric == "timestamp"), None
@@ -144,6 +257,9 @@ def analyze_dataset(
 
     display = next((name for name in display_fields if name != identity), None)
     geometry_field, geometry_type = _geometry(dataset, rows)
+    location_fields = tuple(
+        dict.fromkeys((*data_locations, *location_fields, *(field for field in display_fields if field != identity)))
+    )
     if geometry_field and geometry_field not in location_fields:
         location_fields = (*location_fields, geometry_field)
 
@@ -192,6 +308,8 @@ def analyze_dataset(
         confidence = min(1.0, confidence + 0.15)
     if geometry_type:
         confidence = min(1.0, confidence + 0.1)
+    if data_locations and data_times:
+        confidence = min(1.0, confidence + 0.15)
 
     return DatasetStructure(
         kind=kind,
