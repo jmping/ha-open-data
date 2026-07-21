@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from ..models import OpenDataDataset, OpenDataField
@@ -24,18 +25,17 @@ class CkanProvider(JsonClient):
         supports_incremental_updates=False,
         supports_statistics=True,
         supports_streaming=False,
+        supports_sample_rows=True,
+        supports_distinct_values=True,
     )
 
     async def _action(self, action: str, params: dict[str, str]) -> Any:
-        payload = await self.async_get_json(
-            f"/api/3/action/{action}", params=params
-        )
+        payload = await self.async_get_json(f"/api/3/action/{action}", params=params)
         if not isinstance(payload, dict) or payload.get("success") is not True:
             raise OpenDataResponseError(f"CKAN action {action} failed")
         return payload.get("result")
 
     async def async_verify_portal(self) -> None:
-        """Require a successful CKAN status action before using the portal."""
         result = await self._action("status_show", {})
         if not isinstance(result, dict):
             raise OpenDataResponseError(
@@ -45,39 +45,26 @@ class CkanProvider(JsonClient):
     async def async_get_dataset(
         self, dataset_id: str, resource_id: str | None = None
     ) -> OpenDataDataset:
-        """Return normalized metadata for a CKAN DataStore dataset."""
-        package = await self._action(
-            "package_show", {"id": dataset_id.strip()}
-        )
+        package = await self._action("package_show", {"id": dataset_id.strip()})
         if not isinstance(package, dict):
             raise OpenDataResponseError("CKAN package metadata was not valid")
-
         selected_resource = self._select_resource(package, resource_id)
         selected_id = selected_resource.get("id")
-
         result = await self._action(
-            "datastore_search",
-            {"resource_id": selected_id, "limit": "0"},
+            "datastore_search", {"resource_id": selected_id, "limit": "0"}
         )
         if not isinstance(result, dict):
-            raise OpenDataResponseError(
-                "CKAN DataStore metadata was not valid"
-            )
-
+            raise OpenDataResponseError("CKAN DataStore metadata was not valid")
         fields = tuple(
             OpenDataField(
                 name=field.get("id", ""),
-                label=(
-                    field.get("info", {}).get("label")
-                    or field.get("id", "")
-                ),
+                label=field.get("info", {}).get("label") or field.get("id", ""),
                 data_type=field.get("type", "string"),
                 description=field.get("info", {}).get("notes"),
             )
             for field in result.get("fields", [])
             if isinstance(field, dict) and field.get("id") != "_id"
         )
-
         return OpenDataDataset(
             dataset_id=package.get("name") or package.get("id") or dataset_id,
             title=package.get("title") or package.get("name") or dataset_id,
@@ -92,28 +79,73 @@ class CkanProvider(JsonClient):
         dataset_id: str,
         resource_id: str | None = None,
         timestamp_field: str | None = None,
+        filters: dict[str, str] | None = None,
     ) -> dict[str, Any] | None:
-        """Return the newest row from a CKAN DataStore resource."""
         dataset = await self.async_get_dataset(dataset_id, resource_id)
         params = {"resource_id": dataset.resource_id or "", "limit": "1"}
-
+        safe_fields = {field.name for field in dataset.fields}
         if timestamp_field:
-            safe_fields = {field.name for field in dataset.fields}
             if timestamp_field not in safe_fields:
-                raise ValueError(
-                    "Timestamp field is not present in the CKAN resource"
-                )
+                raise ValueError("Timestamp field is not present in the CKAN resource")
             params["sort"] = f'"{timestamp_field}" desc'
-
+        if filters:
+            if not set(filters).issubset(safe_fields):
+                raise ValueError("Filter field is not present in the CKAN resource")
+            params["filters"] = json.dumps(filters, separators=(",", ":"))
         result = await self._action("datastore_search", params)
         records = result.get("records", []) if isinstance(result, dict) else []
-        if not isinstance(records, list) or not all(
-            isinstance(row, dict) for row in records
-        ):
-            raise OpenDataResponseError(
-                "CKAN DataStore did not return records"
-            )
+        if not isinstance(records, list) or not all(isinstance(row, dict) for row in records):
+            raise OpenDataResponseError("CKAN DataStore did not return records")
         return records[0] if records else None
+
+    async def async_sample_rows(
+        self,
+        dataset_id: str,
+        resource_id: str | None = None,
+        *,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        dataset = await self.async_get_dataset(dataset_id, resource_id)
+        result = await self._action(
+            "datastore_search",
+            {
+                "resource_id": dataset.resource_id or "",
+                "limit": str(min(max(limit, 1), 200)),
+            },
+        )
+        records = result.get("records", []) if isinstance(result, dict) else []
+        if not isinstance(records, list) or not all(isinstance(row, dict) for row in records):
+            raise OpenDataResponseError("CKAN sample query did not return records")
+        return records
+
+    async def async_distinct_rows(
+        self,
+        dataset_id: str,
+        resource_id: str | None,
+        identity_field: str,
+        display_field: str | None = None,
+        hierarchy_fields: tuple[str, ...] = (),
+        *,
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        dataset = await self.async_get_dataset(dataset_id, resource_id)
+        safe_fields = {field.name for field in dataset.fields}
+        requested = [identity_field]
+        for field in (display_field, *hierarchy_fields):
+            if field and field not in requested:
+                requested.append(field)
+        if not set(requested).issubset(safe_fields):
+            raise ValueError("Distinct field is not present in the CKAN resource")
+        quoted = ", ".join(f'"{field}"' for field in requested)
+        sql = (
+            f'SELECT DISTINCT {quoted} FROM "{dataset.resource_id}" '
+            f'ORDER BY "{identity_field}" LIMIT {min(max(limit, 1), 1000)}'
+        )
+        result = await self._action("datastore_search_sql", {"sql": sql})
+        records = result.get("records", []) if isinstance(result, dict) else []
+        if not isinstance(records, list) or not all(isinstance(row, dict) for row in records):
+            raise OpenDataResponseError("CKAN distinct query did not return records")
+        return records
 
     @staticmethod
     def _normalize_packages(packages: Any) -> list[OpenDataDataset]:
@@ -131,7 +163,6 @@ class CkanProvider(JsonClient):
     async def async_search_datasets(
         self, query: str, limit: int = 20
     ) -> list[OpenDataDataset]:
-        """Search the CKAN catalog with a bounded result count."""
         bounded_limit = min(max(int(limit), 1), 100)
         result = await self._action(
             "package_search", {"q": query, "rows": str(bounded_limit)}
@@ -140,7 +171,6 @@ class CkanProvider(JsonClient):
         return self._normalize_packages(packages)[:bounded_limit]
 
     async def async_list_datasets(self, limit: int = 500) -> list[OpenDataDataset]:
-        """Enumerate CKAN package_search pages instead of relying on keywords."""
         bounded_limit = min(max(int(limit), 1), 1000)
         page_size = min(100, bounded_limit)
         found: dict[str, OpenDataDataset] = {}
@@ -167,28 +197,18 @@ class CkanProvider(JsonClient):
     def _select_resource(
         package: dict[str, Any], resource_id: str | None
     ) -> dict[str, Any]:
-        """Select a usable DataStore resource from package metadata."""
         resources = [
-            item
-            for item in package.get("resources", [])
-            if isinstance(item, dict)
+            item for item in package.get("resources", []) if isinstance(item, dict)
         ]
-
         if resource_id:
             selected = next(
-                (item for item in resources if item.get("id") == resource_id),
-                None,
+                (item for item in resources if item.get("id") == resource_id), None
             )
             if selected is None:
-                raise OpenDataResponseError(
-                    "Requested CKAN resource was not found in the dataset"
-                )
+                raise OpenDataResponseError("Requested CKAN resource was not found")
             if not selected.get("datastore_active"):
-                raise OpenDataResponseError(
-                    "Requested CKAN resource is not DataStore-enabled"
-                )
+                raise OpenDataResponseError("Requested CKAN resource is not DataStore-enabled")
             return selected
-
         selected = next(
             (
                 item
@@ -199,7 +219,5 @@ class CkanProvider(JsonClient):
             None,
         )
         if selected is None:
-            raise OpenDataResponseError(
-                "CKAN dataset has no active DataStore resource"
-            )
+            raise OpenDataResponseError("CKAN dataset has no active DataStore resource")
         return selected
