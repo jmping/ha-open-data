@@ -1,15 +1,17 @@
-scan_portal:
-  name: Scan portal
-  description: Scan broad public catalog slices and return normalized dataset candidates.
+inspect_portal:
+  name: Inspect portal
+  description: Validate a public portal, auto-detect its provider, and return normalized capabilities.
   fields:
-    provider:
-      name: Provider
+    portal_url:
+      name: Portal URL
       required: true
       selector:
-        select:
-          options:
-            - ckan
-            - socrata
+        text:
+
+scan_portal:
+  name: Scan portal
+  description: Auto-detect a public portal and scan broad catalog slices for normalized dataset candidates.
+  fields:
     portal_url:
       name: Portal URL
       required: true
@@ -26,16 +28,8 @@ scan_portal:
 
 search_datasets:
   name: Search datasets
-  description: Search one open-data portal and return normalized dataset metadata.
+  description: Auto-detect and search one open-data portal, returning normalized dataset metadata.
   fields:
-    provider:
-      name: Provider
-      required: true
-      selector:
-        select:
-          options:
-            - ckan
-            - socrata
     portal_url:
       name: Portal URL
       required: true
@@ -56,16 +50,8 @@ search_datasets:
 
 inspect_dataset:
   name: Inspect dataset
-  description: Resolve a dataset, resource, and field schema from a public portal.
+  description: Auto-detect a portal and resolve a dataset, resource, and field schema.
   fields:
-    provider:
-      name: Provider
-      required: true
-      selector:
-        select:
-          options:
-            - ckan
-            - socrata
     portal_url:
       name: Portal URL
       required: true
