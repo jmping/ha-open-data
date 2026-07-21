@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime
 import re
 from typing import Any, Iterable
@@ -35,17 +35,10 @@ _GEOMETRY_TYPES = {
     "point", "multipoint", "line", "multiline", "linestring", "multilinestring",
     "polygon", "multipolygon", "location",
 }
-_DATETIME_PATTERN = re.compile(
-    r"^\d{4}-\d{1,2}-\d{1,2}(?:[T\s]\d{1,2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?$"
-)
 
 
 def _norm(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", value.casefold()).strip("_")
-
-
-def _scalar(value: Any) -> bool:
-    return isinstance(value, (str, int, float, bool)) and value not in ("", None)
 
 
 @dataclass(slots=True, frozen=True)
@@ -55,6 +48,16 @@ class SelectableRecord:
     value: str
     label: str
     hierarchy: tuple[tuple[str, str], ...] = ()
+
+
+@dataclass(slots=True, frozen=True)
+class FieldHypothesis:
+    """One explainable candidate for a structural dataset role."""
+
+    field: str
+    role: str
+    confidence: float
+    reasons: tuple[str, ...]
 
 
 @dataclass(slots=True, frozen=True)
@@ -107,102 +110,75 @@ def _candidate_fields(field_names: Iterable[str], preferred: tuple[str, ...]) ->
     )
 
 
-def _looks_like_datetime(values: list[Any]) -> bool:
-    strings = [str(value).strip() for value in values if _scalar(value)]
-    if not strings:
+def _looks_temporal(value: Any) -> bool:
+    if not isinstance(value, str):
         return False
-    matches = 0
-    for value in strings[:50]:
-        if _DATETIME_PATTERN.match(value):
-            matches += 1
-            continue
-        try:
-            datetime.fromisoformat(value.replace("Z", "+00:00"))
-        except ValueError:
-            continue
-        matches += 1
-    return matches / min(len(strings), 50) >= 0.7
+    candidate = value.strip().replace("Z", "+00:00")
+    if len(candidate) < 8:
+        return False
+    try:
+        datetime.fromisoformat(candidate)
+        return True
+    except ValueError:
+        return bool(re.fullmatch(r"\d{4}[-/]\d{1,2}[-/]\d{1,2}.*", candidate))
 
 
-def _pair_score(rows: list[dict[str, Any]], location_field: str, time_field: str) -> float:
-    pairs = [
-        (str(row[location_field]), str(row[time_field]))
-        for row in rows
-        if _scalar(row.get(location_field)) and _scalar(row.get(time_field))
-    ]
-    if len(pairs) < 4:
-        return 0.0
-
-    locations = {location for location, _time in pairs}
-    times = {time for _location, time in pairs}
-    if len(locations) < 2 or len(times) < 2:
-        return 0.0
-
-    locations_by_time: dict[str, set[str]] = {}
-    times_by_location: dict[str, set[str]] = {}
-    for location, time in pairs:
-        locations_by_time.setdefault(time, set()).add(location)
-        times_by_location.setdefault(location, set()).add(time)
-
-    multi_location_times = sum(len(items) > 1 for items in locations_by_time.values())
-    multi_time_locations = sum(len(items) > 1 for items in times_by_location.values())
-    cross_time = multi_location_times / len(locations_by_time)
-    cross_location = multi_time_locations / len(times_by_location)
-    pair_uniqueness = len(set(pairs)) / len(pairs)
-
-    # Strong station/time grids have repeated locations across times, repeated times
-    # across locations, and usually one row per location/time combination.
-    return round(0.45 * cross_time + 0.45 * cross_location + 0.10 * pair_uniqueness, 3)
-
-
-def _data_structural_candidates(
+def _data_role_scores(
     fields: tuple[str, ...], rows: list[dict[str, Any]]
-) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """Infer location and time fields from repeated row bundles."""
+) -> tuple[dict[str, float], dict[str, float]]:
+    """Score fields using repeated location-by-time bundles in bounded samples."""
+    location_scores = {field: 0.0 for field in fields}
+    time_scores = {field: 0.0 for field in fields}
     if len(rows) < 4:
-        return (), ()
+        return location_scores, time_scores
 
-    values_by_field = {
-        field: [row.get(field) for row in rows if _scalar(row.get(field))]
+    values = {
+        field: [row.get(field) for row in rows if row.get(field) not in (None, "")]
         for field in fields
     }
-    time_candidates = {
-        field for field, values in values_by_field.items() if _looks_like_datetime(values)
-    }
-    time_candidates.update(_candidate_fields(fields, _TIME_TERMS))
-
-    location_candidates = {
+    temporal = {
         field
-        for field, values in values_by_field.items()
-        if 2 <= len({str(value) for value in values}) < len(values)
+        for field, items in values.items()
+        if items and sum(_looks_temporal(item) for item in items) / len(items) >= 0.7
     }
-    location_candidates.update(_candidate_fields(fields, _IDENTIFIER_TERMS))
-    location_candidates.update(_candidate_fields(fields, _DISPLAY_TERMS))
-    location_candidates.update(_candidate_fields(fields, _HIERARCHY_TERMS))
 
-    location_scores: dict[str, float] = {}
-    time_scores: dict[str, float] = {}
-    for location_field in location_candidates:
-        for time_field in time_candidates:
-            if location_field == time_field:
-                continue
-            score = _pair_score(rows, location_field, time_field)
-            if score < 0.55:
-                continue
-            location_scores[location_field] = max(location_scores.get(location_field, 0.0), score)
-            time_scores[time_field] = max(time_scores.get(time_field, 0.0), score)
+    for time_field in temporal:
+        time_values = values[time_field]
+        unique_times = {str(item) for item in time_values}
+        if len(unique_times) < 2:
+            continue
+        duplicate_ratio = 1.0 - len(unique_times) / max(len(time_values), 1)
+        time_scores[time_field] = min(1.0, 0.55 + duplicate_ratio)
 
-    ranked_locations = tuple(
-        field for field, _score in sorted(
-            location_scores.items(), key=lambda item: (-item[1], item[0].casefold())
-        )
-    )
-    ranked_times = tuple(
-        field for field, _score in sorted(
-            time_scores.items(), key=lambda item: (-item[1], item[0].casefold())
-        )
-    )
-    return ranked_locations, ranked_times
+        for location_field in fields:
+            if location_field == time_field or location_field in temporal:
+                continue
+            pairs = [
+                (str(row.get(time_field)), str(row.get(location_field)))
+                for row in rows
+                if row.get(time_field) not in (None, "")
+                and row.get(location_field) not in (None, "")
+            ]
+            if len(pairs) < 4:
+                continue
+            locations = {item[1] for item in pairs}
+            times = {item[0] for item in pairs}
+            if len(locations) < 2 or len(times) < 2:
+                continue
+            per_time: dict[str, set[str]] = {}
+            per_location: dict[str, set[str]] = {}
+            for time_value, location_value in pairs:
+                per_time.setdefault(time_value, set()).add(location_value)
+                per_location.setdefault(location_value, set()).add(time_value)
+            shared_locations = sum(len(items) >= 2 for items in per_time.values()) / len(per_time)
+            repeated_times = sum(len(items) >= 2 for items in per_location.values()) / len(per_location)
+            pair_uniqueness = len(set(pairs)) / len(pairs)
+            score = 0.45 * shared_locations + 0.35 * repeated_times + 0.20 * pair_uniqueness
+            location_scores[location_field] = max(location_scores[location_field], score)
+            if score >= 0.55:
+                time_scores[time_field] = max(time_scores[time_field], min(1.0, 0.6 + score * 0.4))
+
+    return location_scores, time_scores
 
 
 def _geometry(
@@ -233,14 +209,20 @@ def analyze_dataset(
         for mapping in map_fields(dataset.fields)
     }
 
-    identity_fields = _candidate_fields(fields, _IDENTIFIER_TERMS)
-    display_fields = _candidate_fields(fields, _DISPLAY_TERMS)
-    timestamp_fields = _candidate_fields(fields, _TIME_TERMS)
-    location_fields = _candidate_fields(fields, _LOCATION_TERMS)
-    data_locations, data_times = _data_structural_candidates(fields, rows)
+    identity_fields = list(_candidate_fields(fields, _IDENTIFIER_TERMS))
+    display_fields = list(_candidate_fields(fields, _DISPLAY_TERMS))
+    timestamp_fields = list(_candidate_fields(fields, _TIME_TERMS))
+    location_fields = list(_candidate_fields(fields, _LOCATION_TERMS))
+    location_scores, time_scores = _data_role_scores(fields, rows)
 
-    identity_fields = tuple(dict.fromkeys((*data_locations, *identity_fields)))
-    timestamp_fields = tuple(dict.fromkeys((*data_times, *timestamp_fields)))
+    for field in sorted(fields, key=lambda item: (-location_scores[item], item.casefold())):
+        if location_scores[field] >= 0.55 and field not in identity_fields:
+            identity_fields.append(field)
+        if location_scores[field] >= 0.45 and field not in location_fields:
+            location_fields.append(field)
+    for field in sorted(fields, key=lambda item: (-time_scores[item], item.casefold())):
+        if time_scores[field] >= 0.55 and field not in timestamp_fields:
+            timestamp_fields.append(field)
 
     mapped_timestamp = next(
         (name for name, metric in mappings.items() if metric == "timestamp"), None
@@ -248,20 +230,17 @@ def analyze_dataset(
     mapped_station = next(
         (name for name, metric in mappings.items() if metric == "station"), None
     )
+    if mapped_station and mapped_station not in identity_fields:
+        identity_fields.insert(0, mapped_station)
+    if mapped_timestamp and mapped_timestamp not in timestamp_fields:
+        timestamp_fields.insert(0, mapped_timestamp)
+
     timestamp = mapped_timestamp or (timestamp_fields[0] if timestamp_fields else None)
     identity = mapped_station or (identity_fields[0] if identity_fields else None)
-    if mapped_station and mapped_station not in identity_fields:
-        identity_fields = (mapped_station, *identity_fields)
-    if mapped_timestamp and mapped_timestamp not in timestamp_fields:
-        timestamp_fields = (mapped_timestamp, *timestamp_fields)
-
     display = next((name for name in display_fields if name != identity), None)
     geometry_field, geometry_type = _geometry(dataset, rows)
-    location_fields = tuple(
-        dict.fromkeys((*data_locations, *location_fields, *(field for field in display_fields if field != identity)))
-    )
     if geometry_field and geometry_field not in location_fields:
-        location_fields = (*location_fields, geometry_field)
+        location_fields.append(geometry_field)
 
     hierarchy = tuple(
         name
@@ -275,8 +254,15 @@ def analyze_dataset(
         if metric not in {"station", "timestamp", "latitude", "longitude"}
     )
     structural = {
-        identity, display, timestamp, geometry_field, *identity_fields, *display_fields,
-        *timestamp_fields, *location_fields, *hierarchy,
+        identity,
+        display,
+        timestamp,
+        geometry_field,
+        *identity_fields,
+        *display_fields,
+        *timestamp_fields,
+        *location_fields,
+        *hierarchy,
     }
     ignored = tuple(
         name
@@ -308,8 +294,10 @@ def analyze_dataset(
         confidence = min(1.0, confidence + 0.15)
     if geometry_type:
         confidence = min(1.0, confidence + 0.1)
-    if data_locations and data_times:
-        confidence = min(1.0, confidence + 0.15)
+    if identity and location_scores.get(identity, 0) >= 0.55:
+        confidence = min(1.0, confidence + 0.1)
+    if timestamp and time_scores.get(timestamp, 0) >= 0.55:
+        confidence = min(1.0, confidence + 0.1)
 
     return DatasetStructure(
         kind=kind,
@@ -323,11 +311,96 @@ def analyze_dataset(
         hierarchy_fields=hierarchy,
         metric_fields=metric_fields,
         ignored_fields=ignored,
-        identity_fields=identity_fields,
-        display_fields=display_fields,
-        timestamp_fields=timestamp_fields,
-        location_fields=location_fields,
+        identity_fields=tuple(identity_fields),
+        display_fields=tuple(display_fields),
+        timestamp_fields=tuple(timestamp_fields),
+        location_fields=tuple(location_fields),
     )
+
+
+def dataset_hypotheses(
+    dataset: OpenDataDataset, sample_rows: list[dict[str, Any]] | None = None
+) -> tuple[FieldHypothesis, ...]:
+    """Return ranked, explainable role hypotheses for user confirmation."""
+    rows = sample_rows or []
+    structure = analyze_dataset(dataset, rows)
+    fields = tuple(field.name for field in dataset.fields)
+    location_scores, time_scores = _data_role_scores(fields, rows)
+    hypotheses: list[FieldHypothesis] = []
+
+    def add(role: str, candidates: tuple[str, ...], data_scores: dict[str, float]) -> None:
+        for index, field in enumerate(candidates):
+            confidence = max(0.35, 0.92 - index * 0.08)
+            reasons = ["field name or ontology match"]
+            if data_scores.get(field, 0) >= 0.45:
+                confidence = max(confidence, data_scores[field])
+                reasons.append("repeated location/time bundles in sample rows")
+            hypotheses.append(
+                FieldHypothesis(
+                    field=field,
+                    role=role,
+                    confidence=round(min(confidence, 1.0), 3),
+                    reasons=tuple(reasons),
+                )
+            )
+
+    add("identity", structure.identity_fields, location_scores)
+    add("display", structure.display_fields, {})
+    add("timestamp", structure.timestamp_fields, time_scores)
+    add("location", structure.location_fields, location_scores)
+    for field in structure.hierarchy_fields:
+        hypotheses.append(FieldHypothesis(field, "hierarchy", 0.8, ("hierarchy vocabulary",)))
+    for field in structure.metric_fields:
+        hypotheses.append(FieldHypothesis(field, "metric", 0.9, ("ontology metric mapping",)))
+    return tuple(sorted(hypotheses, key=lambda item: (item.role, -item.confidence, item.field.casefold())))
+
+
+def dataset_explorer_summary(
+    dataset: OpenDataDataset, sample_rows: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
+    """Return a service-safe dataset explorer result."""
+    rows = sample_rows or []
+    structure = analyze_dataset(dataset, rows)
+    unique_records = 0
+    if structure.identity_field:
+        unique_records = len(
+            {
+                str(row[structure.identity_field])
+                for row in rows
+                if row.get(structure.identity_field) not in (None, "")
+            }
+        )
+    return {
+        "kind": structure.kind,
+        "profile_id": structure.profile_id,
+        "confidence": structure.confidence,
+        "primary": {
+            "identity_field": structure.identity_field,
+            "display_field": structure.display_field,
+            "timestamp_field": structure.timestamp_field,
+        },
+        "geometry": {
+            "field": structure.geometry_field,
+            "type": structure.geometry_type,
+        },
+        "dimensions": {
+            "identity": list(structure.identity_fields),
+            "display": list(structure.display_fields),
+            "timestamp": list(structure.timestamp_fields),
+            "location": list(structure.location_fields),
+            "hierarchy": list(structure.hierarchy_fields),
+        },
+        "metrics": list(structure.metric_fields),
+        "ignored_fields": list(structure.ignored_fields),
+        "sample": {
+            "row_count": len(rows),
+            "distinct_primary_records": unique_records,
+        },
+        "hypotheses": [asdict(item) for item in dataset_hypotheses(dataset, rows)],
+        "requires_confirmation": structure.confidence < 0.85
+        or len(structure.identity_fields) > 1
+        or len(structure.timestamp_fields) > 1,
+    }
 
 
 def build_selectable_records(
