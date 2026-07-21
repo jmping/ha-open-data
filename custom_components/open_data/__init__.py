@@ -10,13 +10,20 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from .const import (
     CONF_DATASET_ID,
     CONF_DISPLAY_FIELD,
+    CONF_ESTIMATED_ENTITY_COUNT,
     CONF_HIERARCHY_FIELDS,
     CONF_IDENTITY_FIELD,
+    CONF_METRIC_DIMENSION_FIELDS,
+    CONF_OBSERVATION_DIMENSION_FIELDS,
+    CONF_OBSERVATION_SHAPE,
     CONF_PORTAL_URL,
     CONF_PROVIDER,
     CONF_RESOURCE_ID,
+    CONF_RETRIEVAL_DIMENSION_MULTIPLIER,
     CONF_SELECTED_RECORDS,
     CONF_TIMESTAMP_FIELD,
+    CONF_UNIT_FIELDS,
+    CONF_VALUE_FIELDS,
     DOMAIN,
     PLATFORMS,
 )
@@ -69,6 +76,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: OpenDataConfigEntry) -> 
         or entry.data.get(CONF_DISPLAY_FIELD),
         selected_records,
         tuple(entry.data.get(CONF_HIERARCHY_FIELDS, ())),
+        observation_shape=entry.data.get(CONF_OBSERVATION_SHAPE, "unknown"),
+        metric_dimension_fields=tuple(
+            entry.data.get(CONF_METRIC_DIMENSION_FIELDS, ())
+        ),
+        value_fields=tuple(entry.data.get(CONF_VALUE_FIELDS, ())),
+        observation_dimension_fields=tuple(
+            entry.data.get(CONF_OBSERVATION_DIMENSION_FIELDS, ())
+        ),
+        unit_fields=tuple(entry.data.get(CONF_UNIT_FIELDS, ())),
+        retrieval_dimension_multiplier=int(
+            entry.data.get(CONF_RETRIEVAL_DIMENSION_MULTIPLIER, 1)
+        ),
+        estimated_entity_count=int(entry.data.get(CONF_ESTIMATED_ENTITY_COUNT, 1)),
     )
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = coordinator
