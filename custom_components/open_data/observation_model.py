@@ -82,7 +82,16 @@ _VALUE_TERMS = (
     "quantity",
 )
 _UNIT_TERMS = ("unit", "units", "uom", "unit_of_measure", "measurement_unit")
-_TIME_TERMS = ("timestamp", "datetime", "date_time", "observed", "sample_date", "date", "time")
+_TIME_TERMS = (
+    "timestamp",
+    "datetime",
+    "date_time",
+    "observed",
+    "observed_at",
+    "sample_date",
+    "date",
+    "time",
+)
 _ENTITY_TERMS = (
     "station",
     "site",
@@ -156,7 +165,6 @@ def field_statistics(
 ) -> tuple[FieldStatistics, ...]:
     """Calculate bounded behavioral statistics used by shape inference."""
     output: list[FieldStatistics] = []
-    row_count = max(len(rows), 1)
     for field in fields:
         values = [row.get(field) for row in rows if row.get(field) not in (None, "")]
         distinct = {str(value) for value in values}
@@ -168,8 +176,12 @@ def field_statistics(
                 non_null_count=non_null,
                 distinct_count=distinct_count,
                 distinct_ratio=round(distinct_count / max(non_null, 1), 3),
-                numeric_ratio=round(sum(_is_number(value) for value in values) / max(non_null, 1), 3),
-                temporal_ratio=round(sum(_is_temporal(value) for value in values) / max(non_null, 1), 3),
+                numeric_ratio=round(
+                    sum(_is_number(value) for value in values) / max(non_null, 1), 3
+                ),
+                temporal_ratio=round(
+                    sum(_is_temporal(value) for value in values) / max(non_null, 1), 3
+                ),
                 repeated_ratio=round(1.0 - distinct_count / max(non_null, 1), 3),
             )
         )
@@ -204,10 +216,24 @@ def analyze_observations(
         if _matches(field, _VALUE_TERMS) and by_field[field].numeric_ratio >= 0.5
     )
 
+    # Named observation dimensions must be classified before generic repeated
+    # dimensions. Values such as depth often repeat exactly like station IDs.
+    observation_dimensions = tuple(
+        field
+        for field in fields
+        if field not in timestamps
+        and field not in metric_dimensions
+        and field not in values
+        and field not in units
+        and _matches(field, _OBSERVATION_DIMENSION_TERMS)
+        and by_field[field].distinct_count > 1
+    )
+
     entity_fields = tuple(
         field
         for field in fields
         if field not in timestamps
+        and field not in observation_dimensions
         and (
             _matches(field, _ENTITY_TERMS)
             or (
@@ -218,18 +244,6 @@ def analyze_observations(
         and field not in metric_dimensions
         and field not in values
         and field not in units
-    )
-
-    observation_dimensions = tuple(
-        field
-        for field in fields
-        if field not in entity_fields
-        and field not in timestamps
-        and field not in metric_dimensions
-        and field not in values
-        and field not in units
-        and _matches(field, _OBSERVATION_DIMENSION_TERMS)
-        and by_field[field].distinct_count > 1
     )
 
     excluded = {
@@ -253,7 +267,7 @@ def analyze_observations(
             else ObservationShape.LONG
         )
         confidence = 0.9
-    elif timestamps and len(wide_metrics) >= 1:
+    elif timestamps and wide_metrics:
         shape = ObservationShape.WIDE
         confidence = 0.82 if entity_fields else 0.72
     elif timestamps:
