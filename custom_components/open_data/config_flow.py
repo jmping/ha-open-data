@@ -252,8 +252,6 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 for mapping in candidate.field_mappings
             ]
 
-        # Import a useful set of inferred entities immediately. The options flow
-        # presents the larger discovered set so users can pare it down or expand it.
         if structure.identity_field:
             rows = await provider.async_distinct_rows(
                 dataset.dataset_id,
@@ -277,10 +275,11 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 class OpenDataOptionsFlow(config_entries.OptionsFlow):
-    """Choose structural fields, records/locations, and metrics."""
+    """Choose structural fields first, then records/locations and metrics."""
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         self._config_entry = config_entry
+        self._structure_options: dict[str, Any] = {}
 
     @staticmethod
     def _field_selector(values: list[str]) -> SelectSelector:
@@ -291,11 +290,70 @@ class OpenDataOptionsFlow(config_entries.OptionsFlow):
             )
         )
 
+    def _current(self, key: str) -> Any:
+        return self._config_entry.options.get(key, self._config_entry.data.get(key))
+
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
+        """Select structural fields before deriving record choices."""
         if user_input is not None:
-            return self.async_create_entry(title="", data=user_input)
+            self._structure_options = dict(user_input)
+            return await self.async_step_records()
+
+        coordinator = self._config_entry.runtime_data
+        dataset = coordinator.data.dataset
+        ignored = set(self._config_entry.data.get(CONF_IGNORED_FIELDS, ()))
+        all_fields = [field.name for field in dataset.fields if field.name not in ignored]
+        identity_fields = list(
+            dict.fromkeys(
+                (*self._config_entry.data.get(CONF_IDENTITY_FIELDS, ()), *all_fields)
+            )
+        )
+        display_fields = list(
+            dict.fromkeys(
+                (*self._config_entry.data.get(CONF_DISPLAY_FIELDS, ()), *all_fields)
+            )
+        )
+        timestamp_fields = list(
+            dict.fromkeys(
+                (*self._config_entry.data.get(CONF_TIMESTAMP_FIELDS, ()), *all_fields)
+            )
+        )
+
+        schema: dict[Any, Any] = {}
+        identity = self._current(CONF_IDENTITY_FIELD)
+        display = self._current(CONF_DISPLAY_FIELD)
+        timestamp = self._current(CONF_TIMESTAMP_FIELD)
+        if identity_fields:
+            schema[vol.Optional(CONF_IDENTITY_FIELD, default=identity)] = self._field_selector(
+                identity_fields
+            )
+        if display_fields:
+            schema[vol.Optional(CONF_DISPLAY_FIELD, default=display)] = self._field_selector(
+                display_fields
+            )
+        if timestamp_fields:
+            schema[vol.Optional(CONF_TIMESTAMP_FIELD, default=timestamp)] = self._field_selector(
+                timestamp_fields
+            )
+
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(schema),
+            description_placeholders={
+                "kind": self._config_entry.data.get(CONF_DATASET_KIND, "table"),
+                "identity": identity or "none",
+            },
+        )
+
+    async def async_step_records(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Build record choices from the just-selected structural fields."""
+        if user_input is not None:
+            options = {**self._structure_options, **user_input}
+            return self.async_create_entry(title="", data=options)
 
         coordinator = self._config_entry.runtime_data
         dataset = coordinator.data.dataset
@@ -316,35 +374,12 @@ class OpenDataOptionsFlow(config_entries.OptionsFlow):
             )
         }
 
-        identity_fields = list(self._config_entry.data.get(CONF_IDENTITY_FIELDS, ()))
-        display_fields = list(self._config_entry.data.get(CONF_DISPLAY_FIELDS, ()))
-        timestamp_fields = list(self._config_entry.data.get(CONF_TIMESTAMP_FIELDS, ()))
+        identity = self._structure_options.get(CONF_IDENTITY_FIELD)
+        display = self._structure_options.get(CONF_DISPLAY_FIELD)
+        timestamp = self._structure_options.get(CONF_TIMESTAMP_FIELD)
         hierarchy_fields = tuple(
             self._config_entry.data.get(CONF_HIERARCHY_FIELDS, ())
         )
-        identity = self._config_entry.options.get(
-            CONF_IDENTITY_FIELD, self._config_entry.data.get(CONF_IDENTITY_FIELD)
-        )
-        display = self._config_entry.options.get(
-            CONF_DISPLAY_FIELD, self._config_entry.data.get(CONF_DISPLAY_FIELD)
-        )
-        timestamp = self._config_entry.options.get(
-            CONF_TIMESTAMP_FIELD, self._config_entry.data.get(CONF_TIMESTAMP_FIELD)
-        )
-
-        if identity_fields:
-            schema[vol.Optional(CONF_IDENTITY_FIELD, default=identity)] = self._field_selector(
-                identity_fields
-            )
-        if display_fields:
-            schema[vol.Optional(CONF_DISPLAY_FIELD, default=display)] = self._field_selector(
-                display_fields
-            )
-        if timestamp_fields:
-            schema[vol.Optional(CONF_TIMESTAMP_FIELD, default=timestamp)] = self._field_selector(
-                timestamp_fields
-            )
-
         if identity:
             rows = await coordinator.provider.async_distinct_rows(
                 dataset.dataset_id,
@@ -370,21 +405,24 @@ class OpenDataOptionsFlow(config_entries.OptionsFlow):
             records = build_selectable_records(rows, structure)
             record_choices = {record.value: record.label for record in records}
             if record_choices:
-                configured_records = self._config_entry.options.get(
+                configured = self._config_entry.options.get(
                     CONF_SELECTED_RECORDS,
-                    self._config_entry.data.get(CONF_SELECTED_RECORDS),
+                    self._config_entry.data.get(CONF_SELECTED_RECORDS, ()),
                 )
-                current_records = list(
-                    configured_records
-                    if configured_records is not None
-                    else record_choices.keys()
+                configured_values = (
+                    [configured] if isinstance(configured, str) else list(configured or ())
                 )
+                current_records = [
+                    value for value in configured_values if value in record_choices
+                ]
+                if not current_records:
+                    current_records = list(record_choices)
                 schema[
                     vol.Optional(CONF_SELECTED_RECORDS, default=current_records)
                 ] = cv.multi_select(record_choices)
 
         return self.async_show_form(
-            step_id="init",
+            step_id="records",
             data_schema=vol.Schema(schema),
             description_placeholders={
                 "kind": self._config_entry.data.get(CONF_DATASET_KIND, "table"),
