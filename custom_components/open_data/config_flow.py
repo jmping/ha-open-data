@@ -35,6 +35,8 @@ from .providers.base import (
 )
 
 _DISCOVERY_LIMIT = 50
+CONF_DATASET_IDS = "dataset_ids"
+CONF_TITLE = "title"
 
 
 class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -58,7 +60,7 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Scan a portal, auto-detect its provider, and discover datasets."""
+        """Scan a portal, auto-detect its provider, and discover usable datasets."""
         errors: dict[str, str] = {}
         if user_input is not None:
             try:
@@ -88,22 +90,46 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_discover(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Select one of the automatically discovered datasets."""
+        """Select one or more automatically discovered datasets."""
         errors: dict[str, str] = {}
         if user_input is not None:
-            dataset_id = user_input[CONF_DATASET_ID]
-            candidate = self._candidates.get(dataset_id)
-            if candidate is None:
+            selected_ids = user_input[CONF_DATASET_IDS]
+            if isinstance(selected_ids, str):
+                selected_ids = [selected_ids]
+            selected = [
+                self._candidates[dataset_id].dataset
+                for dataset_id in selected_ids
+                if dataset_id in self._candidates
+            ]
+            if not selected or len(selected) != len(selected_ids):
                 errors["base"] = "invalid_dataset"
             else:
                 try:
-                    return await self._async_create_dataset_entry(candidate.dataset)
+                    entries = [
+                        await self._async_prepare_dataset_entry(dataset)
+                        for dataset in selected
+                    ]
                 except OpenDataConnectionError:
                     errors["base"] = "cannot_connect"
                 except (OpenDataResponseError, OpenDataSecurityError, ValueError):
                     errors["base"] = "invalid_dataset"
                 except Exception:  # noqa: BLE001
                     errors["base"] = "unknown"
+                else:
+                    first = entries[0]
+                    for extra in entries[1:]:
+                        self.hass.async_create_task(
+                            self.hass.config_entries.flow.async_init(
+                                DOMAIN,
+                                context={"source": config_entries.SOURCE_IMPORT},
+                                data=extra,
+                            )
+                        )
+                    await self.async_set_unique_id(first["unique_id"])
+                    self._abort_if_unique_id_configured()
+                    return self.async_create_entry(
+                        title=first[CONF_TITLE], data=first["data"]
+                    )
 
         options = [
             SelectOptionDict(
@@ -116,8 +142,8 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="discover",
             data_schema=vol.Schema(
                 {
-                    vol.Required(CONF_DATASET_ID): SelectSelector(
-                        SelectSelectorConfig(options=options)
+                    vol.Required(CONF_DATASET_IDS): SelectSelector(
+                        SelectSelectorConfig(options=options, multiple=True)
                     )
                 }
             ),
@@ -129,10 +155,20 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             },
         )
 
+    async def async_step_import(
+        self, import_data: dict[str, Any]
+    ) -> FlowResult:
+        """Create an additional selected dataset entry."""
+        await self.async_set_unique_id(import_data["unique_id"])
+        self._abort_if_unique_id_configured()
+        return self.async_create_entry(
+            title=import_data[CONF_TITLE], data=import_data["data"]
+        )
+
     async def _async_discover_catalog(
         self, portal_url: str
     ) -> list[OpenDataDataset]:
-        """Inspect the portal and search broad catalog slices."""
+        """Inspect the portal and return only datasets HA can currently poll."""
         inspected = await async_inspect_portal(
             async_get_clientsession(self.hass), portal_url
         )
@@ -141,12 +177,21 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         datasets, _errors = await async_discover_catalog(
             inspected, limit=_DISCOVERY_LIMIT
         )
-        return datasets
 
-    async def _async_create_dataset_entry(
+        usable: list[OpenDataDataset] = []
+        for dataset in datasets:
+            try:
+                usable.append(
+                    await inspected.provider.async_get_dataset(dataset.dataset_id)
+                )
+            except OpenDataResponseError:
+                continue
+        return usable
+
+    async def _async_prepare_dataset_entry(
         self, discovered: OpenDataDataset
-    ) -> FlowResult:
-        """Inspect the selected schema and create the config entry."""
+    ) -> dict[str, Any]:
+        """Revalidate a selected dataset and prepare config-entry data."""
         if self._provider_name is None or self._portal_url is None:
             raise ValueError("Discovery flow is missing provider state")
         provider = create_provider(
@@ -155,13 +200,13 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             self._portal_url,
         )
         await provider.async_verify_portal()
-        dataset = await provider.async_get_dataset(discovered.dataset_id)
+        dataset = await provider.async_get_dataset(
+            discovered.dataset_id, discovered.resource_id
+        )
         unique_id = (
             f"{self._provider_name}:{self._portal_url}:"
             f"{dataset.dataset_id}:{dataset.resource_id or ''}"
         )
-        await self.async_set_unique_id(unique_id)
-        self._abort_if_unique_id_configured()
         data = {
             CONF_PROVIDER: self._provider_name,
             CONF_PORTAL_URL: self._portal_url,
@@ -169,7 +214,11 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         }
         if dataset.resource_id:
             data[CONF_RESOURCE_ID] = dataset.resource_id
-        return self.async_create_entry(title=dataset.title, data=data)
+        return {
+            "unique_id": unique_id,
+            CONF_TITLE: dataset.title,
+            "data": data,
+        }
 
     @staticmethod
     def _candidate_label(candidate: DatasetCandidate) -> str:
