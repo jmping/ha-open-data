@@ -49,8 +49,8 @@ search_datasets:
           mode: box
 
 inspect_dataset:
-  name: Inspect dataset
-  description: Auto-detect a portal and resolve a dataset, resource, and field schema.
+  name: Explore dataset
+  description: Resolve a dataset and return schema, sample-based structural analysis, ranked field hypotheses, metrics, dimensions, and whether user confirmation is recommended.
   fields:
     portal_url:
       name: Portal URL
@@ -66,6 +66,15 @@ inspect_dataset:
       name: Resource ID
       selector:
         text:
+    sample_limit:
+      name: Sample row limit
+      description: More rows improve location-by-time bundle detection but increase portal requests.
+      default: 100
+      selector:
+        number:
+          min: 10
+          max: 200
+          mode: box
 
 refresh_entry:
   name: Refresh entry
