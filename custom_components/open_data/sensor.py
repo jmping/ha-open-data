@@ -40,7 +40,7 @@ async def async_setup_entry(
     entry: ConfigEntry[OpenDataCoordinator],
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    """Create measurement sensors while retaining descriptive source context."""
+    """Create sensors from semantic streams or conventional measurement columns."""
     coordinator = entry.runtime_data
     snapshot = coordinator.data
     if snapshot is None:
@@ -77,23 +77,42 @@ async def async_setup_entry(
         ignored_fields=ignored,
     )
     fields_by_name = {field.name: field for field in snapshot.dataset.fields}
-
-    selected = set(entry.options.get(CONF_SELECTED_FIELDS, ()))
-    metric_names = set(roles.metric_fields)
-    if selected:
-        # Options may narrow measurements, but old options cannot turn metadata
-        # such as year, vendor, or station IDs back into sensors.
-        metric_names &= selected
-    fields = tuple(
-        field for field in snapshot.dataset.fields if field.name in metric_names
-    )
-
-    # If classification cannot identify a metric, keep the dataset status and
-    # context useful rather than recreating every source column as a sensor.
     context_fields = tuple(
         field
         for field in roles.context_fields
         if field in fields_by_name and field not in ignored
+    )
+
+    if coordinator.uses_semantic_observations:
+        known_streams: set[str] = set()
+
+        def add_new_streams() -> None:
+            current = coordinator.data
+            if current is None:
+                return
+            new_ids = set(current.observations) - known_streams
+            if not new_ids:
+                return
+            known_streams.update(new_ids)
+            async_add_entities(
+                [
+                    OpenDataObservationSensor(
+                        entry, coordinator, stream_id, context_fields
+                    )
+                    for stream_id in sorted(new_ids)
+                ]
+            )
+
+        add_new_streams()
+        entry.async_on_unload(coordinator.async_add_listener(add_new_streams))
+        return
+
+    selected = set(entry.options.get(CONF_SELECTED_FIELDS, ()))
+    metric_names = set(roles.metric_fields)
+    if selected:
+        metric_names &= selected
+    fields = tuple(
+        field for field in snapshot.dataset.fields if field.name in metric_names
     )
 
     entities: list[SensorEntity] = []
@@ -186,7 +205,6 @@ class OpenDataSensorBase(CoordinatorEntity[OpenDataCoordinator], SensorEntity):
         return snapshot.records.get(self._record_id, {})
 
     def _source_attributes(self) -> dict[str, Any]:
-        """Return context that explains what this entity represents."""
         attributes: dict[str, Any] = {
             "dataset": self._dataset_title,
             "provider": self._provider,
@@ -229,6 +247,66 @@ class OpenDataStatusSensor(OpenDataSensorBase):
     @property
     def native_value(self) -> str:
         return "data_available" if self._record_values() else "no_data"
+
+
+class OpenDataObservationSensor(OpenDataSensorBase):
+    """Expose one dynamically discovered semantic observation stream."""
+
+    def __init__(
+        self,
+        entry: ConfigEntry,
+        coordinator: OpenDataCoordinator,
+        stream_id: str,
+        context_fields: tuple[str, ...] = (),
+    ) -> None:
+        snapshot = coordinator.data
+        if snapshot is None or stream_id not in snapshot.observations:
+            raise ValueError("Semantic observation stream is unavailable")
+        observation = snapshot.observations[stream_id]
+        super().__init__(entry, coordinator, observation.entity_id, context_fields)
+        self._stream_id = stream_id
+        dimension_label = " · ".join(value for _, value in observation.dimensions)
+        self._attr_name = (
+            f"{observation.metric} · {dimension_label}"
+            if dimension_label
+            else observation.metric
+        )
+        self._attr_unique_id = f"{self._identifier}:observation:{stream_id}"
+        if observation.unit:
+            self._attr_native_unit_of_measurement = observation.unit
+
+    def _observation(self):
+        snapshot = self.coordinator.data
+        if snapshot is None:
+            return None
+        return snapshot.observations.get(self._stream_id)
+
+    @property
+    def available(self) -> bool:
+        return super().available and self._observation() is not None
+
+    @property
+    def native_value(self) -> Any:
+        observation = self._observation()
+        if observation is None:
+            return None
+        value = observation.value
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            return value
+        return str(value)[:255]
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        attributes = self._source_attributes()
+        observation = self._observation()
+        if observation is None:
+            return attributes
+        attributes["metric"] = observation.metric
+        if observation.timestamp not in (None, ""):
+            attributes["observation_timestamp"] = observation.timestamp
+        if observation.dimensions:
+            attributes["observation_dimensions"] = dict(observation.dimensions)
+        return attributes
 
 
 class OpenDataFieldSensor(OpenDataSensorBase):
