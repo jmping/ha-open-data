@@ -30,16 +30,42 @@
   "options": {
     "step": {
       "init": {
-        "title": "Choose records and metrics",
-        "description": "Dataset structure: {kind}. Current identity field: {identity}. Select the structural fields, records or stations, and measurements to expose.",
+        "title": "Choose useful dataset fields",
+        "description": "Dataset structure: {kind}. Current identity field: {identity}. Automatic suggestions are preselected. Each category is optional, can contain several fields, and may be left empty. Fields omitted from every category are ignored.",
         "data": {
-          "identity_field": "Record or station identifier",
-          "display_field": "Record or station name",
+          "identity_field": "Record, station, or location identifier",
+          "display_field": "Record, station, or location name",
           "timestamp_field": "Observation timestamp",
+          "field_role_fields__location": "Location fields",
+          "field_role_fields__time": "Time fields",
+          "field_role_fields__data": "Data / measurement fields",
+          "field_role_fields__measurement_name": "Measurement-name fields (long format)",
+          "field_role_fields__descriptive": "Descriptive fields",
+          "field_role_fields__irrelevant": "Explicitly irrelevant fields (optional)"
+        }
+      },
+      "structure": {
+        "title": "Define units and records",
+        "description": "Combine the selected fields into stable units and observations. Keys and labels may contain several fields and may be left empty when the dataset does not need them.",
+        "data": {
+          "hierarchy_fields": "Parent hierarchy fields",
+          "unit_key_fields": "Unit key fields",
+          "unit_label_fields": "Unit label fields",
+          "record_key_fields": "Record key fields",
+          "record_label_fields": "Record label fields"
+        }
+      },
+      "records": {
+        "title": "Choose records and metrics",
+        "description": "Record choices were rebuilt using {identity} as the identity for this {kind} dataset. Historical observation IDs should not be selected as locations.",
+        "data": {
           "selected_records": "Records, stations, or locations",
           "selected_fields": "Measurements"
         }
       }
+    },
+    "error": {
+      "invalid_field_roles": "A field can belong to only one category. Remove any duplicate selection and try again."
     }
   },
   "entity": {
