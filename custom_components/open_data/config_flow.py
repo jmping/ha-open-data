@@ -23,12 +23,10 @@ from .const import (
     CONF_RESOURCE_ID,
     CONF_SELECTED_FIELDS,
     DOMAIN,
-    PROVIDER_CKAN,
-    PROVIDER_SOCRATA,
 )
 from .discovery import DatasetCandidate, rank_datasets
 from .models import OpenDataDataset
-from .providers import create_provider
+from .providers import async_detect_provider, create_provider
 from .providers.base import (
     OpenDataConnectionError,
     OpenDataResponseError,
@@ -71,10 +69,9 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Choose a provider and scan its verified public catalog."""
+        """Scan a portal, auto-detect its provider, and discover datasets."""
         errors: dict[str, str] = {}
         if user_input is not None:
-            self._provider_name = user_input[CONF_PROVIDER]
             try:
                 self._portal_url = normalize_portal_url(user_input[CONF_PORTAL_URL])
                 datasets = await self._async_discover_catalog()
@@ -95,19 +92,7 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     return await self.async_step_discover()
                 errors["base"] = "no_datasets"
 
-        schema = vol.Schema(
-            {
-                vol.Required(CONF_PROVIDER, default=PROVIDER_CKAN): SelectSelector(
-                    SelectSelectorConfig(
-                        options=[
-                            SelectOptionDict(value=PROVIDER_CKAN, label="CKAN"),
-                            SelectOptionDict(value=PROVIDER_SOCRATA, label="Socrata"),
-                        ]
-                    )
-                ),
-                vol.Required(CONF_PORTAL_URL): str,
-            }
-        )
+        schema = vol.Schema({vol.Required(CONF_PORTAL_URL): str})
         return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
 
     async def async_step_discover(
@@ -150,19 +135,17 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             description_placeholders={
                 "portal": self._portal_url or "",
                 "count": str(len(options)),
+                "provider": self._provider_name or "",
             },
         )
 
     async def _async_discover_catalog(self) -> list[OpenDataDataset]:
-        """Verify and search broad catalog slices, then de-duplicate results."""
-        if self._provider_name is None or self._portal_url is None:
-            raise ValueError("Discovery flow is missing provider state")
-        provider = create_provider(
-            self._provider_name,
-            async_get_clientsession(self.hass),
-            self._portal_url,
+        """Detect the provider and search broad catalog slices."""
+        if self._portal_url is None:
+            raise ValueError("Discovery flow is missing portal state")
+        self._provider_name, provider = await async_detect_provider(
+            async_get_clientsession(self.hass), self._portal_url
         )
-        await provider.async_verify_portal()
         found: dict[str, OpenDataDataset] = {}
         last_error: OpenDataResponseError | None = None
         for query in _DISCOVERY_QUERIES:
