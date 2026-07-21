@@ -15,15 +15,13 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from .const import (
     CONF_DATASET_ID,
     CONF_PORTAL_URL,
-    CONF_PROVIDER,
     CONF_RESOURCE_ID,
     DOMAIN,
-    PROVIDERS,
 )
 from .feedback import FeedbackRegistry
-from .providers import create_provider
-from .providers.common import normalize_portal_url
+from .portal_inspector import async_discover_catalog, async_inspect_portal
 
+SERVICE_INSPECT_PORTAL = "inspect_portal"
 SERVICE_SCAN_PORTAL = "scan_portal"
 SERVICE_SEARCH_DATASETS = "search_datasets"
 SERVICE_INSPECT_DATASET = "inspect_dataset"
@@ -36,23 +34,8 @@ CONF_ENTRY_ID = "entry_id"
 CONF_PORTAL_ID = "portal_id"
 CONF_METADATA = "metadata"
 
-_PROVIDER_SCHEMA = vol.In(PROVIDERS)
 _PORTAL_SCHEMA = cv.string
 _LIMIT_SCHEMA = vol.All(vol.Coerce(int), vol.Range(min=1, max=100))
-
-_DISCOVERY_QUERIES = (
-    "",
-    "environment",
-    "air quality",
-    "weather",
-    "rainfall",
-    "water",
-    "temperature",
-    "climate",
-    "energy",
-    "traffic",
-    "transit",
-)
 
 
 def _dataset_dict(dataset: Any, *, include_raw: bool = False) -> dict[str, Any]:
@@ -89,71 +72,50 @@ def _review_gate(
 async def async_register_services(hass: HomeAssistant, feedback: FeedbackRegistry) -> None:
     """Register the public Open Data service surface."""
 
+    async def inspect(call: ServiceCall):
+        return await async_inspect_portal(
+            async_get_clientsession(hass), call.data[CONF_PORTAL_URL]
+        )
+
+    async def async_inspect_portal_service(call: ServiceCall) -> dict[str, Any]:
+        inspected = await inspect(call)
+        return inspected.description.as_dict()
+
     async def async_scan_portal(call: ServiceCall) -> dict[str, Any]:
-        provider_name = call.data[CONF_PROVIDER]
-        portal_url = normalize_portal_url(call.data[CONF_PORTAL_URL])
-        limit = call.data[CONF_LIMIT]
-        provider = create_provider(provider_name, async_get_clientsession(hass), portal_url)
-        await provider.async_verify_portal()
-        found: dict[str, Any] = {}
-        errors: list[str] = []
-        for query in _DISCOVERY_QUERIES:
-            try:
-                datasets = await provider.async_search_datasets(query, limit=limit)
-            except Exception as err:  # noqa: BLE001
-                errors.append(f"{query or '<all>'}: {err}")
-                continue
-            for dataset in datasets:
-                found.setdefault(dataset.dataset_id, dataset)
-                if len(found) >= limit:
-                    break
-            if len(found) >= limit:
-                break
+        inspected = await inspect(call)
+        datasets, errors = await async_discover_catalog(
+            inspected, limit=call.data[CONF_LIMIT]
+        )
         gate = _review_gate(
             provider_verified=True,
-            dataset_count=len(found),
+            dataset_count=len(datasets),
             errors=errors,
         )
         return {
-            "provider": provider_name,
-            "portal_url": portal_url,
-            "provider_verified": True,
-            "capabilities": asdict(provider.capabilities),
-            "dataset_count": len(found),
-            "datasets": [_dataset_dict(item) for item in found.values()],
+            **inspected.description.as_dict(),
+            "dataset_count": len(datasets),
+            "datasets": [_dataset_dict(item) for item in datasets],
             "errors": errors,
             "review_gate": gate,
         }
 
     async def async_search_datasets(call: ServiceCall) -> dict[str, Any]:
-        provider_name = call.data[CONF_PROVIDER]
-        portal_url = normalize_portal_url(call.data[CONF_PORTAL_URL])
-        provider = create_provider(provider_name, async_get_clientsession(hass), portal_url)
-        await provider.async_verify_portal()
-        datasets = await provider.async_search_datasets(
+        inspected = await inspect(call)
+        datasets = await inspected.provider.async_search_datasets(
             call.data.get(CONF_QUERY, ""), limit=call.data[CONF_LIMIT]
         )
         return {
-            "provider": provider_name,
-            "portal_url": portal_url,
-            "provider_verified": True,
-            "capabilities": asdict(provider.capabilities),
+            **inspected.description.as_dict(),
             "datasets": [_dataset_dict(item) for item in datasets],
         }
 
     async def async_inspect_dataset(call: ServiceCall) -> dict[str, Any]:
-        provider_name = call.data[CONF_PROVIDER]
-        portal_url = normalize_portal_url(call.data[CONF_PORTAL_URL])
-        provider = create_provider(provider_name, async_get_clientsession(hass), portal_url)
-        await provider.async_verify_portal()
-        dataset = await provider.async_get_dataset(
+        inspected = await inspect(call)
+        dataset = await inspected.provider.async_get_dataset(
             call.data[CONF_DATASET_ID], call.data.get(CONF_RESOURCE_ID)
         )
         return {
-            "provider": provider_name,
-            "portal_url": portal_url,
-            "provider_verified": True,
-            "capabilities": asdict(provider.capabilities),
+            **inspected.description.as_dict(),
             "dataset": _dataset_dict(dataset, include_raw=True),
         }
 
@@ -173,13 +135,21 @@ async def async_register_services(hass: HomeAssistant, feedback: FeedbackRegistr
             "report": report.to_dict() if report is not None else None,
         }
 
+    portal_schema = vol.Schema({vol.Required(CONF_PORTAL_URL): _PORTAL_SCHEMA})
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_INSPECT_PORTAL,
+        async_inspect_portal_service,
+        schema=portal_schema,
+        supports_response=SupportsResponse.ONLY,
+    )
     hass.services.async_register(
         DOMAIN,
         SERVICE_SCAN_PORTAL,
         async_scan_portal,
         schema=vol.Schema(
             {
-                vol.Required(CONF_PROVIDER): _PROVIDER_SCHEMA,
                 vol.Required(CONF_PORTAL_URL): _PORTAL_SCHEMA,
                 vol.Optional(CONF_LIMIT, default=50): _LIMIT_SCHEMA,
             }
@@ -192,7 +162,6 @@ async def async_register_services(hass: HomeAssistant, feedback: FeedbackRegistr
         async_search_datasets,
         schema=vol.Schema(
             {
-                vol.Required(CONF_PROVIDER): _PROVIDER_SCHEMA,
                 vol.Required(CONF_PORTAL_URL): _PORTAL_SCHEMA,
                 vol.Optional(CONF_QUERY, default=""): cv.string,
                 vol.Optional(CONF_LIMIT, default=20): _LIMIT_SCHEMA,
@@ -206,7 +175,6 @@ async def async_register_services(hass: HomeAssistant, feedback: FeedbackRegistr
         async_inspect_dataset,
         schema=vol.Schema(
             {
-                vol.Required(CONF_PROVIDER): _PROVIDER_SCHEMA,
                 vol.Required(CONF_PORTAL_URL): _PORTAL_SCHEMA,
                 vol.Required(CONF_DATASET_ID): cv.string,
                 vol.Optional(CONF_RESOURCE_ID): cv.string,
@@ -238,6 +206,7 @@ async def async_register_services(hass: HomeAssistant, feedback: FeedbackRegistr
 def async_remove_services(hass: HomeAssistant) -> None:
     """Remove all Open Data services."""
     for service in (
+        SERVICE_INSPECT_PORTAL,
         SERVICE_SCAN_PORTAL,
         SERVICE_SEARCH_DATASETS,
         SERVICE_INSPECT_DATASET,
