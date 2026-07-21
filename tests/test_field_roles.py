@@ -1,5 +1,6 @@
 """Tests for provider-independent field role classification."""
 
+import sys
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 
@@ -13,6 +14,7 @@ _PATH = (
 _SPEC = spec_from_file_location("open_data_field_roles", _PATH)
 assert _SPEC is not None and _SPEC.loader is not None
 roles = module_from_spec(_SPEC)
+sys.modules[_SPEC.name] = roles
 _SPEC.loader.exec_module(roles)
 
 
