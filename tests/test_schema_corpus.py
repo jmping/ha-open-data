@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+import sys
 
 import pytest
 
@@ -12,6 +13,7 @@ MODULE_PATH = Path(__file__).parents[1] / "scripts" / "schema_corpus.py"
 SPEC = importlib.util.spec_from_file_location("schema_corpus", MODULE_PATH)
 assert SPEC and SPEC.loader
 schema_corpus = importlib.util.module_from_spec(SPEC)
+sys.modules[SPEC.name] = schema_corpus
 SPEC.loader.exec_module(schema_corpus)
 
 
