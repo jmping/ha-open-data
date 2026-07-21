@@ -239,6 +239,7 @@ def analyze_observations(
             or (
                 1 < by_field[field].distinct_count < max(2, len(sample) // 2)
                 and by_field[field].repeated_ratio >= 0.35
+                and by_field[field].numeric_ratio < 0.5
             )
         )
         and field not in metric_dimensions
