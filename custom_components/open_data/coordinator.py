@@ -22,6 +22,8 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
         dataset_id: str,
         resource_id: str | None,
         timestamp_field: str | None,
+        identity_field: str | None = None,
+        selected_record: str | None = None,
     ) -> None:
         super().__init__(
             hass,
@@ -33,6 +35,8 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
         self.dataset_id = dataset_id
         self.resource_id = resource_id
         self.timestamp_field = timestamp_field
+        self.identity_field = identity_field
+        self.selected_record = selected_record
         self.dataset: OpenDataDataset | None = None
 
     async def _async_update_data(self) -> OpenDataSnapshot:
@@ -42,8 +46,14 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
                     self.dataset_id, self.resource_id
                 )
                 self.resource_id = self.dataset.resource_id or self.resource_id
+            filters = None
+            if self.identity_field and self.selected_record is not None:
+                filters = {self.identity_field: self.selected_record}
             values = await self.provider.async_latest_row(
-                self.dataset_id, self.resource_id, self.timestamp_field
+                self.dataset_id,
+                self.resource_id,
+                self.timestamp_field,
+                filters=filters,
             )
             return OpenDataSnapshot(dataset=self.dataset, values=values or {})
         except (OpenDataError, ValueError) as err:
