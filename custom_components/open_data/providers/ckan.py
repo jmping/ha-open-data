@@ -36,7 +36,16 @@ class CkanProvider(JsonClient):
         return payload.get("result")
 
     async def async_verify_portal(self) -> None:
-        result = await self._action("status_show", {})
+        """Verify CKAN, including OpenGov portals that omit status_show."""
+        try:
+            result = await self._action("status_show", {})
+        except OpenDataResponseError:
+            result = await self._action("package_search", {"q": "", "rows": "1"})
+            if not isinstance(result, dict) or not isinstance(result.get("results"), list):
+                raise OpenDataResponseError(
+                    "Host did not return a recognizable CKAN catalog response"
+                )
+            return
         if not isinstance(result, dict):
             raise OpenDataResponseError(
                 "Host did not return a recognizable CKAN status response"
