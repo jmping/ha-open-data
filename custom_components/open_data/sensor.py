@@ -148,9 +148,10 @@ async def async_setup_entry(
                 )
                 for field in fields
             )
-    elif not (coordinator.identity_field and coordinator.selected_records):
-        # A configured record selection with no returned observations should
-        # produce zero entities, not a misleading dataset-level empty entity.
+    elif not coordinator.identity_field:
+        # Only datasets without a record identity get a dataset-level entity.
+        # A record-scoped configuration with no selected or available records
+        # must produce zero entities and prune any stale per-record devices.
         entities.append(OpenDataStatusSensor(entry, coordinator, None, context_fields))
         entities.extend(
             OpenDataFieldSensor(
