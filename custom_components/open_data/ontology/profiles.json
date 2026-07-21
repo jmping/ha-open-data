@@ -2,7 +2,7 @@
   "version": 1,
   "metrics": {
     "timestamp": {"aliases": ["timestamp", "datetime", "date_time", "observation_time", "observed_at", "measurement_time", "sample_time", "recorded_at", "created_date", "last_updated"]},
-    "station": {"aliases": ["station", "station_id", "station_name", "site", "site_id", "site_name", "sensor", "sensor_id", "monitor", "monitor_id", "location", "location_id", "gage", "gage_id", "gauge", "gauge_id"]},
+    "station": {"aliases": ["station", "station_id", "station_name", "site", "site_id", "site_name", "sensor", "sensor_id", "monitor", "monitor_id", "location", "location_id", "gage", "gage_id", "gauge", "gauge_id", "fips", "fipscode", "geoid"]},
     "latitude": {"aliases": ["latitude", "lat", "y_coordinate", "ycoord"]},
     "longitude": {"aliases": ["longitude", "lon", "lng", "long", "x_coordinate", "xcoord"]},
     "temperature": {"aliases": ["temperature", "temp", "air_temperature", "air_temp", "temp_c", "temp_f", "temperature_c", "temperature_f"], "device_class": "temperature", "state_class": "measurement"},
