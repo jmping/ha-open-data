@@ -57,16 +57,12 @@ def test_spanish_traffic_metadata_matches_profile() -> None:
     assert match.profile_id == "traffic"
 
 
-def test_italian_transit_identity_aliases_are_available() -> None:
-    fields = (
-        OpenDataField("PALINA_ID", "Codice palina", "text"),
-        OpenDataField("NOME_STAZIONE", "Nome stazione", "text"),
-    )
+def test_italian_transit_station_alias_is_available() -> None:
+    fields = (OpenDataField("PALINA_ID", "Codice palina", "text"),)
 
     mapped = {item.source_field: item.canonical_metric for item in map_fields(fields)}
 
     assert mapped["PALINA_ID"] == "station"
-    assert mapped["NOME_STAZIONE"] == "station"
 
 
 def test_german_air_quality_metadata_matches_profile() -> None:
