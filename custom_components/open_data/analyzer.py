@@ -135,6 +135,18 @@ def _looks_temporal(value: Any) -> bool:
         return bool(re.fullmatch(r"\d{4}[-/]\d{1,2}[-/]\d{1,2}.*", candidate))
 
 
+def _temporal_fields(
+    fields: tuple[str, ...], rows: list[dict[str, Any]]
+) -> tuple[str, ...]:
+    """Return fields whose sampled values are predominantly temporal."""
+    temporal: list[str] = []
+    for field in fields:
+        values = [row.get(field) for row in rows if row.get(field) not in (None, "")]
+        if values and sum(_looks_temporal(value) for value in values) / len(values) >= 0.7:
+            temporal.append(field)
+    return tuple(temporal)
+
+
 def _data_role_scores(
     fields: tuple[str, ...], rows: list[dict[str, Any]]
 ) -> tuple[dict[str, float], dict[str, float]]:
@@ -148,11 +160,7 @@ def _data_role_scores(
         field: [row.get(field) for row in rows if row.get(field) not in (None, "")]
         for field in fields
     }
-    temporal = {
-        field
-        for field, items in values.items()
-        if items and sum(_looks_temporal(item) for item in items) / len(items) >= 0.7
-    }
+    temporal = set(_temporal_fields(fields, rows))
 
     for time_field in temporal:
         time_values = values[time_field]
@@ -265,7 +273,6 @@ def infer_dimension_relationships(
                 )
             )
 
-    # Remove transitive shortcuts where A -> B -> C is available with comparable confidence.
     direct: list[DimensionRelationship] = []
     for relation in relationships:
         intermediate = any(
@@ -325,13 +332,30 @@ def analyze_dataset(
     location_fields = list(_candidate_fields(fields, _LOCATION_TERMS))
     location_scores, time_scores = _data_role_scores(fields, rows)
 
+    if rows:
+        identity_fields = [
+            field
+            for field in identity_fields
+            if len(
+                {
+                    str(row[field])
+                    for row in rows
+                    if row.get(field) not in (None, "")
+                }
+            ) >= 2
+        ]
+
     for field in sorted(fields, key=lambda item: (-location_scores[item], item.casefold())):
         if location_scores[field] >= 0.55 and field not in identity_fields:
             identity_fields.append(field)
         if location_scores[field] >= 0.45 and field not in location_fields:
             location_fields.append(field)
+
     for field in sorted(fields, key=lambda item: (-time_scores[item], item.casefold())):
         if time_scores[field] >= 0.55 and field not in timestamp_fields:
+            timestamp_fields.append(field)
+    for field in _temporal_fields(fields, rows):
+        if field not in timestamp_fields:
             timestamp_fields.append(field)
 
     mapped_timestamp = next(
