@@ -32,21 +32,26 @@ from .providers.common import (
 _MAX_HTML_BYTES = 512 * 1024
 _CATALOG_CACHE_TTL_SECONDS = 60 * 60
 _LINK_PATTERN = re.compile(
-    r"(?:href|content)\s*=\s*['\"]([^'\"]+)['\"]",
+    r"(?:href|src|content|data-url)\s*=\s*['\"]([^'\"]+)['\"]",
     re.IGNORECASE,
 )
 _URL_PATTERN = re.compile(r"https?://[^\s'\"<>]+", re.IGNORECASE)
 _COMMON_PORTAL_PATHS = {
     "browse",
     "catalog",
+    "data",
     "dataset",
     "datasets",
     "explore",
     "group",
+    "home",
+    "opendata",
     "organization",
     "resource",
+    "search",
     "view",
 }
+_CATALOG_PROBE_LIMIT = 1
 _CATALOG_CACHE: dict[str, tuple[float, tuple[OpenDataDataset, ...]]] = {}
 
 
@@ -135,31 +140,45 @@ async def _async_linked_portal_candidates(
         host = (parsed.hostname or "").lower()
         if not host:
             continue
+        path = parsed.path.casefold()
         looks_like_portal = (
             host != source_host
             or host.startswith(("data.", "ckan.", "opendata."))
             or host.endswith((".socrata.com", ".ckan.org"))
-            or any(
-                f"/{segment}" in parsed.path.casefold()
-                for segment in _COMMON_PORTAL_PATHS
-            )
-            or "/api/3/" in parsed.path.casefold()
-            or "/api/catalog/" in parsed.path.casefold()
+            or any(f"/{segment}" in path for segment in _COMMON_PORTAL_PATHS)
+            or "/api/3/" in path
+            or "/api/catalog/" in path
+            or "/resource/" in path
+            or "/dataset/" in path
         )
         if not looks_like_portal:
             continue
         for candidate in _candidate_roots(normalized):
             if candidate not in candidates:
                 candidates.append(candidate)
-        if len(candidates) >= 30:
+        if len(candidates) >= 40:
             break
     return candidates
+
+
+async def _async_provider_has_catalog(provider: OpenDataProvider) -> bool:
+    """Return whether a verified provider root exposes at least one dataset."""
+    try:
+        datasets = await provider.async_list_datasets(_CATALOG_PROBE_LIMIT)
+    except (OpenDataConnectionError, OpenDataResponseError):
+        return False
+    return bool(datasets)
 
 
 async def async_inspect_portal(
     session: ClientSession, portal_url: str
 ) -> InspectedPortal:
-    """Resolve aliases/pages, detect the provider, and return its canonical root."""
+    """Resolve aliases/pages, detect the provider, and return its canonical root.
+
+    A municipal landing page can expose a recognizable API shell while its real
+    catalog lives on another linked host. Candidate roots are therefore verified
+    for both provider signature and a non-empty catalog before they are accepted.
+    """
     supplied = normalize_portal_url(portal_url)
     resolved = await async_resolve_portal_redirects(session, supplied)
 
@@ -175,6 +194,7 @@ async def async_inspect_portal(
                 candidates.append(candidate)
 
     errors: list[OpenDataConnectionError | OpenDataResponseError] = []
+    recognized_without_catalog = 0
     for candidate in candidates:
         try:
             provider_name, provider = await async_detect_provider(session, candidate)
@@ -182,6 +202,9 @@ async def async_inspect_portal(
             raise
         except (OpenDataConnectionError, OpenDataResponseError) as err:
             errors.append(err)
+            continue
+        if not await _async_provider_has_catalog(provider):
+            recognized_without_catalog += 1
             continue
         return InspectedPortal(
             description=PortalDescription(
@@ -197,10 +220,14 @@ async def async_inspect_portal(
     )
     if connection_error is not None and not any(
         isinstance(err, OpenDataResponseError) for err in errors
-    ):
+    ) and not recognized_without_catalog:
         raise connection_error
+    if recognized_without_catalog:
+        raise OpenDataResponseError(
+            "Recognized a portal API, but its catalog was empty; linked data hosts were also checked"
+        )
     raise OpenDataResponseError(
-        "URL did not resolve to a recognizable CKAN or Socrata portal"
+        "URL and linked pages did not resolve to a CKAN or Socrata catalog"
     )
 
 
