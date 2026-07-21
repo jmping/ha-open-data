@@ -4,7 +4,7 @@
     "step": {
       "user": {
         "title": "Discover public datasets",
-        "description": "Enter an institution's public data portal URL. Open Data will detect the provider and rank useful datasets automatically.",
+        "description": "Enter an institution's public data portal URL. Open Data will detect the provider and rank useful datasets automatically. Large portals may take tens of seconds to scan.",
         "data": {
           "portal_url": "Portal URL"
         }
@@ -30,12 +30,18 @@
   "options": {
     "step": {
       "init": {
-        "title": "Choose records and metrics",
-        "description": "Dataset structure: {kind}. Current identity field: {identity}. Select the structural fields, records or stations, and measurements to expose.",
+        "title": "Choose dataset structure",
+        "description": "Dataset structure: {kind}. Current identity field: {identity}. First choose which fields identify the physical record or location and its observation time. Record choices will be rebuilt on the next screen.",
         "data": {
-          "identity_field": "Record or station identifier",
-          "display_field": "Record or station name",
-          "timestamp_field": "Observation timestamp",
+          "identity_field": "Record, station, or location identifier",
+          "display_field": "Record, station, or location name",
+          "timestamp_field": "Observation timestamp"
+        }
+      },
+      "records": {
+        "title": "Choose records and metrics",
+        "description": "Record choices were rebuilt using {identity} as the identity for this {kind} dataset. Historical observation IDs should not be selected as locations.",
+        "data": {
           "selected_records": "Records, stations, or locations",
           "selected_fields": "Measurements"
         }
