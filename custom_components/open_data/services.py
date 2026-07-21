@@ -8,7 +8,6 @@ from typing import Any
 import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntryState
-from homeassistant.const import CONF_LIMIT
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -31,6 +30,7 @@ SERVICE_INSPECT_DATASET = "inspect_dataset"
 SERVICE_REFRESH_ENTRY = "refresh_entry"
 SERVICE_FEEDBACK_PREVIEW = "feedback_preview"
 
+CONF_LIMIT = "limit"
 CONF_QUERY = "query"
 CONF_ENTRY_ID = "entry_id"
 CONF_PORTAL_ID = "portal_id"
