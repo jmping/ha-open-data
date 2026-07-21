@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from aiohttp import ClientSession
 
-from ..const import PROVIDER_CKAN, PROVIDER_SOCRATA
+from ..const import PROVIDER_ARCGIS_HUB, PROVIDER_CKAN, PROVIDER_SOCRATA
+from .arcgis_hub import ArcGisHubProvider
 from .base import (
     OpenDataConnectionError,
     OpenDataProvider,
@@ -23,6 +24,8 @@ def create_provider(
         return CkanProvider(session, portal_url)
     if provider == PROVIDER_SOCRATA:
         return SocrataProvider(session, portal_url)
+    if provider == PROVIDER_ARCGIS_HUB:
+        return ArcGisHubProvider(session, portal_url)
     raise ValueError(f"Unsupported Open Data provider: {provider}")
 
 
@@ -31,7 +34,7 @@ async def async_detect_provider(
 ) -> tuple[str, OpenDataProvider]:
     """Detect a supported provider by verifying its public API signature."""
     errors: list[OpenDataConnectionError | OpenDataResponseError] = []
-    for provider_name in (PROVIDER_CKAN, PROVIDER_SOCRATA):
+    for provider_name in (PROVIDER_CKAN, PROVIDER_SOCRATA, PROVIDER_ARCGIS_HUB):
         provider = create_provider(provider_name, session, portal_url)
         try:
             await provider.async_verify_portal()
@@ -48,5 +51,5 @@ async def async_detect_provider(
     if connection_error is not None:
         raise connection_error
     raise OpenDataResponseError(
-        "Host did not expose a recognizable CKAN or Socrata API"
+        "Host did not expose a recognizable CKAN, Socrata, or ArcGIS Hub API"
     )
