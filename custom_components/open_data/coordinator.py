@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
 
 from homeassistant.core import HomeAssistant
@@ -10,6 +11,8 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from .const import DEFAULT_SCAN_INTERVAL_MINUTES
 from .models import OpenDataDataset, OpenDataSnapshot
 from .providers.base import OpenDataError, OpenDataProvider
+
+_MAX_CONCURRENT_RECORD_REQUESTS = 6
 
 
 class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
@@ -85,6 +88,19 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
                 else:
                     self.record_labels[record_id] = f"{label} — {record_id}"
 
+    async def _async_latest_record(
+        self, record_id: str, semaphore: asyncio.Semaphore
+    ) -> tuple[str, dict]:
+        """Fetch one latest observation without overwhelming a portal."""
+        async with semaphore:
+            values = await self.provider.async_latest_row(
+                self.dataset_id,
+                self.resource_id,
+                self.timestamp_field,
+                filters={self.identity_field: record_id},
+            )
+        return record_id, values or {}
+
     async def _async_update_data(self) -> OpenDataSnapshot:
         try:
             if self.dataset is None:
@@ -95,15 +111,15 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
                 await self._async_load_record_labels()
 
             if self.identity_field and self.selected_records:
-                records: dict[str, dict] = {}
-                for record_id in self.selected_records:
-                    values = await self.provider.async_latest_row(
-                        self.dataset_id,
-                        self.resource_id,
-                        self.timestamp_field,
-                        filters={self.identity_field: record_id},
+                semaphore = asyncio.Semaphore(_MAX_CONCURRENT_RECORD_REQUESTS)
+                results = await asyncio.gather(
+                    *(
+                        self._async_latest_record(record_id, semaphore)
+                        for record_id in self.selected_records
                     )
-                    records[record_id] = values or {}
+                )
+                records = dict(results)
+                for record_id in self.selected_records:
                     self.record_labels.setdefault(record_id, record_id)
                 first = next((row for row in records.values() if row), {})
                 return OpenDataSnapshot(
