@@ -8,7 +8,7 @@ import re
 import time
 from dataclasses import asdict, dataclass
 from typing import Any
-from urllib.parse import urljoin, urlparse
+from urllib.parse import unquote, urljoin, urlparse
 
 from aiohttp import ClientError, ClientSession
 
@@ -37,21 +37,75 @@ _LINK_PATTERN = re.compile(
 )
 _URL_PATTERN = re.compile(r"https?://[^\s'\"<>]+", re.IGNORECASE)
 _ESCAPED_URL_PATTERN = re.compile(r"https?:\\/\\/[^\s'\"<>]+", re.IGNORECASE)
+
+# Paths seen on catalog landing pages. These are navigation hints, not provider
+# identifiers; every resulting root is still verified against a supported API.
 _COMMON_PORTAL_PATHS = {
     "browse",
     "catalog",
+    "catalogue",
+    "category",
     "data",
     "dataset",
     "datasets",
     "explore",
+    "geodata",
     "group",
     "home",
     "opendata",
+    "open-data",
     "organization",
+    "portal",
     "resource",
     "search",
     "view",
+    # French, Portuguese, Italian, Spanish/Catalan, German, Greek, Turkish.
+    "donnees",
+    "données",
+    "dados",
+    "dati",
+    "datos",
+    "dades",
+    "daten",
+    "δεδομενα",
+    "δεδομένα",
+    "veri",
+    # Thai and Korean catalog/navigation terms.
+    "ข้อมูล",
+    "ชุดข้อมูล",
+    "데이터",
+    "데이터셋",
 }
+_PORTAL_HOST_PREFIXES = (
+    "catalog.",
+    "catalogue.",
+    "ckan.",
+    "data.",
+    "datos.",
+    "dados.",
+    "dati.",
+    "daten.",
+    "geodata.",
+    "opendata.",
+    "open-data.",
+)
+_PORTAL_HOST_SUFFIXES = (
+    ".arcgis.com",
+    ".ckan.org",
+    ".hub.arcgis.com",
+    ".opendata.arcgis.com",
+    ".socrata.com",
+)
+_API_PATH_HINTS = (
+    "/api/3/",
+    "/api/catalog/",
+    "/api/explore/",
+    "/api/feed/",
+    "/api/search/",
+    "/api/views/",
+    "/dataset/",
+    "/resource/",
+)
 _CATALOG_PROBE_LIMIT = 1
 _CATALOG_CACHE: dict[str, tuple[float, tuple[OpenDataDataset, ...]]] = {}
 
@@ -82,6 +136,11 @@ class InspectedPortal:
     provider: OpenDataProvider
 
 
+def _normalized_path_parts(path: str) -> list[str]:
+    """Return decoded, case-folded URL path components."""
+    return [unquote(part).casefold() for part in path.split("/") if part]
+
+
 def _candidate_roots(portal_url: str) -> list[str]:
     """Return likely API roots for a landing page, catalog page, or dataset URL."""
     normalized = normalize_portal_url(portal_url)
@@ -89,10 +148,11 @@ def _candidate_roots(portal_url: str) -> list[str]:
     origin = portal_origin(normalized)
     candidates = [origin]
 
-    parts = [part for part in parsed.path.split("/") if part]
+    parts = _normalized_path_parts(parsed.path)
+    raw_parts = [part for part in parsed.path.split("/") if part]
     for index, part in enumerate(parts):
-        if part.casefold() in _COMMON_PORTAL_PATHS:
-            prefix = "/".join(parts[:index])
+        if part in _COMMON_PORTAL_PATHS:
+            prefix = "/".join(raw_parts[:index])
             candidate = f"{origin}/{prefix}" if prefix else origin
             if candidate not in candidates:
                 candidates.append(candidate)
@@ -104,7 +164,7 @@ def _candidate_roots(portal_url: str) -> list[str]:
 
 
 def _sibling_portal_candidates(portal_url: str) -> list[str]:
-    """Return conventional data subdomains for a municipal landing host."""
+    """Return conventional catalog subdomains for a government landing host."""
     normalized = normalize_portal_url(portal_url)
     parsed = urlparse(normalized)
     host = (parsed.hostname or "").lower()
@@ -112,14 +172,33 @@ def _sibling_portal_candidates(portal_url: str) -> list[str]:
         return []
     if host.startswith("www."):
         host = host[4:]
-    if host.startswith(("data.", "opendata.", "ckan.")):
+    if host.startswith(_PORTAL_HOST_PREFIXES):
         return []
 
     scheme = parsed.scheme or "https"
     return [
         f"{scheme}://data.{host}",
         f"{scheme}://opendata.{host}",
+        f"{scheme}://catalog.{host}",
+        f"{scheme}://geodata.{host}",
     ]
+
+
+def _looks_like_portal_url(url: str, source_host: str) -> bool:
+    """Return whether a linked URL is worth provider verification."""
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    if not host:
+        return False
+    path = unquote(parsed.path).casefold()
+    parts = set(_normalized_path_parts(parsed.path))
+    return (
+        host != source_host
+        or host.startswith(_PORTAL_HOST_PREFIXES)
+        or host.endswith(_PORTAL_HOST_SUFFIXES)
+        or bool(parts & _COMMON_PORTAL_PATHS)
+        or any(hint in path for hint in _API_PATH_HINTS)
+    )
 
 
 async def _async_linked_portal_candidates(
@@ -149,7 +228,7 @@ async def _async_linked_portal_candidates(
     escaped_links = [item.replace("\\/", "/") for item in _ESCAPED_URL_PATTERN.findall(text)]
     raw_links = _LINK_PATTERN.findall(text) + _URL_PATTERN.findall(text) + escaped_links
     candidates: list[str] = []
-    source_host = urlparse(validated).hostname or ""
+    source_host = (urlparse(validated).hostname or "").lower()
 
     for raw_link in raw_links:
         absolute = urljoin(validated, raw_link.strip())
@@ -157,28 +236,12 @@ async def _async_linked_portal_candidates(
             normalized = normalize_portal_url(absolute)
         except (ValueError, OpenDataSecurityError):
             continue
-        parsed = urlparse(normalized)
-        host = (parsed.hostname or "").lower()
-        if not host:
-            continue
-        path = parsed.path.casefold()
-        looks_like_portal = (
-            host != source_host
-            or host.startswith(("data.", "ckan.", "opendata."))
-            or host.endswith((".socrata.com", ".ckan.org"))
-            or any(f"/{segment}" in path for segment in _COMMON_PORTAL_PATHS)
-            or "/api/3/" in path
-            or "/api/catalog/" in path
-            or "/api/views/" in path
-            or "/resource/" in path
-            or "/dataset/" in path
-        )
-        if not looks_like_portal:
+        if not _looks_like_portal_url(normalized, source_host):
             continue
         for candidate in _candidate_roots(normalized):
             if candidate not in candidates:
                 candidates.append(candidate)
-        if len(candidates) >= 40:
+        if len(candidates) >= 60:
             break
     return candidates
 
@@ -195,12 +258,7 @@ async def _async_provider_has_catalog(provider: OpenDataProvider) -> bool:
 async def async_inspect_portal(
     session: ClientSession, portal_url: str
 ) -> InspectedPortal:
-    """Resolve aliases/pages, detect the provider, and return its canonical root.
-
-    A municipal landing page can expose a recognizable API shell while its real
-    catalog lives on another linked or conventional data host. Candidate roots are
-    therefore verified for both provider signature and a non-empty catalog.
-    """
+    """Resolve aliases/pages, detect the provider, and return its canonical root."""
     supplied = normalize_portal_url(portal_url)
     resolved = await async_resolve_portal_redirects(session, supplied)
 
@@ -252,7 +310,7 @@ async def async_inspect_portal(
             "Recognized a portal API, but its catalog was empty; linked and conventional data hosts were also checked"
         )
     raise OpenDataResponseError(
-        "URL, linked pages, and conventional data hosts did not resolve to a CKAN or Socrata catalog"
+        "URL, linked pages, and conventional data hosts did not resolve to a supported open-data catalog"
     )
 
 
