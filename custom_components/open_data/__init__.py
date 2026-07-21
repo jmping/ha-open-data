@@ -32,23 +32,6 @@ _DATA_FEEDBACK = "feedback_registry"
 type OpenDataConfigEntry = ConfigEntry[OpenDataCoordinator]
 
 
-def _normalize_selected_records(raw_records: object) -> tuple[str, ...]:
-    """Return distinct, non-empty selector values in their saved order."""
-    if isinstance(raw_records, str):
-        candidates = (raw_records,)
-    elif isinstance(raw_records, (list, tuple, set, frozenset)):
-        candidates = raw_records
-    else:
-        return ()
-    return tuple(
-        dict.fromkeys(
-            value
-            for item in candidates
-            if (value := str(item).strip())
-        )
-    )
-
-
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """Set up the Open Data integration and its global service API."""
     domain_data = hass.data.setdefault(DOMAIN, {})
@@ -69,7 +52,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: OpenDataConfigEntry) -> 
     raw_records = entry.options.get(
         CONF_SELECTED_RECORDS, entry.data.get(CONF_SELECTED_RECORDS, ())
     )
-    selected_records = _normalize_selected_records(raw_records)
+    if isinstance(raw_records, str):
+        raw_values = (raw_records,)
+    else:
+        raw_values = tuple(raw_records)
+    selected_records = tuple(
+        dict.fromkeys(
+            value
+            for item in raw_values
+            if (value := str(item).strip())
+        )
+    )
 
     configured_identity = entry.options.get(CONF_IDENTITY_FIELD) or entry.data.get(
         CONF_IDENTITY_FIELD
@@ -78,13 +71,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: OpenDataConfigEntry) -> 
         CONF_DISPLAY_FIELD
     )
     identity_field = effective_identity_field(configured_identity, configured_display)
-    display_field = configured_display if configured_display != identity_field else None
 
     # Record values saved under an observation ID cannot be reused after repairing
-    # the identity to a stable place name. Let the user select the desired places
-    # from the rebuilt options flow instead of issuing invalid per-row queries.
-    if identity_field != configured_identity or identity_field is None:
+    # the identity to a stable place name. Persist the repaired structural choice so
+    # subsequent reloads do not repeat the migration or fall back to a dataset-level
+    # entity while the user has intentionally selected no locations yet.
+    if identity_field != configured_identity:
         selected_records = ()
+        repaired_options = dict(entry.options)
+        repaired_options[CONF_IDENTITY_FIELD] = identity_field
+        repaired_options[CONF_SELECTED_RECORDS] = []
+        hass.config_entries.async_update_entry(entry, options=repaired_options)
 
     coordinator = OpenDataCoordinator(
         hass,
@@ -95,7 +92,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: OpenDataConfigEntry) -> 
         or entry.data.get(CONF_TIMESTAMP_FIELD)
         or None,
         identity_field,
-        display_field,
+        configured_display,
         selected_records,
         tuple(entry.data.get(CONF_HIERARCHY_FIELDS, ())),
     )
