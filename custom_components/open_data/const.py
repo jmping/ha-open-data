@@ -13,6 +13,8 @@ CONF_DATASET_ID = "dataset_id"
 CONF_RESOURCE_ID = "resource_id"
 CONF_TIMESTAMP_FIELD = "timestamp_field"
 CONF_SELECTED_FIELDS = "selected_fields"
+CONF_PROFILE_ID = "profile_id"
+CONF_FIELD_MAPPINGS = "field_mappings"
 
 PROVIDER_SOCRATA = "socrata"
 PROVIDER_CKAN = "ckan"
