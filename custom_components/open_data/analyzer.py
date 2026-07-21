@@ -61,6 +61,18 @@ class FieldHypothesis:
 
 
 @dataclass(slots=True, frozen=True)
+class DimensionRelationship:
+    """A probable parent-child relationship inferred from sampled rows."""
+
+    parent_field: str
+    child_field: str
+    confidence: float
+    child_coverage: float
+    parent_cardinality: int
+    child_cardinality: int
+
+
+@dataclass(slots=True, frozen=True)
 class DatasetStructure:
     """Provider-independent interpretation of a dataset."""
 
@@ -176,9 +188,107 @@ def _data_role_scores(
             score = 0.45 * shared_locations + 0.35 * repeated_times + 0.20 * pair_uniqueness
             location_scores[location_field] = max(location_scores[location_field], score)
             if score >= 0.55:
-                time_scores[time_field] = max(time_scores[time_field], min(1.0, 0.6 + score * 0.4))
+                time_scores[time_field] = max(
+                    time_scores[time_field], min(1.0, 0.6 + score * 0.4)
+                )
 
     return location_scores, time_scores
+
+
+def infer_dimension_relationships(
+    rows: list[dict[str, Any]],
+    candidate_fields: Iterable[str],
+    *,
+    minimum_confidence: float = 0.8,
+) -> tuple[DimensionRelationship, ...]:
+    """Infer parent-child nesting from approximate functional dependencies.
+
+    A child belongs beneath a parent when nearly every child value maps to one
+    stable parent value, while at least one parent contains multiple children.
+    Missing values reduce coverage rather than creating false relationships.
+    """
+    fields = tuple(dict.fromkeys(candidate_fields))
+    if len(rows) < 3 or len(fields) < 2:
+        return ()
+
+    relationships: list[DimensionRelationship] = []
+    for child_field in fields:
+        child_values = {
+            str(row[child_field])
+            for row in rows
+            if row.get(child_field) not in (None, "")
+        }
+        if len(child_values) < 2:
+            continue
+
+        for parent_field in fields:
+            if parent_field == child_field:
+                continue
+            mappings: dict[str, set[str]] = {}
+            complete_rows = 0
+            for row in rows:
+                child = row.get(child_field)
+                parent = row.get(parent_field)
+                if child in (None, "") or parent in (None, ""):
+                    continue
+                complete_rows += 1
+                mappings.setdefault(str(child), set()).add(str(parent))
+            if complete_rows < 3 or len(mappings) < 2:
+                continue
+
+            stable_children = sum(len(parents) == 1 for parents in mappings.values())
+            stability = stable_children / len(mappings)
+            coverage = len(mappings) / len(child_values)
+            parent_values = {value for values in mappings.values() for value in values}
+            if len(parent_values) >= len(mappings):
+                continue
+
+            children_per_parent: dict[str, set[str]] = {}
+            for child, parents in mappings.items():
+                if len(parents) == 1:
+                    parent = next(iter(parents))
+                    children_per_parent.setdefault(parent, set()).add(child)
+            if not any(len(children) > 1 for children in children_per_parent.values()):
+                continue
+
+            confidence = stability * coverage
+            if confidence < minimum_confidence:
+                continue
+            relationships.append(
+                DimensionRelationship(
+                    parent_field=parent_field,
+                    child_field=child_field,
+                    confidence=round(confidence, 3),
+                    child_coverage=round(coverage, 3),
+                    parent_cardinality=len(parent_values),
+                    child_cardinality=len(mappings),
+                )
+            )
+
+    # Remove transitive shortcuts where A -> B -> C is available with comparable confidence.
+    direct: list[DimensionRelationship] = []
+    for relation in relationships:
+        intermediate = any(
+            first.child_field == relation.child_field
+            and second.parent_field == relation.parent_field
+            and first.parent_field == second.child_field
+            and min(first.confidence, second.confidence) >= relation.confidence - 0.05
+            for first in relationships
+            for second in relationships
+        )
+        if not intermediate:
+            direct.append(relation)
+    return tuple(
+        sorted(
+            direct,
+            key=lambda item: (
+                item.parent_cardinality,
+                item.child_cardinality,
+                item.parent_field.casefold(),
+                item.child_field.casefold(),
+            ),
+        )
+    )
 
 
 def _geometry(
@@ -254,22 +364,14 @@ def analyze_dataset(
         if metric not in {"station", "timestamp", "latitude", "longitude"}
     )
     structural = {
-        identity,
-        display,
-        timestamp,
-        geometry_field,
-        *identity_fields,
-        *display_fields,
-        *timestamp_fields,
-        *location_fields,
-        *hierarchy,
+        identity, display, timestamp, geometry_field, *identity_fields, *display_fields,
+        *timestamp_fields, *location_fields, *hierarchy,
     }
     ignored = tuple(
         name
         for name in fields
         if name in structural
-        or _norm(name)
-        in {"shape_starea", "shape_stlength", "objectid", "geometry", "the_geom"}
+        or _norm(name) in {"shape_starea", "shape_stlength", "objectid", "geometry", "the_geom"}
     )
 
     if timestamp and identity and metric_fields:
@@ -352,7 +454,9 @@ def dataset_hypotheses(
         hypotheses.append(FieldHypothesis(field, "hierarchy", 0.8, ("hierarchy vocabulary",)))
     for field in structure.metric_fields:
         hypotheses.append(FieldHypothesis(field, "metric", 0.9, ("ontology metric mapping",)))
-    return tuple(sorted(hypotheses, key=lambda item: (item.role, -item.confidence, item.field.casefold())))
+    return tuple(
+        sorted(hypotheses, key=lambda item: (item.role, -item.confidence, item.field.casefold()))
+    )
 
 
 def dataset_explorer_summary(
@@ -370,6 +474,17 @@ def dataset_explorer_summary(
                 if row.get(structure.identity_field) not in (None, "")
             }
         )
+    relationship_fields = tuple(
+        dict.fromkeys(
+            (
+                *structure.hierarchy_fields,
+                *structure.location_fields,
+                *structure.identity_fields,
+                *structure.display_fields,
+            )
+        )
+    )
+    relationships = infer_dimension_relationships(rows, relationship_fields)
     return {
         "kind": structure.kind,
         "profile_id": structure.profile_id,
@@ -379,10 +494,7 @@ def dataset_explorer_summary(
             "display_field": structure.display_field,
             "timestamp_field": structure.timestamp_field,
         },
-        "geometry": {
-            "field": structure.geometry_field,
-            "type": structure.geometry_type,
-        },
+        "geometry": {"field": structure.geometry_field, "type": structure.geometry_type},
         "dimensions": {
             "identity": list(structure.identity_fields),
             "display": list(structure.display_fields),
@@ -390,6 +502,7 @@ def dataset_explorer_summary(
             "location": list(structure.location_fields),
             "hierarchy": list(structure.hierarchy_fields),
         },
+        "relationships": [asdict(item) for item in relationships],
         "metrics": list(structure.metric_fields),
         "ignored_fields": list(structure.ignored_fields),
         "sample": {
@@ -399,7 +512,8 @@ def dataset_explorer_summary(
         "hypotheses": [asdict(item) for item in dataset_hypotheses(dataset, rows)],
         "requires_confirmation": structure.confidence < 0.85
         or len(structure.identity_fields) > 1
-        or len(structure.timestamp_fields) > 1,
+        or len(structure.timestamp_fields) > 1
+        or any(item.confidence < 0.95 for item in relationships),
     }
 
 
