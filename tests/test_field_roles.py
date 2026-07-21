@@ -48,7 +48,7 @@ def test_pfas_measurements_remain_metrics_with_text_qualifiers() -> None:
     )
 
     assert result.metric_fields == ("pfoa", "pfos", "sum_of_all_pfas")
-    assert result.context_fields == ("water_body", "sample_no")
+    assert result.location_fields == ("water_body", "sample_no")
 
 
 def test_numeric_identifiers_do_not_become_measurements() -> None:
@@ -59,7 +59,7 @@ def test_numeric_identifiers_do_not_become_measurements() -> None:
     )
 
     assert result.metric_fields == ("temperature",)
-    assert result.context_fields == ("station_id", "county_fips")
+    assert result.location_fields == ("station_id", "county_fips")
 
 
 def test_context_attributes_are_bounded_and_safe() -> None:
@@ -86,7 +86,8 @@ def test_nyc_traffic_speed_orientation() -> None:
 
     assert result.metric_fields == ("speed", "travel_time", "volume")
     assert result.time_fields == ("measurement_date",)
-    assert result.context_fields == ("link_id", "roadway_name")
+    assert result.location_fields == ("link_id",)
+    assert result.context_fields == ("roadway_name",)
 
 
 def test_nyc_air_quality_orientation() -> None:
@@ -104,7 +105,8 @@ def test_nyc_air_quality_orientation() -> None:
 
     assert result.metric_fields == ("data_value",)
     assert result.time_fields == ("start_date",)
-    assert result.context_fields == ("indicator_id", "geo_place_name", "measure_info")
+    assert result.location_fields == ("indicator_id", "geo_place_name")
+    assert result.context_fields == ("measure_info",)
 
 
 def test_nyc_tree_inventory_is_not_entity_explosion() -> None:
@@ -123,8 +125,9 @@ def test_nyc_tree_inventory_is_not_entity_explosion() -> None:
     )
 
     assert result.metric_fields == ("tree_dbh",)
+    assert result.location_fields == ("tree_id",)
     assert set(result.context_fields) == {
-        "tree_id", "spc_common", "boroname", "latitude", "longitude", "health"
+        "spc_common", "boroname", "latitude", "longitude", "health"
     }
 
 
@@ -144,8 +147,9 @@ def test_nyc_crime_event_coordinates_remain_context() -> None:
 
     assert result.metric_fields == ()
     assert result.time_fields == ("event_date",)
+    assert result.location_fields == ("incident_key",)
     assert set(result.context_fields) == {
-        "incident_key", "borough", "latitude", "longitude", "offense"
+        "borough", "latitude", "longitude", "offense"
     }
 
 
@@ -157,4 +161,53 @@ def test_numeric_strings_with_commas_are_measurements() -> None:
     )
 
     assert result.metric_fields == ("collected_tonnage",)
-    assert result.context_fields == ("community_district",)
+    assert result.location_fields == ("community_district",)
+
+
+def test_user_assignments_are_authoritative_and_mutually_exclusive() -> None:
+    result = roles.classify_field_roles(
+        ("station", "observed_at", "pollutant", "value", "vendor", "fixed_code"),
+        [{
+            "station": "A2-01",
+            "observed_at": "2026-07-21T12:00:00Z",
+            "pollutant": "PM2.5",
+            "value": 8.2,
+            "vendor": "Clarity",
+            "fixed_code": "v1",
+        }],
+        explicit_roles={
+            "station": "location",
+            "observed_at": "time",
+            "pollutant": "measurement_name",
+            "value": "data",
+            "vendor": "descriptive",
+            "fixed_code": "unassigned",
+        },
+    )
+
+    assert result.as_assignments() == {
+        "station": "location",
+        "observed_at": "time",
+        "value": "data",
+        "pollutant": "measurement_name",
+        "vendor": "descriptive",
+        "fixed_code": "unassigned",
+    }
+    assert result.unassigned_fields == ("fixed_code",)
+
+
+def test_irrelevant_and_unassigned_fields_are_not_context_or_metrics() -> None:
+    result = roles.classify_field_roles(
+        ("pm25", "constant", "internal_id"),
+        [{"pm25": 5.1, "constant": "same", "internal_id": 101}],
+        explicit_roles={
+            "pm25": "data",
+            "constant": "unassigned",
+            "internal_id": "irrelevant",
+        },
+    )
+
+    assert result.metric_fields == ("pm25",)
+    assert result.context_fields == ()
+    assert result.unassigned_fields == ("constant",)
+    assert result.irrelevant_fields == ("internal_id",)
