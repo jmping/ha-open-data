@@ -13,6 +13,9 @@ from .common import JsonClient
 
 _DATASET_ID_PATTERN = re.compile(r"^[a-z0-9]{4}-[a-z0-9]{4}$", re.IGNORECASE)
 _FIELD_NAME_PATTERN = re.compile(r"^:?[a-zA-Z_][a-zA-Z0-9_]*$")
+_PAGE_SIZE = 1000
+_MAX_ENTITY_REQUEST = 10000
+_MAX_OBSERVATIONS_PER_ENTITY = 20000
 
 
 class SocrataProvider(JsonClient):
@@ -56,6 +59,35 @@ class SocrataProvider(JsonClient):
     @staticmethod
     def _literal(value: str) -> str:
         return "'" + str(value).replace("'", "''") + "'"
+
+    async def _paged_resource_rows(
+        self,
+        dataset_id: str,
+        *,
+        limit: int,
+        params: dict[str, str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Retrieve a bounded SODA result using explicit offset pagination."""
+        requested = max(1, int(limit))
+        rows: list[dict[str, Any]] = []
+        offset = 0
+        while len(rows) < requested:
+            page_limit = min(_PAGE_SIZE, requested - len(rows))
+            page_params = dict(params or {})
+            page_params["$limit"] = str(page_limit)
+            page_params["$offset"] = str(offset)
+            payload = await self.async_get_json(
+                f"/resource/{dataset_id}.json", params=page_params
+            )
+            if not isinstance(payload, list) or not all(
+                isinstance(row, dict) for row in payload
+            ):
+                raise OpenDataResponseError("Socrata paged query did not return rows")
+            rows.extend(payload)
+            if len(payload) < page_limit:
+                break
+            offset += len(payload)
+        return rows[:requested]
 
     async def async_verify_portal(self) -> None:
         payload = await self.async_get_json(
@@ -128,13 +160,7 @@ class SocrataProvider(JsonClient):
         limit: int = 50,
     ) -> list[dict[str, Any]]:
         dataset_id = self._dataset_id(dataset_id)
-        payload = await self.async_get_json(
-            f"/resource/{dataset_id}.json",
-            params={"$limit": str(min(max(limit, 1), 1000))},
-        )
-        if not isinstance(payload, list) or not all(isinstance(row, dict) for row in payload):
-            raise OpenDataResponseError("Socrata sample query did not return rows")
-        return payload
+        return await self._paged_resource_rows(dataset_id, limit=limit)
 
     async def async_sample_observations(
         self,
@@ -146,58 +172,46 @@ class SocrataProvider(JsonClient):
         entity_limit: int = 20,
         observations_per_entity: int = 25,
     ) -> list[dict[str, Any]]:
-        """Sample recent history across multiple entities when dimensions are known."""
+        """Retrieve bounded history across all requested entities with pagination."""
         dataset_id = self._dataset_id(dataset_id)
-        entity_limit = min(max(entity_limit, 1), 50)
-        per_entity = min(max(observations_per_entity, 2), 100)
+        requested_entities = min(max(int(entity_limit), 1), _MAX_ENTITY_REQUEST)
+        per_entity = min(
+            max(int(observations_per_entity), 1), _MAX_OBSERVATIONS_PER_ENTITY
+        )
+
         if not entity_field:
-            params = {"$limit": str(min(entity_limit * per_entity, 1000))}
+            params: dict[str, str] = {}
             if timestamp_field:
                 params["$order"] = f"{self._field(timestamp_field)} DESC"
-            payload = await self.async_get_json(
-                f"/resource/{dataset_id}.json", params=params
+            return await self._paged_resource_rows(
+                dataset_id,
+                limit=requested_entities * per_entity,
+                params=params,
             )
-            if not isinstance(payload, list) or not all(
-                isinstance(row, dict) for row in payload
-            ):
-                raise OpenDataResponseError("Socrata observation query did not return rows")
-            return payload
 
         identity = self._field(entity_field)
-        entities = await self.async_get_json(
-            f"/resource/{dataset_id}.json",
+        entities = await self._paged_resource_rows(
+            dataset_id,
+            limit=requested_entities,
             params={
                 "$select": f"distinct {identity}",
                 "$where": f"{identity} is not null",
                 "$order": identity,
-                "$limit": str(entity_limit),
             },
         )
-        if not isinstance(entities, list) or not all(
-            isinstance(row, dict) for row in entities
-        ):
-            raise OpenDataResponseError("Socrata entity sample did not return rows")
 
         semaphore = asyncio.Semaphore(6)
 
         async def fetch_entity(value: str) -> list[dict[str, Any]]:
-            params = {
-                "$where": f"{identity}={self._literal(value)}",
-                "$limit": str(per_entity),
-            }
+            params = {"$where": f"{identity}={self._literal(value)}"}
             if timestamp_field:
                 params["$order"] = f"{self._field(timestamp_field)} DESC"
             async with semaphore:
-                payload = await self.async_get_json(
-                    f"/resource/{dataset_id}.json", params=params
+                return await self._paged_resource_rows(
+                    dataset_id,
+                    limit=per_entity,
+                    params=params,
                 )
-            if not isinstance(payload, list) or not all(
-                isinstance(row, dict) for row in payload
-            ):
-                raise OpenDataResponseError(
-                    "Socrata per-entity observation query did not return rows"
-                )
-            return payload
 
         values = [
             str(row[entity_field])
@@ -223,17 +237,14 @@ class SocrataProvider(JsonClient):
             if name and name not in fields:
                 fields.append(self._field(name))
         select = ",".join(fields)
-        payload = await self.async_get_json(
-            f"/resource/{dataset_id}.json",
+        return await self._paged_resource_rows(
+            dataset_id,
+            limit=limit,
             params={
                 "$select": f"distinct {select}",
                 "$order": fields[0],
-                "$limit": str(min(max(limit, 1), 1000)),
             },
         )
-        if not isinstance(payload, list) or not all(isinstance(row, dict) for row in payload):
-            raise OpenDataResponseError("Socrata distinct query did not return rows")
-        return payload
 
     @staticmethod
     def _normalize_catalog_results(payload: Any) -> list[OpenDataDataset]:
