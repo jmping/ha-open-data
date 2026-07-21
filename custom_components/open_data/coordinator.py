@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import timedelta
+import logging
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -13,6 +14,8 @@ from .models import OpenDataDataset, OpenDataSnapshot
 from .providers.base import OpenDataError, OpenDataProvider
 
 _MAX_CONCURRENT_RECORD_REQUESTS = 6
+_MAX_LABEL_ROWS = 2000
+_LOGGER = logging.getLogger(__name__)
 
 
 class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
@@ -32,7 +35,7 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
     ) -> None:
         super().__init__(
             hass,
-            logger=__import__("logging").getLogger(__name__),
+            logger=_LOGGER,
             name=f"Open Data {dataset_id}",
             update_interval=timedelta(minutes=DEFAULT_SCAN_INTERVAL_MINUTES),
         )
@@ -42,7 +45,7 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
         self.timestamp_field = timestamp_field
         self.identity_field = identity_field
         self.display_field = display_field
-        self.selected_records = selected_records
+        self.selected_records = tuple(dict.fromkeys(str(item) for item in selected_records))
         self.hierarchy_fields = hierarchy_fields
         self.dataset: OpenDataDataset | None = None
         self.record_labels: dict[str, str] = {}
@@ -56,7 +59,10 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
             self.identity_field,
             self.display_field,
             self.hierarchy_fields,
-            limit=max(100, len(self.selected_records) * 4),
+            limit=min(
+                _MAX_LABEL_ROWS,
+                max(100, len(self.selected_records) * 4),
+            ),
         )
         selected = set(self.selected_records)
         labels: dict[str, list[str]] = {}
@@ -112,17 +118,39 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
 
             if self.identity_field and self.selected_records:
                 semaphore = asyncio.Semaphore(_MAX_CONCURRENT_RECORD_REQUESTS)
-                results = await asyncio.gather(
+                raw_results = await asyncio.gather(
                     *(
                         self._async_latest_record(record_id, semaphore)
                         for record_id in self.selected_records
-                    )
+                    ),
+                    return_exceptions=True,
                 )
+                results: list[tuple[str, dict]] = []
+                failures: list[BaseException] = []
+                for result in raw_results:
+                    if isinstance(result, BaseException):
+                        failures.append(result)
+                    else:
+                        results.append(result)
+
+                # One unavailable or malformed record should not take down every
+                # other selected location. Only fail the coordinator when all
+                # requests failed and there is no usable snapshot to publish.
+                if failures and not results:
+                    first_failure = failures[0]
+                    if isinstance(first_failure, (OpenDataError, ValueError)):
+                        raise first_failure
+                    raise UpdateFailed(str(first_failure)) from first_failure
+                if failures:
+                    _LOGGER.warning(
+                        "Skipped %s of %s selected Open Data records during refresh",
+                        len(failures),
+                        len(raw_results),
+                    )
+
                 # A selected record is not necessarily a current entity. Providers
                 # may return no row for old observation IDs, unavailable stations,
                 # or values that no longer exist after the identity field changes.
-                # Keep only records with an actual latest observation so setup does
-                # not create empty Home Assistant entities for them.
                 records = {
                     record_id: values
                     for record_id, values in results
@@ -147,5 +175,7 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
                 filters=None,
             )
             return OpenDataSnapshot(dataset=self.dataset, values=values or {})
+        except UpdateFailed:
+            raise
         except (OpenDataError, ValueError) as err:
             raise UpdateFailed(str(err)) from err
