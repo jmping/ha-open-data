@@ -18,13 +18,15 @@ from homeassistant.helpers.selector import (
 
 from .const import (
     CONF_DATASET_ID,
+    CONF_FIELD_MAPPINGS,
     CONF_PORTAL_URL,
+    CONF_PROFILE_ID,
     CONF_PROVIDER,
     CONF_RESOURCE_ID,
     CONF_SELECTED_FIELDS,
     DOMAIN,
 )
-from .discovery import DatasetCandidate, rank_datasets
+from .discovery import DatasetCandidate, rank_datasets, score_dataset
 from .models import OpenDataDataset
 from .portal_inspector import async_discover_catalog, async_inspect_portal
 from .providers import create_provider
@@ -189,16 +191,13 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 )
             except OpenDataResponseError:
                 continue
-            usable.append(
-                DatasetCandidate(
-                    dataset=dataset,
-                    score=candidate.score,
-                    reasons=candidate.reasons,
-                )
-            )
+            usable.append(score_dataset(dataset))
             if len(usable) >= _DISCOVERY_LIMIT:
                 break
-        return usable
+        return sorted(
+            usable,
+            key=lambda item: (-item.score, item.dataset.title.casefold()),
+        )
 
     async def _async_prepare_dataset_entry(
         self, discovered: OpenDataDataset
@@ -215,17 +214,29 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         dataset = await provider.async_get_dataset(
             discovered.dataset_id, discovered.resource_id
         )
+        candidate = score_dataset(dataset)
         unique_id = (
             f"{self._provider_name}:{self._portal_url}:"
             f"{dataset.dataset_id}:{dataset.resource_id or ''}"
         )
-        data = {
+        data: dict[str, Any] = {
             CONF_PROVIDER: self._provider_name,
             CONF_PORTAL_URL: self._portal_url,
             CONF_DATASET_ID: dataset.dataset_id,
         }
         if dataset.resource_id:
             data[CONF_RESOURCE_ID] = dataset.resource_id
+        if candidate.profile_id:
+            data[CONF_PROFILE_ID] = candidate.profile_id
+            data[CONF_FIELD_MAPPINGS] = [
+                {
+                    "source_field": mapping.source_field,
+                    "canonical_metric": mapping.canonical_metric,
+                    "mapping_method": mapping.mapping_method,
+                    "confidence": mapping.confidence,
+                }
+                for mapping in candidate.field_mappings
+            ]
         return {
             "unique_id": unique_id,
             CONF_TITLE: dataset.title,
