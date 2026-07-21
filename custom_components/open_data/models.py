@@ -30,7 +30,9 @@ class OpenDataDataset:
 
 @dataclass(slots=True, frozen=True)
 class OpenDataSnapshot:
-    """Latest normalized dataset state."""
+    """Latest normalized dataset state for one or more selected records."""
 
     dataset: OpenDataDataset
     values: dict[str, Any]
+    records: dict[str, dict[str, Any]] = field(default_factory=dict)
+    record_labels: dict[str, str] = field(default_factory=dict)
