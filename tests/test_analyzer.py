@@ -159,3 +159,45 @@ def test_single_location_samples_do_not_claim_a_location_time_grid() -> None:
     structure = analyzer.analyze_dataset(dataset, rows)
 
     assert "opaque_code" not in structure.identity_fields
+
+
+def test_explorer_reports_ranked_bundle_hypotheses() -> None:
+    dataset = OpenDataDataset(
+        dataset_id="explorer",
+        title="Water Observations",
+        fields=(
+            OpenDataField("loc_cd", "Location Code"),
+            OpenDataField("loc_label", "Location Label"),
+            OpenDataField("bundle_at", "Bundle Time"),
+            OpenDataField("sample_day", "Sample Day"),
+            OpenDataField("water_temp", "Water Temperature"),
+        ),
+    )
+    rows = [
+        {
+            "loc_cd": location,
+            "loc_label": label,
+            "bundle_at": timestamp,
+            "sample_day": timestamp[:10],
+            "water_temp": value,
+        }
+        for timestamp, value in (
+            ("2026-07-20T10:00:00Z", 18.0),
+            ("2026-07-20T11:00:00Z", 18.5),
+            ("2026-07-20T12:00:00Z", 19.0),
+        )
+        for location, label in (("A", "Huron"), ("B", "Mill Creek"))
+    ]
+
+    summary = analyzer.dataset_explorer_summary(dataset, rows)
+
+    assert summary["kind"] == "time_series"
+    assert "loc_cd" in summary["dimensions"]["identity"]
+    assert "bundle_at" in summary["dimensions"]["timestamp"]
+    assert "sample_day" in summary["dimensions"]["timestamp"]
+    assert summary["sample"]["distinct_primary_records"] == 2
+    assert summary["requires_confirmation"] is True
+    hypotheses = {(item["field"], item["role"]) for item in summary["hypotheses"]}
+    assert ("loc_cd", "identity") in hypotheses
+    assert ("bundle_at", "timestamp") in hypotheses
+    assert ("water_temp", "metric") in hypotheses
