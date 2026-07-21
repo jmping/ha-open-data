@@ -11,12 +11,13 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from .const import DEFAULT_SCAN_INTERVAL_MINUTES
 from .models import OpenDataDataset, OpenDataSnapshot
 from .providers.base import OpenDataError, OpenDataProvider
+from .semantic_observations import normalize_observations
 
 _MAX_CONCURRENT_RECORD_REQUESTS = 6
 
 
 class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
-    """Coordinate metadata and latest-record updates."""
+    """Coordinate metadata, latest rows, and semantic observation streams."""
 
     def __init__(
         self,
@@ -29,6 +30,14 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
         display_field: str | None = None,
         selected_records: tuple[str, ...] = (),
         hierarchy_fields: tuple[str, ...] = (),
+        *,
+        observation_shape: str = "unknown",
+        metric_dimension_fields: tuple[str, ...] = (),
+        value_fields: tuple[str, ...] = (),
+        observation_dimension_fields: tuple[str, ...] = (),
+        unit_fields: tuple[str, ...] = (),
+        retrieval_dimension_multiplier: int = 1,
+        estimated_entity_count: int = 1,
     ) -> None:
         super().__init__(
             hass,
@@ -44,8 +53,23 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
         self.display_field = display_field
         self.selected_records = selected_records
         self.hierarchy_fields = hierarchy_fields
+        self.observation_shape = observation_shape
+        self.metric_dimension_fields = metric_dimension_fields
+        self.value_fields = value_fields
+        self.observation_dimension_fields = observation_dimension_fields
+        self.unit_fields = unit_fields
+        self.retrieval_dimension_multiplier = max(1, retrieval_dimension_multiplier)
+        self.estimated_entity_count = max(1, estimated_entity_count)
         self.dataset: OpenDataDataset | None = None
         self.record_labels: dict[str, str] = {}
+
+    @property
+    def uses_semantic_observations(self) -> bool:
+        """Return whether runtime rows should be pivoted into logical streams."""
+        return bool(self.value_fields) and self.observation_shape in {
+            "long",
+            "multi_dimensional",
+        }
 
     async def _async_load_record_labels(self) -> None:
         if not self.identity_field or not self.selected_records:
@@ -76,8 +100,6 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
             )
             self.record_labels[record_id] = label
 
-        # Labels such as "Precinct 1" are often only unique within their parent
-        # geography. Add available hierarchy context only where it is needed.
         for label, record_ids in labels.items():
             if len(record_ids) < 2:
                 continue
@@ -91,7 +113,6 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
     async def _async_latest_record(
         self, record_id: str, semaphore: asyncio.Semaphore
     ) -> tuple[str, dict]:
-        """Fetch one latest observation without overwhelming a portal."""
         async with semaphore:
             values = await self.provider.async_latest_row(
                 self.dataset_id,
@@ -101,6 +122,53 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
             )
         return record_id, values or {}
 
+    async def _async_semantic_snapshot(self) -> OpenDataSnapshot:
+        """Fetch enough recent physical rows to recover all current logical streams."""
+        entity_limit = (
+            max(len(self.selected_records), 1)
+            if self.selected_records
+            else self.estimated_entity_count
+        )
+        per_entity = max(25, self.retrieval_dimension_multiplier * 4)
+        rows = await self.provider.async_sample_observations(
+            self.dataset_id,
+            self.resource_id,
+            entity_field=self.identity_field,
+            timestamp_field=self.timestamp_field,
+            entity_limit=entity_limit,
+            observations_per_entity=per_entity,
+        )
+        if self.selected_records and self.identity_field:
+            selected = set(self.selected_records)
+            rows = [
+                row
+                for row in rows
+                if str(row.get(self.identity_field)) in selected
+            ]
+        observations = normalize_observations(
+            rows,
+            shape=self.observation_shape,
+            entity_field=self.identity_field,
+            timestamp_field=self.timestamp_field,
+            metric_dimension_fields=self.metric_dimension_fields,
+            value_fields=self.value_fields,
+            observation_dimension_fields=self.observation_dimension_fields,
+            unit_fields=self.unit_fields,
+        )
+        records: dict[str, dict] = {}
+        for observation in observations.values():
+            if observation.entity_id is not None:
+                records.setdefault(observation.entity_id, observation.source_row)
+                self.record_labels.setdefault(observation.entity_id, observation.entity_id)
+        first = next((item.source_row for item in observations.values()), {})
+        return OpenDataSnapshot(
+            dataset=self.dataset,
+            values=first,
+            records=records,
+            record_labels=dict(self.record_labels),
+            observations=observations,
+        )
+
     async def _async_update_data(self) -> OpenDataSnapshot:
         try:
             if self.dataset is None:
@@ -109,6 +177,9 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
                 )
                 self.resource_id = self.dataset.resource_id or self.resource_id
                 await self._async_load_record_labels()
+
+            if self.uses_semantic_observations:
+                return await self._async_semantic_snapshot()
 
             if self.identity_field and self.selected_records:
                 semaphore = asyncio.Semaphore(_MAX_CONCURRENT_RECORD_REQUESTS)
