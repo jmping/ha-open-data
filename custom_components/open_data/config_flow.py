@@ -466,13 +466,16 @@ class OpenDataOptionsFlow(config_entries.OptionsFlow):
                 unit_label_fields=submitted.get(CONF_UNIT_LABEL_FIELDS, ()),
                 record_key_fields=submitted.get(CONF_RECORD_KEY_FIELDS, ()),
                 record_label_fields=submitted.get(CONF_RECORD_LABEL_FIELDS, ()),
-                parent_levels=(
+                parent_levels=tuple(
                     {
-                        "name": "hierarchy",
-                        "key_fields": submitted.get(CONF_HIERARCHY_FIELDS, ()),
-                        "label_fields": (),
-                    },
-                ) if submitted.get(CONF_HIERARCHY_FIELDS) else (),
+                        "name": f"parent_{index}",
+                        "key_fields": (field,),
+                        "label_fields": (field,),
+                    }
+                    for index, field in enumerate(
+                        submitted.get(CONF_HIERARCHY_FIELDS, ()), start=1
+                    )
+                ),
                 allowed_fields=active_fields,
             ).as_dict()
             self._structure_options.update(submitted)
