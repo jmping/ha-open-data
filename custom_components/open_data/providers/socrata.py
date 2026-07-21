@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from typing import Any
+from urllib.parse import urlparse
 
 from ..models import OpenDataDataset, OpenDataField
 from .base import OpenDataResponseError, ProviderCapabilities
@@ -25,6 +26,11 @@ class SocrataProvider(JsonClient):
         supports_incremental_updates=True,
     )
 
+    @property
+    def _search_context(self) -> str:
+        """Return the hostname expected by Socrata's catalog API."""
+        return urlparse(self.portal_url).hostname or self.portal_url
+
     @staticmethod
     def _dataset_id(value: str) -> str:
         normalized = value.strip().lower()
@@ -36,7 +42,7 @@ class SocrataProvider(JsonClient):
         """Require a recognizable Socrata catalog response."""
         payload = await self.async_get_json(
             "/api/catalog/v1",
-            params={"search_context": self.portal_url, "limit": "1"},
+            params={"search_context": self._search_context, "limit": "1"},
         )
         if (
             not isinstance(payload, dict)
@@ -94,22 +100,11 @@ class SocrataProvider(JsonClient):
             raise OpenDataResponseError("Socrata query did not return rows")
         return payload[0] if payload else None
 
-    async def async_search_datasets(
-        self, query: str, limit: int = 20
-    ) -> list[OpenDataDataset]:
-        """Search the Socrata catalog with a bounded result count."""
-        bounded_limit = min(max(int(limit), 1), 100)
-        payload = await self.async_get_json(
-            "/api/catalog/v1",
-            params={
-                "search_context": self.portal_url,
-                "q": query,
-                "limit": str(bounded_limit),
-            },
-        )
+    @staticmethod
+    def _normalize_catalog_results(payload: Any) -> list[OpenDataDataset]:
         results = payload.get("results", []) if isinstance(payload, dict) else []
         datasets: list[OpenDataDataset] = []
-        for result in results[:bounded_limit]:
+        for result in results:
             resource = result.get("resource", {}) if isinstance(result, dict) else {}
             if resource.get("id") and resource.get("name"):
                 datasets.append(
@@ -121,3 +116,45 @@ class SocrataProvider(JsonClient):
                     )
                 )
         return datasets
+
+    async def async_search_datasets(
+        self, query: str, limit: int = 20
+    ) -> list[OpenDataDataset]:
+        """Search the Socrata catalog with a bounded result count."""
+        bounded_limit = min(max(int(limit), 1), 100)
+        payload = await self.async_get_json(
+            "/api/catalog/v1",
+            params={
+                "search_context": self._search_context,
+                "q": query,
+                "limit": str(bounded_limit),
+            },
+        )
+        return self._normalize_catalog_results(payload)[:bounded_limit]
+
+    async def async_list_datasets(self, limit: int = 500) -> list[OpenDataDataset]:
+        """Enumerate Socrata catalog pages for the current portal hostname."""
+        bounded_limit = min(max(int(limit), 1), 1000)
+        page_size = min(100, bounded_limit)
+        found: dict[str, OpenDataDataset] = {}
+        offset = 0
+        while len(found) < bounded_limit:
+            payload = await self.async_get_json(
+                "/api/catalog/v1",
+                params={
+                    "search_context": self._search_context,
+                    "limit": str(page_size),
+                    "offset": str(offset),
+                },
+            )
+            page = self._normalize_catalog_results(payload)
+            if not page:
+                break
+            for dataset in page:
+                found.setdefault(dataset.dataset_id, dataset)
+                if len(found) >= bounded_limit:
+                    break
+            if len(page) < page_size:
+                break
+            offset += page_size
+        return list(found.values())
