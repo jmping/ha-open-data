@@ -30,10 +30,15 @@ class ProviderCapabilities:
     """Features exposed by an open-data provider."""
 
     supports_search: bool = True
+    supports_catalog_paging: bool = False
     supports_schema: bool = True
     supports_latest_row: bool = True
+    supports_timeseries: bool = False
+    supports_station_filtering: bool = False
     supports_spatial_queries: bool = False
     supports_incremental_updates: bool = False
+    supports_statistics: bool = False
+    supports_streaming: bool = False
 
 
 class OpenDataProvider(ABC):
