@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 import re
+from typing import Any
 
 _OBSERVATION_ID_TERMS = {
     "event_id",
@@ -97,3 +99,34 @@ def effective_identity_field(
     if looks_like_observation_id(identity_field) and looks_like_stable_name(display_field):
         return display_field
     return identity_field
+
+
+def normalize_selected_records(raw_records: Any) -> tuple[str, ...]:
+    """Return unique, non-empty record identifiers in stable order.
+
+    Home Assistant options can contain a scalar, a list, ``None``, or legacy values
+    with surrounding whitespace. Mapping-like values are rejected because iterating
+    them would silently turn configuration keys into record identifiers.
+    """
+    if raw_records is None:
+        return ()
+    if isinstance(raw_records, str):
+        values: Iterable[Any] = (raw_records,)
+    elif isinstance(raw_records, dict):
+        return ()
+    elif isinstance(raw_records, Iterable):
+        values = raw_records
+    else:
+        values = (raw_records,)
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in values:
+        if item is None:
+            continue
+        value = str(item).strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        normalized.append(value)
+    return tuple(normalized)
