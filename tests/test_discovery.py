@@ -85,3 +85,53 @@ def test_raw_metadata_contributes_to_score() -> None:
     assert candidate.score > 0
     assert "air quality" in candidate.reasons
     assert "hourly" in candidate.reasons
+
+
+def test_air_quality_profile_maps_common_city_field_aliases() -> None:
+    dataset = OpenDataDataset(
+        dataset_id="municipal-air",
+        title="Air Pollution Monitoring Stations",
+        fields=(
+            OpenDataField("obs_time", "Observation Time"),
+            OpenDataField("monitor_id", "Monitor ID"),
+            OpenDataField("pm2_5", "PM 2.5"),
+            OpenDataField("relative_humidity", "Relative Humidity"),
+        ),
+    )
+
+    candidate = score_dataset(dataset)
+    mappings = {
+        mapping.source_field: mapping.canonical_metric
+        for mapping in candidate.field_mappings
+    }
+
+    assert candidate.profile_id == "air_quality"
+    assert candidate.profile_confidence > 0.2
+    assert mappings["pm2_5"] == "pm25"
+    assert mappings["relative_humidity"] == "humidity"
+    assert mappings["monitor_id"] == "station"
+
+
+def test_hydrology_profile_recognizes_gauge_vocabulary() -> None:
+    dataset = OpenDataDataset(
+        dataset_id="river-gauges",
+        title="River Gauge Observations",
+        fields=(
+            OpenDataField("gage_id", "Gage"),
+            OpenDataField("sample_time", "Sample Time"),
+            OpenDataField("gage_height", "Gage Height"),
+            OpenDataField("discharge", "Discharge"),
+            OpenDataField("water_temp", "Water Temperature"),
+        ),
+    )
+
+    candidate = score_dataset(dataset)
+
+    assert candidate.profile_id == "hydrology"
+    assert {mapping.canonical_metric for mapping in candidate.field_mappings} >= {
+        "station",
+        "timestamp",
+        "water_level",
+        "streamflow",
+        "water_temperature",
+    }
