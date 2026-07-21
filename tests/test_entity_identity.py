@@ -48,3 +48,19 @@ def test_civic_location_names_are_stable() -> None:
         "outfall_name",
     ):
         assert identity.looks_like_stable_name(field) is True
+
+
+def test_selected_records_are_trimmed_deduplicated_and_ordered() -> None:
+    assert identity.normalize_selected_records(
+        [" A ", "", None, "B", "A", 7, " 7 "]
+    ) == ("A", "B", "7")
+
+
+def test_selected_record_scalar_and_none_are_safe() -> None:
+    assert identity.normalize_selected_records("Station A") == ("Station A",)
+    assert identity.normalize_selected_records(None) == ()
+    assert identity.normalize_selected_records(17) == ("17",)
+
+
+def test_mapping_is_not_treated_as_record_identifiers() -> None:
+    assert identity.normalize_selected_records({"station": "A"}) == ()
