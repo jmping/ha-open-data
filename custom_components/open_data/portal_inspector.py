@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import html
 import re
+import time
 from dataclasses import asdict, dataclass
 from typing import Any
 from urllib.parse import urljoin, urlparse
@@ -29,11 +30,24 @@ from .providers.common import (
 )
 
 _MAX_HTML_BYTES = 512 * 1024
+_CATALOG_CACHE_TTL_SECONDS = 60 * 60
 _LINK_PATTERN = re.compile(
     r"(?:href|content)\s*=\s*['\"]([^'\"]+)['\"]",
     re.IGNORECASE,
 )
 _URL_PATTERN = re.compile(r"https?://[^\s'\"<>]+", re.IGNORECASE)
+_COMMON_PORTAL_PATHS = {
+    "browse",
+    "catalog",
+    "dataset",
+    "datasets",
+    "explore",
+    "group",
+    "organization",
+    "resource",
+    "view",
+}
+_CATALOG_CACHE: dict[str, tuple[float, tuple[OpenDataDataset, ...]]] = {}
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,10 +76,31 @@ class InspectedPortal:
     provider: OpenDataProvider
 
 
+def _candidate_roots(portal_url: str) -> list[str]:
+    """Return likely API roots for a landing page, catalog page, or dataset URL."""
+    normalized = normalize_portal_url(portal_url)
+    parsed = urlparse(normalized)
+    origin = portal_origin(normalized)
+    candidates = [origin]
+
+    parts = [part for part in parsed.path.split("/") if part]
+    for index, part in enumerate(parts):
+        if part.casefold() in _COMMON_PORTAL_PATHS:
+            prefix = "/".join(parts[:index])
+            candidate = f"{origin}/{prefix}" if prefix else origin
+            if candidate not in candidates:
+                candidates.append(candidate)
+            break
+
+    if normalized not in candidates:
+        candidates.append(normalized)
+    return candidates
+
+
 async def _async_linked_portal_candidates(
     session: ClientSession, page_url: str
 ) -> list[str]:
-    """Extract plausible public portal hosts from a landing page."""
+    """Extract plausible public portal hosts and canonical links from a landing page."""
     validated = await async_validate_public_url(page_url)
     try:
         async with asyncio.timeout(REQUEST_TIMEOUT):
@@ -104,15 +139,19 @@ async def _async_linked_portal_candidates(
             host != source_host
             or host.startswith(("data.", "ckan.", "opendata."))
             or host.endswith((".socrata.com", ".ckan.org"))
-            or "/dataset" in parsed.path
-            or "/browse" in parsed.path
+            or any(
+                f"/{segment}" in parsed.path.casefold()
+                for segment in _COMMON_PORTAL_PATHS
+            )
+            or "/api/3/" in parsed.path.casefold()
+            or "/api/catalog/" in parsed.path.casefold()
         )
         if not looks_like_portal:
             continue
-        for candidate in (portal_origin(normalized), normalized):
+        for candidate in _candidate_roots(normalized):
             if candidate not in candidates:
                 candidates.append(candidate)
-        if len(candidates) >= 20:
+        if len(candidates) >= 30:
             break
     return candidates
 
@@ -125,14 +164,10 @@ async def async_inspect_portal(
     resolved = await async_resolve_portal_redirects(session, supplied)
 
     candidates: list[str] = []
-    for candidate in (
-        portal_origin(resolved),
-        resolved,
-        portal_origin(supplied),
-        supplied,
-    ):
-        if candidate not in candidates:
-            candidates.append(candidate)
+    for source in (resolved, supplied):
+        for candidate in _candidate_roots(source):
+            if candidate not in candidates:
+                candidates.append(candidate)
 
     for page in (resolved, supplied):
         for candidate in await _async_linked_portal_candidates(session, page):
@@ -174,8 +209,14 @@ async def async_discover_catalog(
     *,
     limit: int = 500,
 ) -> tuple[list[OpenDataDataset], list[str]]:
-    """Enumerate and normalize a portal catalog without keyword dependence."""
+    """Enumerate and cache a normalized portal catalog without keyword dependence."""
     bounded_limit = min(max(int(limit), 1), 1000)
+    cache_key = inspected.description.portal_url
+    cached = _CATALOG_CACHE.get(cache_key)
+    now = time.monotonic()
+    if cached is not None and cached[0] > now:
+        return list(cached[1][:bounded_limit]), []
+
     try:
         datasets = await inspected.provider.async_list_datasets(bounded_limit)
     except OpenDataResponseError as err:
@@ -184,4 +225,10 @@ async def async_discover_catalog(
         ) from err
     if not datasets:
         raise OpenDataResponseError("Portal catalog did not return datasets")
-    return datasets[:bounded_limit], []
+
+    normalized = tuple(datasets[:bounded_limit])
+    _CATALOG_CACHE[cache_key] = (
+        now + _CATALOG_CACHE_TTL_SECONDS,
+        normalized,
+    )
+    return list(normalized), []
