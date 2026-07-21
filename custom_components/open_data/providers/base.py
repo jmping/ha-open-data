@@ -41,6 +41,7 @@ class ProviderCapabilities:
     supports_streaming: bool = False
     supports_sample_rows: bool = False
     supports_distinct_values: bool = False
+    supports_observation_sampling: bool = False
 
 
 class OpenDataProvider(ABC):
@@ -80,6 +81,26 @@ class OpenDataProvider(ABC):
         """Return bounded sample rows for structural analysis."""
         row = await self.async_latest_row(dataset_id, resource_id)
         return [row] if row else []
+
+    async def async_sample_observations(
+        self,
+        dataset_id: str,
+        resource_id: str | None = None,
+        *,
+        entity_field: str | None = None,
+        timestamp_field: str | None = None,
+        entity_limit: int = 20,
+        observations_per_entity: int = 25,
+    ) -> list[dict[str, Any]]:
+        """Return a bounded historical sample suitable for observation inference.
+
+        Providers should override this to spread observations across entities and
+        time. The compatibility fallback deliberately requests more rows than the
+        old schema sample so callers receive historical evidence where supported.
+        """
+        del entity_field, timestamp_field
+        limit = max(50, entity_limit * observations_per_entity)
+        return await self.async_sample_rows(dataset_id, resource_id, limit=limit)
 
     async def async_distinct_rows(
         self,
