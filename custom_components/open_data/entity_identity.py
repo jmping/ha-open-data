@@ -15,37 +15,42 @@ _OBSERVATION_ID_TERMS = {
     "sample_id",
     "test_result_id",
 }
+_OBSERVATION_TIME_TERMS = {
+    "date",
+    "datetime",
+    "measurement_time",
+    "observation_time",
+    "observed_at",
+    "recorded_at",
+    "sample_time",
+    "timestamp",
+}
 _STABLE_NAME_TERMS = {
+    "basin",
     "beach",
     "building",
+    "county",
+    "district",
     "facility",
     "gage",
     "gauge",
     "intersection",
+    "lake",
     "location",
     "monitor",
+    "municipality",
     "outfall",
     "park",
     "precinct",
+    "river",
     "school",
     "sensor",
     "site",
     "station",
     "trail",
     "waterbody",
+    "watershed",
     "well",
-}
-_STABLE_ID_TERMS = {
-    "asset_id",
-    "facility_id",
-    "gage_id",
-    "gauge_id",
-    "location_id",
-    "monitor_id",
-    "sensor_id",
-    "site_id",
-    "station_id",
-    "well_id",
 }
 
 
@@ -54,10 +59,15 @@ def _norm(value: str | None) -> str:
 
 
 def looks_like_observation_id(field: str | None) -> bool:
-    """Return whether a field appears to identify an observation row."""
+    """Return whether a field appears to identify one observation row."""
     normalized = _norm(field)
-    return normalized in _OBSERVATION_ID_TERMS or any(
-        normalized.endswith(f"_{term}") for term in _OBSERVATION_ID_TERMS
+    if not normalized:
+        return False
+    if normalized in _OBSERVATION_ID_TERMS or normalized in _OBSERVATION_TIME_TERMS:
+        return True
+    return any(
+        normalized.endswith(f"_{term}")
+        for term in (*_OBSERVATION_ID_TERMS, *_OBSERVATION_TIME_TERMS)
     )
 
 
@@ -70,16 +80,7 @@ def looks_like_stable_name(field: str | None) -> bool:
     return bool(parts & _STABLE_NAME_TERMS) and (
         normalized.endswith("_name")
         or normalized.endswith("_label")
-        or normalized.endswith("_description")
         or normalized in _STABLE_NAME_TERMS
-    )
-
-
-def looks_like_stable_id(field: str | None) -> bool:
-    """Return whether a field explicitly identifies a persistent entity."""
-    normalized = _norm(field)
-    return normalized in _STABLE_ID_TERMS or any(
-        normalized.endswith(f"_{term}") for term in _STABLE_ID_TERMS
     )
 
 
@@ -91,10 +92,8 @@ def effective_identity_field(
 
     Existing config entries may have been created before stable place aliases were
     recognized. This compatibility rule repairs those entries on reload without
-    rewriting user configuration. Explicit persistent identifiers are always kept.
+    replacing explicit persistent identifiers such as ``station_id`` or ``well_id``.
     """
-    if looks_like_stable_id(identity_field):
-        return identity_field
     if looks_like_observation_id(identity_field) and looks_like_stable_name(display_field):
         return display_field
     return identity_field
