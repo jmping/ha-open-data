@@ -69,3 +69,7 @@ class OpenDataProvider(ABC):
         raise OpenDataResponseError(
             f"{self.provider_name} dataset search is not implemented"
         )
+
+    async def async_list_datasets(self, limit: int = 500) -> list[OpenDataDataset]:
+        """Enumerate the portal catalog, falling back to an unfiltered search."""
+        return await self.async_search_datasets("", limit=min(limit, 100))
