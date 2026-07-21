@@ -26,6 +26,7 @@ CONF_SELECTED_RECORDS = "selected_records"
 CONF_DATASET_KIND = "dataset_kind"
 CONF_IGNORED_FIELDS = "ignored_fields"
 CONF_METRIC_FIELDS = "metric_fields"
+CONF_FIELD_ROLES = "field_roles"
 
 PROVIDER_SOCRATA = "socrata"
 PROVIDER_CKAN = "ckan"
