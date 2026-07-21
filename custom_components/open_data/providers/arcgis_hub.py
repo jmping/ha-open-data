@@ -1,11 +1,11 @@
-"""ArcGIS Hub provider adapter using DCAT and Feature Service APIs."""
+"""ArcGIS Hub provider adapter using OGC Records, DCAT, and Feature Services."""
 
 from __future__ import annotations
 
 import asyncio
 import json
 import re
-from typing import Any
+from typing import Any, Iterable
 
 from aiohttp import ClientError, ClientResponseError
 
@@ -26,8 +26,21 @@ from .common import (
 
 _FIELD_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _SERVICE_PATTERN = re.compile(
-    r"/(?:FeatureServer|MapServer)(?:/\d+)?/?$", re.IGNORECASE
+    r"/(?:FeatureServer|MapServer)(?:/\d+)?/?(?:\?.*)?$", re.IGNORECASE
 )
+_OGC_ITEMS_PATH = "/api/search/v1/collections/all/items"
+
+
+def _walk_strings(value: Any) -> Iterable[str]:
+    """Yield nested strings from provider metadata without assuming one schema."""
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from _walk_strings(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _walk_strings(item)
 
 
 class ArcGisHubProvider(JsonClient):
@@ -36,7 +49,7 @@ class ArcGisHubProvider(JsonClient):
     provider_name = "ArcGIS Hub"
     capabilities = ProviderCapabilities(
         supports_search=True,
-        supports_catalog_paging=False,
+        supports_catalog_paging=True,
         supports_schema=True,
         supports_latest_row=True,
         supports_timeseries=True,
@@ -97,12 +110,27 @@ class ArcGisHubProvider(JsonClient):
             raise OpenDataResponseError("Host did not return an ArcGIS Hub DCAT feed")
         return payload
 
+    async def _ogc_root(self) -> dict[str, Any]:
+        payload = await self.async_get_json("/api/search/v1")
+        if not isinstance(payload, dict):
+            raise OpenDataResponseError("Host did not return an ArcGIS OGC Records API")
+        links = payload.get("links")
+        if not isinstance(links, list) and not any(
+            key in payload for key in ("title", "description", "conformsTo")
+        ):
+            raise OpenDataResponseError("Host did not return an ArcGIS OGC Records API")
+        return payload
+
     async def async_verify_portal(self) -> None:
-        await self._feed()
+        """Accept modern OGC Records hubs and older DCAT-only hubs."""
+        try:
+            await self._ogc_root()
+        except (OpenDataConnectionError, OpenDataResponseError):
+            await self._feed()
 
     @staticmethod
     def _identifier(item: dict[str, Any]) -> str | None:
-        value = item.get("identifier") or item.get("@id")
+        value = item.get("identifier") or item.get("id") or item.get("@id")
         if not isinstance(value, str) or not value.strip():
             return None
         tail = value.rstrip("/").rsplit("/", 1)[-1]
@@ -110,32 +138,34 @@ class ArcGisHubProvider(JsonClient):
 
     @staticmethod
     def _service_urls(item: dict[str, Any]) -> list[str]:
+        """Extract FeatureServer and MapServer URLs from DCAT or OGC metadata."""
         urls: list[str] = []
-        distributions = item.get("distribution", [])
-        if isinstance(distributions, dict):
-            distributions = [distributions]
-        for distribution in distributions if isinstance(distributions, list) else []:
-            if not isinstance(distribution, dict):
-                continue
-            for key in ("accessURL", "downloadURL"):
-                value = distribution.get(key)
-                if isinstance(value, str) and _SERVICE_PATTERN.search(value):
-                    if value not in urls:
-                        urls.append(value.rstrip("/"))
+        for value in _walk_strings(item):
+            candidate = value.strip().rstrip("/")
+            if _SERVICE_PATTERN.search(candidate) and candidate not in urls:
+                urls.append(candidate.split("?", 1)[0].rstrip("/"))
         return urls
 
     @classmethod
     def _normalize_item(cls, item: dict[str, Any]) -> OpenDataDataset | None:
-        identifier = cls._identifier(item)
-        title = item.get("title")
+        """Normalize either a DCAT dataset or an OGC Records item."""
+        attributes = item.get("attributes") if isinstance(item.get("attributes"), dict) else {}
+        properties = item.get("properties") if isinstance(item.get("properties"), dict) else {}
+        merged = {**properties, **attributes}
+        identifier = cls._identifier(item) or cls._identifier(merged)
+        title = (
+            item.get("title")
+            or merged.get("title")
+            or merged.get("name")
+        )
         if not identifier or not isinstance(title, str):
             return None
         service_urls = cls._service_urls(item)
         if not service_urls:
             return None
+        description = item.get("description") or merged.get("description")
         raw = dict(item)
         raw["arcgis_service_urls"] = service_urls
-        description = item.get("description")
         return OpenDataDataset(
             dataset_id=identifier,
             title=title,
@@ -144,7 +174,45 @@ class ArcGisHubProvider(JsonClient):
             raw=raw,
         )
 
-    async def async_list_datasets(self, limit: int = 500) -> list[OpenDataDataset]:
+    @staticmethod
+    def _ogc_records(payload: Any) -> list[dict[str, Any]]:
+        """Return records from ArcGIS OGC response variants."""
+        if not isinstance(payload, dict):
+            return []
+        for key in ("data", "features", "items"):
+            value = payload.get(key)
+            if isinstance(value, list):
+                return [item for item in value if isinstance(item, dict)]
+        return []
+
+    async def _list_from_ogc(self, limit: int) -> list[OpenDataDataset]:
+        bounded = min(max(int(limit), 1), 1000)
+        page_size = min(100, bounded)
+        found: list[OpenDataDataset] = []
+        self._catalog.clear()
+        offset = 0
+        while len(found) < bounded:
+            payload = await self.async_get_json(
+                _OGC_ITEMS_PATH,
+                params={"limit": str(page_size), "offset": str(offset)},
+            )
+            records = self._ogc_records(payload)
+            if not records:
+                break
+            for item in records:
+                dataset = self._normalize_item(item)
+                if dataset is None or dataset.dataset_id in self._catalog:
+                    continue
+                self._catalog[dataset.dataset_id] = item
+                found.append(dataset)
+                if len(found) >= bounded:
+                    break
+            if len(records) < page_size:
+                break
+            offset += page_size
+        return found
+
+    async def _list_from_feed(self, limit: int) -> list[OpenDataDataset]:
         payload = await self._feed()
         found: list[OpenDataDataset] = []
         self._catalog.clear()
@@ -159,6 +227,16 @@ class ArcGisHubProvider(JsonClient):
             if len(found) >= min(max(int(limit), 1), 1000):
                 break
         return found
+
+    async def async_list_datasets(self, limit: int = 500) -> list[OpenDataDataset]:
+        """Enumerate with paged OGC Records, falling back to bounded DCAT."""
+        try:
+            datasets = await self._list_from_ogc(limit)
+        except (OpenDataConnectionError, OpenDataResponseError):
+            datasets = []
+        if datasets:
+            return datasets
+        return await self._list_from_feed(limit)
 
     async def async_search_datasets(
         self, query: str, limit: int = 20
@@ -192,17 +270,16 @@ class ArcGisHubProvider(JsonClient):
         for candidate in candidates:
             if not isinstance(candidate, str) or not _SERVICE_PATTERN.search(candidate):
                 continue
-            url = candidate.rstrip("/")
+            url = candidate.split("?", 1)[0].rstrip("/")
             metadata = await self._async_get_external_json(url, params={"f": "json"})
             if isinstance(metadata, dict) and isinstance(metadata.get("fields"), list):
                 return url
             layers = metadata.get("layers", []) if isinstance(metadata, dict) else []
-            if (
-                layers
-                and isinstance(layers[0], dict)
-                and isinstance(layers[0].get("id"), int)
-            ):
-                return f"{url}/{layers[0]['id']}"
+            tables = metadata.get("tables", []) if isinstance(metadata, dict) else []
+            candidates_meta = [*layers, *tables]
+            for layer in candidates_meta:
+                if isinstance(layer, dict) and isinstance(layer.get("id"), int):
+                    return f"{url}/{layer['id']}"
         raise OpenDataResponseError("ArcGIS dataset has no queryable feature layer")
 
     async def async_get_dataset(
@@ -221,10 +298,14 @@ class ArcGisHubProvider(JsonClient):
             for field in metadata.get("fields", [])
             if isinstance(field, dict) and field.get("name")
         )
+        attributes = item.get("attributes") if isinstance(item.get("attributes"), dict) else {}
+        properties = item.get("properties") if isinstance(item.get("properties"), dict) else {}
+        title = item.get("title") or attributes.get("title") or attributes.get("name") or properties.get("title") or dataset_id
+        description = item.get("description") or attributes.get("description") or properties.get("description")
         return OpenDataDataset(
             dataset_id=dataset_id,
-            title=item.get("title") or dataset_id,
-            description=item.get("description"),
+            title=title,
+            description=description if isinstance(description, str) else None,
             resource_id=layer_url,
             fields=fields,
             raw=item,
@@ -246,6 +327,8 @@ class ArcGisHubProvider(JsonClient):
         payload = await self._async_get_external_json(
             f"{layer_url}/query", params={"f": "json", "outFields": "*", **params}
         )
+        if isinstance(payload, dict) and payload.get("error"):
+            raise OpenDataResponseError("ArcGIS query returned an error")
         features = payload.get("features", []) if isinstance(payload, dict) else []
         if not isinstance(features, list):
             raise OpenDataResponseError("ArcGIS query did not return features")
@@ -329,6 +412,8 @@ class ArcGisHubProvider(JsonClient):
                 "orderByFields": fields[0],
             },
         )
+        if isinstance(payload, dict) and payload.get("error"):
+            raise OpenDataResponseError("ArcGIS distinct query returned an error")
         features = payload.get("features", []) if isinstance(payload, dict) else []
         return [
             dict(feature["attributes"])
