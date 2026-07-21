@@ -30,12 +30,7 @@ class CkanProvider(JsonClient):
         return payload.get("result")
 
     async def async_verify_portal(self) -> None:
-        """Require a successful CKAN status action before using the portal.
-
-        CKAN-compatible hosted platforms do not all include ``site_title`` in
-        ``status_show``. The Action API envelope is already validated by
-        :meth:`_action`, so any mapping result is sufficient verification.
-        """
+        """Require a successful CKAN status action before using the portal."""
         result = await self._action("status_show", {})
         if not isinstance(result, dict):
             raise OpenDataResponseError(
@@ -45,12 +40,7 @@ class CkanProvider(JsonClient):
     async def async_get_dataset(
         self, dataset_id: str, resource_id: str | None = None
     ) -> OpenDataDataset:
-        """Return normalized metadata for a CKAN dataset.
-
-        ``dataset_id`` may be either the CKAN package name or UUID. When no
-        resource is supplied, the first active DataStore resource is selected
-        automatically.
-        """
+        """Return normalized metadata for a CKAN DataStore dataset."""
         package = await self._action(
             "package_show", {"id": dataset_id.strip()}
         )
@@ -120,6 +110,19 @@ class CkanProvider(JsonClient):
             )
         return records[0] if records else None
 
+    @staticmethod
+    def _normalize_packages(packages: Any) -> list[OpenDataDataset]:
+        return [
+            OpenDataDataset(
+                dataset_id=package.get("name", ""),
+                title=package.get("title") or package.get("name", ""),
+                description=package.get("notes"),
+                raw=package,
+            )
+            for package in packages
+            if isinstance(package, dict) and package.get("name")
+        ] if isinstance(packages, list) else []
+
     async def async_search_datasets(
         self, query: str, limit: int = 20
     ) -> list[OpenDataDataset]:
@@ -129,16 +132,31 @@ class CkanProvider(JsonClient):
             "package_search", {"q": query, "rows": str(bounded_limit)}
         )
         packages = result.get("results", []) if isinstance(result, dict) else []
-        return [
-            OpenDataDataset(
-                dataset_id=package.get("name", ""),
-                title=package.get("title") or package.get("name", ""),
-                description=package.get("notes"),
-                raw=package,
+        return self._normalize_packages(packages)[:bounded_limit]
+
+    async def async_list_datasets(self, limit: int = 500) -> list[OpenDataDataset]:
+        """Enumerate CKAN package_search pages instead of relying on keywords."""
+        bounded_limit = min(max(int(limit), 1), 1000)
+        page_size = min(100, bounded_limit)
+        found: dict[str, OpenDataDataset] = {}
+        start = 0
+        while len(found) < bounded_limit:
+            result = await self._action(
+                "package_search",
+                {"q": "", "rows": str(page_size), "start": str(start)},
             )
-            for package in packages[:bounded_limit]
-            if isinstance(package, dict) and package.get("name")
-        ]
+            packages = result.get("results", []) if isinstance(result, dict) else []
+            page = self._normalize_packages(packages)
+            if not page:
+                break
+            for dataset in page:
+                found.setdefault(dataset.dataset_id, dataset)
+                if len(found) >= bounded_limit:
+                    break
+            if len(page) < page_size:
+                break
+            start += page_size
+        return list(found.values())
 
     @staticmethod
     def _select_resource(
