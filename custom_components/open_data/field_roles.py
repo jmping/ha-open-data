@@ -23,6 +23,9 @@ FIELD_ROLES = (
     FIELD_ROLE_IRRELEVANT,
     FIELD_ROLE_UNASSIGNED,
 )
+ASSIGNABLE_FIELD_ROLES = tuple(
+    role for role in FIELD_ROLES if role != FIELD_ROLE_UNASSIGNED
+)
 
 
 _TIME_COMPONENTS = {
@@ -113,6 +116,37 @@ class FieldRoles:
             **dict.fromkeys(self.irrelevant_fields, FIELD_ROLE_IRRELEVANT),
             **dict.fromkeys(self.unassigned_fields, FIELD_ROLE_UNASSIGNED),
         }
+
+
+def assignments_from_categories(
+    field_names: Iterable[str],
+    fields_by_role: Mapping[str, Iterable[str]],
+) -> dict[str, str]:
+    """Build roles from optional category selections.
+
+    Fields omitted from every category are deliberately inactive.  This lets a
+    user classify only the variables that matter without reviewing every
+    column in a wide dataset.
+    """
+    fields = tuple(dict.fromkeys(field_names))
+    known_fields = set(fields)
+    assignments = dict.fromkeys(fields, FIELD_ROLE_UNASSIGNED)
+    assigned_fields: set[str] = set()
+
+    invalid_roles = set(fields_by_role) - set(ASSIGNABLE_FIELD_ROLES)
+    if invalid_roles:
+        raise ValueError(f"Invalid field-role categories: {sorted(invalid_roles)!r}")
+
+    for role, selected_fields in fields_by_role.items():
+        for field in selected_fields:
+            if field not in known_fields:
+                raise ValueError(f"Unknown field in role assignment: {field!r}")
+            if field in assigned_fields:
+                raise ValueError(f"Field assigned to more than one role: {field!r}")
+            assignments[field] = role
+            assigned_fields.add(field)
+
+    return assignments
 
 
 def classify_field_roles(
