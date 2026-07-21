@@ -12,17 +12,25 @@ _TIME_COMPONENTS = {
     "weekday", "date", "time", "timestamp", "datetime", "observed_at",
     "observation_time", "sample_date", "sample_time", "created_at", "updated_at",
     "created_date", "closed_date", "due_date", "resolution_action_updated_date",
-    "date_collected", "received_date", "recorded_at", "measurement_time",
+    "date_collected", "collection_date", "received_date", "recorded_at",
+    "measurement_time", "measurement_date", "start_date", "end_date",
+    "inspection_date", "issue_date", "expiration_date", "event_date",
 }
 _CONTEXT_TERMS = (
     "agency", "vendor", "owner", "program", "project", "source", "status",
     "station", "site", "location", "beach", "waterbody", "water_body", "river",
     "lake", "county", "city", "municipality", "township", "state", "region",
-    "watershed", "basin", "district", "precinct", "ward", "borough", "address",
-    "street", "cross_street", "intersection", "community_board", "zip", "zipcode",
-    "latitude", "longitude", "lat", "lon", "lng", "geometry", "sample_no",
-    "sample_number", "sample_id", "kit_id", "unique_key", "permit", "facility",
-    "descriptor", "complaint_type", "resolution", "name", "label", "id",
+    "watershed", "basin", "district", "precinct", "ward", "borough", "boro",
+    "community_board", "community_district", "council_district", "address", "street",
+    "cross_street", "intersection", "zip", "zipcode", "latitude", "longitude",
+    "lat", "lon", "lng", "x_coordinate", "y_coordinate", "geometry", "geom",
+    "shape", "the_geom", "sample_no", "sample_number", "sample_id", "kit_id",
+    "unique_key", "permit", "facility", "descriptor", "complaint_type", "resolution",
+    "category", "type", "code", "segment", "link", "roadway", "direction",
+    "counter", "sensor", "bridge", "tunnel", "school", "building", "bin", "bbl",
+    "block", "lot", "nta", "tree_id", "spc_common", "spc_latin", "health",
+    "steward", "curb_loc", "incident", "case_number", "jurisdiction", "offense",
+    "premise", "victim", "name", "label", "id",
 )
 _MEASUREMENT_TERMS = (
     "temperature", "humidity", "pressure", "concentration", "level", "height",
@@ -31,11 +39,13 @@ _MEASUREMENT_TERMS = (
     "mean", "median", "rate", "index", "score", "reading", "measurement", "value",
     "lead", "copper", "turbidity", "conductivity", "oxygen", "ph", "tonnage",
     "tons", "weight", "volume", "distance", "duration", "occupancy", "capacity",
-    "pfas", "pfoa", "pfos", "pfna", "pfba", "pfhpa", "pfhxa", "pfhxs", "pfpea",
-    "pfteda", "6_2_fts", "wave",
+    "travel_time", "data_value", "measure", "vehicles", "pedestrians", "bicycles",
+    "dbh", "diameter", "pfas", "pfoa", "pfos", "pfna", "pfba", "pfhpa",
+    "pfhxa", "pfhxs", "pfpea", "pfteda", "6_2_fts", "wave",
 )
 _NON_MEASUREMENT_VALUES = {
     "not detected", "not measured", "unknown", "n/a", "na", "none", "null", "",
+    "below detection limit", "<lod", "<loq",
 }
 
 
@@ -50,8 +60,11 @@ def _is_number(value: Any) -> bool:
         return True
     if not isinstance(value, str) or value.strip().casefold() in _NON_MEASUREMENT_VALUES:
         return False
+    candidate = value.strip().replace(",", "")
+    if candidate.startswith("<"):
+        candidate = candidate[1:].strip()
     try:
-        float(value.strip())
+        float(candidate)
         return True
     except ValueError:
         return False
