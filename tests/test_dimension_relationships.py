@@ -35,12 +35,19 @@ OpenDataField = models.OpenDataField
 
 def _nested_rows() -> list[dict[str, str | float]]:
     rows = []
-    stations = (
-        ("Superior", "Tahquamenon", "Chippewa", "S1", "Upper"),
-        ("Superior", "Tahquamenon", "Chippewa", "S2", "Lower"),
-        ("Michigan", "Grand", "Kent", "S3", "Downtown"),
-        ("Michigan", "Grand", "Kent", "S4", "Lowell"),
-    )
+    stations: list[tuple[str, str, str, str, str]] = []
+    station_number = 1
+    for basin in ("Superior", "Michigan"):
+        for watershed_index in range(1, 3):
+            watershed = f"{basin}-W{watershed_index}"
+            for county_index in range(1, 3):
+                county = f"{watershed}-C{county_index}"
+                for site_index in range(1, 3):
+                    station = f"S{station_number}"
+                    stations.append(
+                        (basin, watershed, county, station, f"Site {station_number}")
+                    )
+                    station_number += 1
     for day in ("2026-07-18", "2026-07-19", "2026-07-20"):
         for basin, watershed, county, station, station_name in stations:
             rows.append(
@@ -58,9 +65,8 @@ def _nested_rows() -> list[dict[str, str | float]]:
 
 
 def test_infers_direct_nested_location_relationships() -> None:
-    rows = _nested_rows()
     relationships = analyzer.infer_dimension_relationships(
-        rows, ("basin", "watershed", "county", "station_id")
+        _nested_rows(), ("basin", "watershed", "county", "station_id")
     )
     pairs = {(item.parent_field, item.child_field) for item in relationships}
 
@@ -77,8 +83,8 @@ def test_repeated_times_do_not_reduce_hierarchy_confidence() -> None:
 
     assert len(relationships) == 1
     assert relationships[0].confidence == 1.0
-    assert relationships[0].parent_cardinality == 2
-    assert relationships[0].child_cardinality == 4
+    assert relationships[0].parent_cardinality == 8
+    assert relationships[0].child_cardinality == 16
 
 
 def test_rejects_many_to_many_relationships() -> None:
@@ -86,10 +92,10 @@ def test_rejects_many_to_many_relationships() -> None:
     rows.append(
         {
             "basin": "Michigan",
-            "watershed": "Grand",
-            "county": "Ottawa",
+            "watershed": "Michigan-W1",
+            "county": "Michigan-W1-C1",
             "station_id": "S1",
-            "station_name": "Upper",
+            "station_name": "Site 1",
             "observed_at": "2026-07-21",
             "reading": 1.0,
         }
