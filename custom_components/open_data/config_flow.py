@@ -35,6 +35,8 @@ from .providers.base import (
 )
 
 _DISCOVERY_LIMIT = 50
+_CATALOG_LIMIT = 500
+_VALIDATION_LIMIT = 150
 CONF_DATASET_IDS = "dataset_ids"
 CONF_TITLE = "title"
 
@@ -64,7 +66,7 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         if user_input is not None:
             try:
-                datasets = await self._async_discover_catalog(
+                candidates = await self._async_discover_catalog(
                     user_input[CONF_PORTAL_URL]
                 )
             except OpenDataSecurityError:
@@ -76,9 +78,9 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             except Exception:  # noqa: BLE001
                 errors["base"] = "unknown"
             else:
-                ranked = rank_datasets(datasets)
                 self._candidates = {
-                    item.dataset.dataset_id: item for item in ranked[:_DISCOVERY_LIMIT]
+                    item.dataset.dataset_id: item
+                    for item in candidates[:_DISCOVERY_LIMIT]
                 }
                 if self._candidates:
                     return await self.async_step_discover()
@@ -167,25 +169,35 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def _async_discover_catalog(
         self, portal_url: str
-    ) -> list[OpenDataDataset]:
-        """Inspect the portal and return only datasets HA can currently poll."""
+    ) -> list[DatasetCandidate]:
+        """Rank the full catalog, then validate the best pollable datasets."""
         inspected = await async_inspect_portal(
             async_get_clientsession(self.hass), portal_url
         )
         self._portal_url = inspected.description.portal_url
         self._provider_name = inspected.description.provider
         datasets, _errors = await async_discover_catalog(
-            inspected, limit=_DISCOVERY_LIMIT
+            inspected, limit=_CATALOG_LIMIT
         )
 
-        usable: list[OpenDataDataset] = []
-        for dataset in datasets:
+        ranked = rank_datasets(datasets)
+        usable: list[DatasetCandidate] = []
+        for candidate in ranked[:_VALIDATION_LIMIT]:
             try:
-                usable.append(
-                    await inspected.provider.async_get_dataset(dataset.dataset_id)
+                dataset = await inspected.provider.async_get_dataset(
+                    candidate.dataset.dataset_id
                 )
             except OpenDataResponseError:
                 continue
+            usable.append(
+                DatasetCandidate(
+                    dataset=dataset,
+                    score=candidate.score,
+                    reasons=candidate.reasons,
+                )
+            )
+            if len(usable) >= _DISCOVERY_LIMIT:
+                break
         return usable
 
     async def _async_prepare_dataset_entry(
