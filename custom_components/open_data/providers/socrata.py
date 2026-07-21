@@ -29,11 +29,12 @@ class SocrataProvider(JsonClient):
         supports_incremental_updates=True,
         supports_statistics=True,
         supports_streaming=False,
+        supports_sample_rows=True,
+        supports_distinct_values=True,
     )
 
     @property
     def _search_context(self) -> str:
-        """Return the hostname expected by Socrata's catalog API."""
         return urlparse(self.portal_url).hostname or self.portal_url
 
     @staticmethod
@@ -43,8 +44,18 @@ class SocrataProvider(JsonClient):
             raise ValueError("Dataset ID must use Socrata's four-by-four format")
         return normalized
 
+    @staticmethod
+    def _field(value: str) -> str:
+        field = value.strip()
+        if not _FIELD_NAME_PATTERN.fullmatch(field):
+            raise ValueError("Socrata field name is invalid")
+        return field
+
+    @staticmethod
+    def _literal(value: str) -> str:
+        return "'" + str(value).replace("'", "''") + "'"
+
     async def async_verify_portal(self) -> None:
-        """Require a recognizable Socrata catalog response."""
         payload = await self.async_get_json(
             "/api/catalog/v1",
             params={"search_context": self._search_context, "limit": "1"},
@@ -88,22 +99,68 @@ class SocrataProvider(JsonClient):
         dataset_id: str,
         resource_id: str | None = None,
         timestamp_field: str | None = None,
+        filters: dict[str, str] | None = None,
     ) -> dict[str, Any] | None:
         dataset_id = self._dataset_id(dataset_id)
-        params = {"$limit": "1"}
+        params: dict[str, str] = {"$limit": "1"}
         if timestamp_field:
-            field = timestamp_field.strip()
-            if not _FIELD_NAME_PATTERN.fullmatch(field):
-                raise ValueError("Timestamp field is not a valid Socrata field")
-            params["$order"] = f"{field} DESC"
+            params["$order"] = f"{self._field(timestamp_field)} DESC"
+        if filters:
+            clauses = [
+                f"{self._field(name)}={self._literal(value)}"
+                for name, value in filters.items()
+            ]
+            params["$where"] = " AND ".join(clauses)
         payload = await self.async_get_json(
             f"/resource/{dataset_id}.json", params=params
         )
-        if not isinstance(payload, list) or not all(
-            isinstance(row, dict) for row in payload
-        ):
+        if not isinstance(payload, list) or not all(isinstance(row, dict) for row in payload):
             raise OpenDataResponseError("Socrata query did not return rows")
         return payload[0] if payload else None
+
+    async def async_sample_rows(
+        self,
+        dataset_id: str,
+        resource_id: str | None = None,
+        *,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        dataset_id = self._dataset_id(dataset_id)
+        payload = await self.async_get_json(
+            f"/resource/{dataset_id}.json",
+            params={"$limit": str(min(max(limit, 1), 200))},
+        )
+        if not isinstance(payload, list) or not all(isinstance(row, dict) for row in payload):
+            raise OpenDataResponseError("Socrata sample query did not return rows")
+        return payload
+
+    async def async_distinct_rows(
+        self,
+        dataset_id: str,
+        resource_id: str | None,
+        identity_field: str,
+        display_field: str | None = None,
+        hierarchy_fields: tuple[str, ...] = (),
+        *,
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        dataset_id = self._dataset_id(dataset_id)
+        fields = [self._field(identity_field)]
+        for name in (display_field, *hierarchy_fields):
+            if name and name not in fields:
+                fields.append(self._field(name))
+        select = ",".join(fields)
+        payload = await self.async_get_json(
+            f"/resource/{dataset_id}.json",
+            params={
+                "$select": f"distinct {select}",
+                "$order": fields[0],
+                "$limit": str(min(max(limit, 1), 1000)),
+            },
+        )
+        if not isinstance(payload, list) or not all(isinstance(row, dict) for row in payload):
+            raise OpenDataResponseError("Socrata distinct query did not return rows")
+        return payload
 
     @staticmethod
     def _normalize_catalog_results(payload: Any) -> list[OpenDataDataset]:
@@ -125,7 +182,6 @@ class SocrataProvider(JsonClient):
     async def async_search_datasets(
         self, query: str, limit: int = 20
     ) -> list[OpenDataDataset]:
-        """Search the Socrata catalog with a bounded result count."""
         bounded_limit = min(max(int(limit), 1), 100)
         payload = await self.async_get_json(
             "/api/catalog/v1",
@@ -138,7 +194,6 @@ class SocrataProvider(JsonClient):
         return self._normalize_catalog_results(payload)[:bounded_limit]
 
     async def async_list_datasets(self, limit: int = 500) -> list[OpenDataDataset]:
-        """Enumerate Socrata catalog pages for the current portal hostname."""
         bounded_limit = min(max(int(limit), 1), 1000)
         page_size = min(100, bounded_limit)
         found: dict[str, OpenDataDataset] = {}
