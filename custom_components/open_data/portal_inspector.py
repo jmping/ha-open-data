@@ -9,8 +9,16 @@ from aiohttp import ClientSession
 
 from .models import OpenDataDataset
 from .providers import async_detect_provider
-from .providers.base import OpenDataProvider, OpenDataResponseError
-from .providers.common import normalize_portal_url
+from .providers.base import (
+    OpenDataConnectionError,
+    OpenDataProvider,
+    OpenDataResponseError,
+)
+from .providers.common import (
+    async_resolve_portal_redirects,
+    normalize_portal_url,
+    portal_origin,
+)
 
 DEFAULT_DISCOVERY_QUERIES = (
     "",
@@ -56,16 +64,44 @@ class InspectedPortal:
 async def async_inspect_portal(
     session: ClientSession, portal_url: str
 ) -> InspectedPortal:
-    """Normalize, validate, detect, and verify a supported public portal."""
-    normalized_url = normalize_portal_url(portal_url)
-    provider_name, provider = await async_detect_provider(session, normalized_url)
-    return InspectedPortal(
-        description=PortalDescription(
-            portal_url=normalized_url,
-            provider=provider_name,
-            capabilities=asdict(provider.capabilities),
-        ),
-        provider=provider,
+    """Resolve aliases/pages, detect the provider, and return its canonical root."""
+    supplied = normalize_portal_url(portal_url)
+    resolved = await async_resolve_portal_redirects(session, supplied)
+
+    candidates: list[str] = []
+    for candidate in (
+        portal_origin(resolved),
+        resolved,
+        portal_origin(supplied),
+        supplied,
+    ):
+        if candidate not in candidates:
+            candidates.append(candidate)
+
+    errors: list[OpenDataConnectionError | OpenDataResponseError] = []
+    for candidate in candidates:
+        try:
+            provider_name, provider = await async_detect_provider(session, candidate)
+        except (OpenDataConnectionError, OpenDataResponseError) as err:
+            errors.append(err)
+            continue
+        canonical_url = provider.portal_url
+        return InspectedPortal(
+            description=PortalDescription(
+                portal_url=canonical_url,
+                provider=provider_name,
+                capabilities=asdict(provider.capabilities),
+            ),
+            provider=provider,
+        )
+
+    connection_error = next(
+        (err for err in errors if isinstance(err, OpenDataConnectionError)), None
+    )
+    if connection_error is not None:
+        raise connection_error
+    raise OpenDataResponseError(
+        "URL did not resolve to a recognizable CKAN or Socrata portal"
     )
 
 
