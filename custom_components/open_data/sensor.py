@@ -17,6 +17,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
     CONF_FIELD_MAPPINGS,
+    CONF_IGNORED_FIELDS,
     CONF_PORTAL_URL,
     CONF_PROFILE_ID,
     CONF_PROVIDER,
@@ -37,11 +38,11 @@ async def async_setup_entry(
     snapshot = coordinator.data
     if snapshot is None:
         return
-    selected = set(entry.options.get(CONF_SELECTED_FIELDS, ()))
-    fields = snapshot.dataset.fields
-    if selected:
-        fields = tuple(field for field in fields if field.name in selected)
 
+    ignored = set(entry.data.get(CONF_IGNORED_FIELDS, ()))
+    choices = tuple(field for field in snapshot.dataset.fields if field.name not in ignored)
+    selected = set(entry.options.get(CONF_SELECTED_FIELDS, ()))
+    fields = tuple(field for field in choices if not selected or field.name in selected)
     mappings = {
         item["source_field"]: item
         for item in entry.data.get(CONF_FIELD_MAPPINGS, [])
@@ -49,17 +50,34 @@ async def async_setup_entry(
         and isinstance(item.get("source_field"), str)
         and isinstance(item.get("canonical_metric"), str)
     }
-    entities: list[SensorEntity] = [OpenDataStatusSensor(entry, coordinator)]
-    entities.extend(
-        OpenDataFieldSensor(
-            entry,
-            coordinator,
-            field.name,
-            field.label,
-            mappings.get(field.name),
+
+    entities: list[SensorEntity] = []
+    if snapshot.records:
+        for record_id in snapshot.records:
+            entities.append(OpenDataStatusSensor(entry, coordinator, record_id))
+            entities.extend(
+                OpenDataFieldSensor(
+                    entry,
+                    coordinator,
+                    field.name,
+                    field.label,
+                    mappings.get(field.name),
+                    record_id,
+                )
+                for field in fields
+            )
+    else:
+        entities.append(OpenDataStatusSensor(entry, coordinator))
+        entities.extend(
+            OpenDataFieldSensor(
+                entry,
+                coordinator,
+                field.name,
+                field.label,
+                mappings.get(field.name),
+            )
+            for field in fields
         )
-        for field in fields
-    )
     async_add_entities(entities)
 
 
@@ -68,7 +86,12 @@ class OpenDataSensorBase(CoordinatorEntity[OpenDataCoordinator], SensorEntity):
 
     _attr_has_entity_name = True
 
-    def __init__(self, entry: ConfigEntry, coordinator: OpenDataCoordinator) -> None:
+    def __init__(
+        self,
+        entry: ConfigEntry,
+        coordinator: OpenDataCoordinator,
+        record_id: str | None = None,
+    ) -> None:
         super().__init__(coordinator)
         snapshot = coordinator.data
         if snapshot is None:
@@ -77,35 +100,57 @@ class OpenDataSensorBase(CoordinatorEntity[OpenDataCoordinator], SensorEntity):
         provider = entry.data[CONF_PROVIDER]
         portal = entry.data[CONF_PORTAL_URL]
         resource = dataset.resource_id or "default"
-        self._identifier = f"{provider}:{portal}:{dataset.dataset_id}:{resource}"
+        base_identifier = f"{provider}:{portal}:{dataset.dataset_id}:{resource}"
+        self._record_id = record_id
+        self._identifier = (
+            f"{base_identifier}:record:{record_id}" if record_id is not None else base_identifier
+        )
         profile_id = entry.data.get(CONF_PROFILE_ID)
-        model = f"Open data {profile_id.replace('_', ' ')}" if profile_id else "Open data dataset"
+        model = (
+            f"Open data {profile_id.replace('_', ' ')}"
+            if profile_id
+            else "Open data dataset"
+        )
+        label = snapshot.record_labels.get(record_id, record_id) if record_id else None
+        device_name = f"{dataset.title} — {label}" if label else dataset.title
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, self._identifier)},
-            name=dataset.title,
+            name=device_name,
             manufacturer=provider.upper(),
             model=model,
             configuration_url=portal,
         )
 
+    def _record_values(self) -> dict[str, Any]:
+        snapshot = self.coordinator.data
+        if snapshot is None:
+            return {}
+        if self._record_id is None:
+            return snapshot.values
+        return snapshot.records.get(self._record_id, {})
+
 
 class OpenDataStatusSensor(OpenDataSensorBase):
-    """Expose whether the dataset returned a row."""
+    """Expose whether the dataset or selected record returned a row."""
 
     _attr_translation_key = "dataset_status"
 
-    def __init__(self, entry: ConfigEntry, coordinator: OpenDataCoordinator) -> None:
-        super().__init__(entry, coordinator)
+    def __init__(
+        self,
+        entry: ConfigEntry,
+        coordinator: OpenDataCoordinator,
+        record_id: str | None = None,
+    ) -> None:
+        super().__init__(entry, coordinator, record_id)
         self._attr_unique_id = f"{self._identifier}:status"
 
     @property
     def native_value(self) -> str:
-        snapshot = self.coordinator.data
-        return "data_available" if snapshot is not None and snapshot.values else "no_data"
+        return "data_available" if self._record_values() else "no_data"
 
 
 class OpenDataFieldSensor(OpenDataSensorBase):
-    """Expose one field from the latest row."""
+    """Expose one field from the latest row for a dataset or selected record."""
 
     def __init__(
         self,
@@ -114,8 +159,9 @@ class OpenDataFieldSensor(OpenDataSensorBase):
         field_name: str,
         field_label: str,
         mapping: dict[str, Any] | None = None,
+        record_id: str | None = None,
     ) -> None:
-        super().__init__(entry, coordinator)
+        super().__init__(entry, coordinator, record_id)
         self._field_name = field_name
         self._attr_name = field_label
         self._attr_unique_id = f"{self._identifier}:{field_name}"
@@ -128,6 +174,7 @@ class OpenDataFieldSensor(OpenDataSensorBase):
             return
         device_class = definition.metadata.get("device_class")
         state_class = definition.metadata.get("state_class")
+        native_unit = definition.metadata.get("native_unit_of_measurement")
         try:
             if device_class:
                 self._attr_device_class = SensorDeviceClass(device_class)
@@ -138,18 +185,19 @@ class OpenDataFieldSensor(OpenDataSensorBase):
                 self._attr_state_class = SensorStateClass(state_class)
         except ValueError:
             pass
+        if native_unit:
+            self._attr_native_unit_of_measurement = native_unit
         self._attr_extra_state_attributes = {
             "canonical_metric": canonical_metric,
             "mapping_method": mapping.get("mapping_method", "synonym"),
             "mapping_confidence": mapping.get("confidence"),
         }
+        if record_id is not None:
+            self._attr_extra_state_attributes["record_id"] = record_id
 
     @property
     def native_value(self) -> Any:
-        snapshot = self.coordinator.data
-        if snapshot is None:
-            return None
-        value = snapshot.values.get(self._field_name)
+        value = self._record_values().get(self._field_name)
         if isinstance(value, (str, int, float, bool)) or value is None:
             return value
         return str(value)[:255]
