@@ -25,6 +25,7 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
         identity_field: str | None = None,
         display_field: str | None = None,
         selected_records: tuple[str, ...] = (),
+        hierarchy_fields: tuple[str, ...] = (),
     ) -> None:
         super().__init__(
             hass,
@@ -39,6 +40,7 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
         self.identity_field = identity_field
         self.display_field = display_field
         self.selected_records = selected_records
+        self.hierarchy_fields = hierarchy_fields
         self.dataset: OpenDataDataset | None = None
         self.record_labels: dict[str, str] = {}
 
@@ -50,16 +52,38 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
             self.resource_id,
             self.identity_field,
             self.display_field,
-            tuple(),
+            self.hierarchy_fields,
             limit=max(100, len(self.selected_records) * 4),
         )
         selected = set(self.selected_records)
+        labels: dict[str, list[str]] = {}
+        contexts: dict[str, tuple[str, ...]] = {}
         for row in rows:
             value = row.get(self.identity_field)
             if value is None or str(value) not in selected:
                 continue
-            label = row.get(self.display_field) if self.display_field else None
-            self.record_labels[str(value)] = str(label) if label not in (None, "") else str(value)
+            record_id = str(value)
+            raw_label = row.get(self.display_field) if self.display_field else None
+            label = str(raw_label) if raw_label not in (None, "") else record_id
+            labels.setdefault(label, []).append(record_id)
+            contexts[record_id] = tuple(
+                str(row[field])
+                for field in self.hierarchy_fields
+                if row.get(field) not in (None, "")
+            )
+            self.record_labels[record_id] = label
+
+        # Labels such as "Precinct 1" are often only unique within their parent
+        # geography. Add available hierarchy context only where it is needed.
+        for label, record_ids in labels.items():
+            if len(record_ids) < 2:
+                continue
+            for record_id in record_ids:
+                context = contexts.get(record_id, ())
+                if context:
+                    self.record_labels[record_id] = f"{label} — {' / '.join(context)}"
+                else:
+                    self.record_labels[record_id] = f"{label} — {record_id}"
 
     async def _async_update_data(self) -> OpenDataSnapshot:
         try:
