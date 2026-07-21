@@ -211,3 +211,46 @@ def test_irrelevant_and_unassigned_fields_are_not_context_or_metrics() -> None:
     assert result.context_fields == ()
     assert result.unassigned_fields == ("constant",)
     assert result.irrelevant_fields == ("internal_id",)
+
+
+def test_multiple_fields_can_share_every_role() -> None:
+    fields = (
+        "station_id", "latitude",
+        "observed_date", "observed_time",
+        "pm25", "pm10",
+        "pollutant", "measurement_type",
+        "vendor", "quality_flag",
+        "internal_id", "import_sequence",
+        "fixed_version", "constant_label",
+    )
+    explicit_roles = {
+        "station_id": "location",
+        "latitude": "location",
+        "observed_date": "time",
+        "observed_time": "time",
+        "pm25": "data",
+        "pm10": "data",
+        "pollutant": "measurement_name",
+        "measurement_type": "measurement_name",
+        "vendor": "descriptive",
+        "quality_flag": "descriptive",
+        "internal_id": "irrelevant",
+        "import_sequence": "irrelevant",
+        "fixed_version": "unassigned",
+        "constant_label": "unassigned",
+    }
+
+    result = roles.classify_field_roles(
+        fields,
+        [{field: index for index, field in enumerate(fields)}],
+        explicit_roles=explicit_roles,
+    )
+
+    assert result.location_fields == ("station_id", "latitude")
+    assert result.time_fields == ("observed_date", "observed_time")
+    assert result.metric_fields == ("pm25", "pm10")
+    assert result.measurement_name_fields == ("pollutant", "measurement_type")
+    assert result.context_fields == ("vendor", "quality_flag")
+    assert result.irrelevant_fields == ("internal_id", "import_sequence")
+    assert result.unassigned_fields == ("fixed_version", "constant_label")
+    assert result.as_assignments() == explicit_roles
