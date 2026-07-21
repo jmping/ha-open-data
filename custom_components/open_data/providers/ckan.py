@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -27,6 +28,7 @@ class CkanProvider(JsonClient):
         supports_streaming=False,
         supports_sample_rows=True,
         supports_distinct_values=True,
+        supports_observation_sampling=True,
     )
 
     async def _action(self, action: str, params: dict[str, str]) -> Any:
@@ -110,13 +112,90 @@ class CkanProvider(JsonClient):
             "datastore_search",
             {
                 "resource_id": dataset.resource_id or "",
-                "limit": str(min(max(limit, 1), 200)),
+                "limit": str(min(max(limit, 1), 1000)),
             },
         )
         records = result.get("records", []) if isinstance(result, dict) else []
         if not isinstance(records, list) or not all(isinstance(row, dict) for row in records):
             raise OpenDataResponseError("CKAN sample query did not return records")
         return records
+
+    async def async_sample_observations(
+        self,
+        dataset_id: str,
+        resource_id: str | None = None,
+        *,
+        entity_field: str | None = None,
+        timestamp_field: str | None = None,
+        entity_limit: int = 20,
+        observations_per_entity: int = 25,
+    ) -> list[dict[str, Any]]:
+        """Sample recent history across multiple CKAN DataStore entities."""
+        dataset = await self.async_get_dataset(dataset_id, resource_id)
+        safe_fields = {field.name for field in dataset.fields}
+        entity_limit = min(max(entity_limit, 1), 50)
+        per_entity = min(max(observations_per_entity, 2), 100)
+        if entity_field and entity_field not in safe_fields:
+            raise ValueError("Entity field is not present in the CKAN resource")
+        if timestamp_field and timestamp_field not in safe_fields:
+            raise ValueError("Timestamp field is not present in the CKAN resource")
+
+        if not entity_field:
+            params = {
+                "resource_id": dataset.resource_id or "",
+                "limit": str(min(entity_limit * per_entity, 1000)),
+            }
+            if timestamp_field:
+                params["sort"] = f'"{timestamp_field}" desc'
+            result = await self._action("datastore_search", params)
+            records = result.get("records", []) if isinstance(result, dict) else []
+            if not isinstance(records, list) or not all(
+                isinstance(row, dict) for row in records
+            ):
+                raise OpenDataResponseError("CKAN observation query did not return records")
+            return records
+
+        quoted_entity = f'"{entity_field}"'
+        sql = (
+            f'SELECT DISTINCT {quoted_entity} FROM "{dataset.resource_id}" '
+            f"WHERE {quoted_entity} IS NOT NULL ORDER BY {quoted_entity} "
+            f"LIMIT {entity_limit}"
+        )
+        result = await self._action("datastore_search_sql", {"sql": sql})
+        entities = result.get("records", []) if isinstance(result, dict) else []
+        if not isinstance(entities, list) or not all(
+            isinstance(row, dict) for row in entities
+        ):
+            raise OpenDataResponseError("CKAN entity sample did not return records")
+
+        semaphore = asyncio.Semaphore(6)
+
+        async def fetch_entity(value: str) -> list[dict[str, Any]]:
+            params = {
+                "resource_id": dataset.resource_id or "",
+                "limit": str(per_entity),
+                "filters": json.dumps({entity_field: value}, separators=(",", ":")),
+            }
+            if timestamp_field:
+                params["sort"] = f'"{timestamp_field}" desc'
+            async with semaphore:
+                page = await self._action("datastore_search", params)
+            records = page.get("records", []) if isinstance(page, dict) else []
+            if not isinstance(records, list) or not all(
+                isinstance(row, dict) for row in records
+            ):
+                raise OpenDataResponseError(
+                    "CKAN per-entity observation query did not return records"
+                )
+            return records
+
+        values = [
+            str(row[entity_field])
+            for row in entities
+            if row.get(entity_field) not in (None, "")
+        ]
+        pages = await asyncio.gather(*(fetch_entity(value) for value in values))
+        return [row for page in pages for row in page]
 
     async def async_distinct_rows(
         self,
