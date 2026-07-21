@@ -7,7 +7,7 @@ import ipaddress
 import json
 import socket
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 from aiohttp import ClientError, ClientResponseError, ClientSession
 
@@ -19,11 +19,12 @@ from .base import (
 
 REQUEST_TIMEOUT = 15
 MAX_JSON_BYTES = 2 * 1024 * 1024
+MAX_REDIRECTS = 5
 USER_AGENT = "Home Assistant Open Data integration"
 
 
 def normalize_portal_url(portal_url: str) -> str:
-    """Normalize and validate a public portal root URL."""
+    """Normalize and validate a public portal URL."""
     value = portal_url.strip().rstrip("/")
     if "://" not in value:
         value = f"https://{value}"
@@ -60,6 +61,16 @@ def normalize_portal_url(portal_url: str) -> str:
     )
 
 
+def portal_origin(portal_url: str) -> str:
+    """Return the scheme and authority for a normalized portal URL."""
+    parsed = urlparse(normalize_portal_url(portal_url))
+    port_suffix = f":{parsed.port}" if parsed.port is not None else ""
+    hostname = parsed.hostname or ""
+    if ":" in hostname:
+        hostname = f"[{hostname}]"
+    return f"{parsed.scheme}://{hostname}{port_suffix}"
+
+
 def _reject_non_public_address(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> None:
     """Reject addresses that are unsafe for an externally supplied portal URL."""
     if not address.is_global:
@@ -84,6 +95,48 @@ async def _validate_public_hostname(hostname: str, port: int) -> None:
         raise OpenDataConnectionError(f"Portal hostname did not resolve: {hostname}")
     for record in records:
         _reject_non_public_address(ipaddress.ip_address(record[4][0]))
+
+
+async def async_validate_public_url(url: str) -> str:
+    """Normalize a URL and verify that its hostname resolves publicly."""
+    normalized = normalize_portal_url(url)
+    parsed = urlparse(normalized)
+    await _validate_public_hostname(
+        parsed.hostname or "", parsed.port or (443 if parsed.scheme == "https" else 80)
+    )
+    return normalized
+
+
+async def async_resolve_portal_redirects(
+    session: ClientSession, portal_url: str
+) -> str:
+    """Safely resolve portal redirects without allowing an SSRF redirect hop."""
+    current = await async_validate_public_url(portal_url)
+    for _ in range(MAX_REDIRECTS + 1):
+        try:
+            async with asyncio.timeout(REQUEST_TIMEOUT):
+                async with session.get(
+                    current,
+                    headers={"User-Agent": USER_AGENT},
+                    allow_redirects=False,
+                ) as response:
+                    if response.status < 300 or response.status >= 400:
+                        return normalize_portal_url(str(response.url))
+                    location = response.headers.get("Location")
+                    if not location:
+                        raise OpenDataResponseError(
+                            "Portal returned a redirect without a destination"
+                        )
+                    current = await async_validate_public_url(
+                        urljoin(current, location)
+                    )
+        except (OpenDataSecurityError, OpenDataResponseError):
+            raise
+        except (ClientError, TimeoutError) as err:
+            raise OpenDataConnectionError(
+                f"Unable to resolve portal redirect: {current}"
+            ) from err
+    raise OpenDataResponseError("Portal returned too many redirects")
 
 
 class JsonClient:
