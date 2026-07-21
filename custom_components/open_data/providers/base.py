@@ -39,6 +39,8 @@ class ProviderCapabilities:
     supports_incremental_updates: bool = False
     supports_statistics: bool = False
     supports_streaming: bool = False
+    supports_sample_rows: bool = False
+    supports_distinct_values: bool = False
 
 
 class OpenDataProvider(ABC):
@@ -64,8 +66,33 @@ class OpenDataProvider(ABC):
         dataset_id: str,
         resource_id: str | None = None,
         timestamp_field: str | None = None,
+        filters: dict[str, str] | None = None,
     ) -> dict[str, Any] | None:
-        """Return the latest row."""
+        """Return the latest row, optionally constrained to one selected record."""
+
+    async def async_sample_rows(
+        self,
+        dataset_id: str,
+        resource_id: str | None = None,
+        *,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """Return bounded sample rows for structural analysis."""
+        row = await self.async_latest_row(dataset_id, resource_id)
+        return [row] if row else []
+
+    async def async_distinct_rows(
+        self,
+        dataset_id: str,
+        resource_id: str | None,
+        identity_field: str,
+        display_field: str | None = None,
+        hierarchy_fields: tuple[str, ...] = (),
+        *,
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        """Return bounded distinct identity/display combinations."""
+        return await self.async_sample_rows(dataset_id, resource_id, limit=limit)
 
     async def async_search_datasets(
         self, query: str, limit: int = 20
