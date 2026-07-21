@@ -15,10 +15,15 @@ class CkanProvider(JsonClient):
     provider_name = "CKAN"
     capabilities = ProviderCapabilities(
         supports_search=True,
+        supports_catalog_paging=True,
         supports_schema=True,
         supports_latest_row=True,
+        supports_timeseries=True,
+        supports_station_filtering=True,
         supports_spatial_queries=False,
         supports_incremental_updates=False,
+        supports_statistics=True,
+        supports_streaming=False,
     )
 
     async def _action(self, action: str, params: dict[str, str]) -> Any:
