@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from .semantic_observations import SemanticObservation
+
 
 @dataclass(slots=True, frozen=True)
 class OpenDataField:
@@ -36,3 +38,4 @@ class OpenDataSnapshot:
     values: dict[str, Any]
     records: dict[str, dict[str, Any]] = field(default_factory=dict)
     record_labels: dict[str, str] = field(default_factory=dict)
+    observations: dict[str, SemanticObservation] = field(default_factory=dict)
