@@ -12,6 +12,7 @@ from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
+from .analyzer import dataset_explorer_summary
 from .const import (
     CONF_DATASET_ID,
     CONF_PORTAL_URL,
@@ -33,9 +34,11 @@ CONF_QUERY = "query"
 CONF_ENTRY_ID = "entry_id"
 CONF_PORTAL_ID = "portal_id"
 CONF_METADATA = "metadata"
+CONF_SAMPLE_LIMIT = "sample_limit"
 
 _PORTAL_SCHEMA = cv.string
 _LIMIT_SCHEMA = vol.All(vol.Coerce(int), vol.Range(min=1, max=100))
+_SAMPLE_LIMIT_SCHEMA = vol.All(vol.Coerce(int), vol.Range(min=10, max=200))
 
 
 def _dataset_dict(dataset: Any, *, include_raw: bool = False) -> dict[str, Any]:
@@ -114,9 +117,15 @@ async def async_register_services(hass: HomeAssistant, feedback: FeedbackRegistr
         dataset = await inspected.provider.async_get_dataset(
             call.data[CONF_DATASET_ID], call.data.get(CONF_RESOURCE_ID)
         )
+        sample_rows = await inspected.provider.async_sample_rows(
+            dataset.dataset_id,
+            dataset.resource_id,
+            limit=call.data[CONF_SAMPLE_LIMIT],
+        )
         return {
             **inspected.description.as_dict(),
             "dataset": _dataset_dict(dataset, include_raw=True),
+            "analysis": dataset_explorer_summary(dataset, sample_rows),
         }
 
     async def async_refresh_entry(call: ServiceCall) -> dict[str, Any]:
@@ -178,6 +187,7 @@ async def async_register_services(hass: HomeAssistant, feedback: FeedbackRegistr
                 vol.Required(CONF_PORTAL_URL): _PORTAL_SCHEMA,
                 vol.Required(CONF_DATASET_ID): cv.string,
                 vol.Optional(CONF_RESOURCE_ID): cv.string,
+                vol.Optional(CONF_SAMPLE_LIMIT, default=100): _SAMPLE_LIMIT_SCHEMA,
             }
         ),
         supports_response=SupportsResponse.ONLY,
