@@ -10,6 +10,7 @@ import unicodedata
 from typing import Any
 
 from ..models import OpenDataDataset, OpenDataField
+from .international_aliases import METRIC_ALIASES, PROFILE_TERMS
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,8 +61,8 @@ def normalize_identifier(value: str) -> str:
 
     NFKC preserves meaningful non-Latin scripts while folding compatibility forms
     such as full-width Latin characters. Punctuation and whitespace become a
-    single underscore, so Arabic, Hebrew, CJK, and accented European aliases can
-    participate in the same exact-match ontology as English identifiers.
+    single underscore, so non-Latin and accented aliases participate in the same
+    exact-match ontology as English identifiers.
     """
     normalized = unicodedata.normalize("NFKC", value).casefold()
     parts: list[str] = []
@@ -79,7 +80,7 @@ def normalize_identifier(value: str) -> str:
 
 @lru_cache(maxsize=1)
 def _load_ontology() -> tuple[dict[str, MetricDefinition], tuple[ProfileDefinition, ...]]:
-    """Load and validate the bundled JSON ontology once per process."""
+    """Load and validate the bundled ontology and supplemental language packs."""
     ontology_path = files(__package__).joinpath("profiles.json")
     payload = json.loads(ontology_path.read_text(encoding="utf-8"))
     if payload.get("version") != 1:
@@ -90,6 +91,10 @@ def _load_ontology() -> tuple[dict[str, MetricDefinition], tuple[ProfileDefiniti
         aliases = {
             normalize_identifier(metric_id),
             *(normalize_identifier(item) for item in raw.get("aliases", [])),
+            *(
+                normalize_identifier(item)
+                for item in METRIC_ALIASES.get(metric_id, ())
+            ),
         }
         metadata = {key: value for key, value in raw.items() if key != "aliases"}
         metrics[metric_id] = MetricDefinition(
@@ -104,7 +109,10 @@ def _load_ontology() -> tuple[dict[str, MetricDefinition], tuple[ProfileDefiniti
             title=item["title"],
             metadata_terms=tuple(
                 unicodedata.normalize("NFKC", term).casefold()
-                for term in item.get("metadata_terms", [])
+                for term in (
+                    *item.get("metadata_terms", []),
+                    *PROFILE_TERMS.get(item["id"], ()),
+                )
             ),
             core_metrics=tuple(item.get("core", [])),
             support_metrics=tuple(item.get("support", [])),
