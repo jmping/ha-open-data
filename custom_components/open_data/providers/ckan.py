@@ -30,11 +30,14 @@ class CkanProvider(JsonClient):
         return payload.get("result")
 
     async def async_verify_portal(self) -> None:
-        """Require a valid CKAN status response before using the portal."""
+        """Require a successful CKAN status action before using the portal.
+
+        CKAN-compatible hosted platforms do not all include ``site_title`` in
+        ``status_show``. The Action API envelope is already validated by
+        :meth:`_action`, so any mapping result is sufficient verification.
+        """
         result = await self._action("status_show", {})
-        if not isinstance(result, dict) or not isinstance(
-            result.get("site_title"), str
-        ):
+        if not isinstance(result, dict):
             raise OpenDataResponseError(
                 "Host did not return a recognizable CKAN status response"
             )
