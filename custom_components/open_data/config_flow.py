@@ -26,25 +26,14 @@ from .const import (
 )
 from .discovery import DatasetCandidate, rank_datasets
 from .models import OpenDataDataset
-from .providers import async_detect_provider, create_provider
+from .portal_inspector import async_discover_catalog, async_inspect_portal
+from .providers import create_provider
 from .providers.base import (
     OpenDataConnectionError,
     OpenDataResponseError,
     OpenDataSecurityError,
 )
-from .providers.common import normalize_portal_url
 
-_DISCOVERY_QUERIES = (
-    "",
-    "environment",
-    "air quality",
-    "weather",
-    "rainfall",
-    "water",
-    "temperature",
-    "climate",
-    "energy",
-)
 _DISCOVERY_LIMIT = 50
 
 
@@ -73,8 +62,9 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         if user_input is not None:
             try:
-                self._portal_url = normalize_portal_url(user_input[CONF_PORTAL_URL])
-                datasets = await self._async_discover_catalog()
+                datasets = await self._async_discover_catalog(
+                    user_input[CONF_PORTAL_URL]
+                )
             except OpenDataSecurityError:
                 errors["base"] = "invalid_dataset"
             except OpenDataConnectionError:
@@ -139,28 +129,19 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             },
         )
 
-    async def _async_discover_catalog(self) -> list[OpenDataDataset]:
-        """Detect the provider and search broad catalog slices."""
-        if self._portal_url is None:
-            raise ValueError("Discovery flow is missing portal state")
-        self._provider_name, provider = await async_detect_provider(
-            async_get_clientsession(self.hass), self._portal_url
+    async def _async_discover_catalog(
+        self, portal_url: str
+    ) -> list[OpenDataDataset]:
+        """Inspect the portal and search broad catalog slices."""
+        inspected = await async_inspect_portal(
+            async_get_clientsession(self.hass), portal_url
         )
-        found: dict[str, OpenDataDataset] = {}
-        last_error: OpenDataResponseError | None = None
-        for query in _DISCOVERY_QUERIES:
-            try:
-                datasets = await provider.async_search_datasets(
-                    query, limit=_DISCOVERY_LIMIT
-                )
-            except OpenDataResponseError as err:
-                last_error = err
-                continue
-            for dataset in datasets:
-                found.setdefault(dataset.dataset_id, dataset)
-        if not found and last_error is not None:
-            raise last_error
-        return list(found.values())
+        self._portal_url = inspected.description.portal_url
+        self._provider_name = inspected.description.provider
+        datasets, _errors = await async_discover_catalog(
+            inspected, limit=_DISCOVERY_LIMIT
+        )
+        return datasets
 
     async def _async_create_dataset_entry(
         self, discovered: OpenDataDataset
