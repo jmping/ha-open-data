@@ -1,4 +1,4 @@
-"""Tests for the adaptive history-aware analysis pipeline."""
+"""Tests for adaptive analysis, entity estimation, and retrieval planning."""
 
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
@@ -75,7 +75,7 @@ class FakeProvider(base.OpenDataProvider):
         observations_per_entity=25,
     ):
         self.observation_requests.append(
-            (entity_field, timestamp_field, entity_limit * observations_per_entity)
+            (entity_field, timestamp_field, entity_limit, observations_per_entity)
         )
         return [
             {
@@ -104,19 +104,19 @@ class ExpandingProvider(FakeProvider):
         observations_per_entity=25,
     ):
         requested = entity_limit * observations_per_entity
-        self.observation_requests.append((entity_field, timestamp_field, requested))
+        self.observation_requests.append(
+            (entity_field, timestamp_field, entity_limit, observations_per_entity)
+        )
         analyte_count = 2 if requested <= 200 else 12 if requested <= 1000 else 14
-        rows = []
-        for index in range(requested):
-            rows.append(
-                {
-                    "site_id": f"S{index % 20}",
-                    "sample_date": f"2026-01-{(index % 28) + 1:02d}",
-                    "analyte": f"A{index % analyte_count}",
-                    "result": float(index),
-                }
-            )
-        return rows
+        return [
+            {
+                "site_id": f"S{index % 20}",
+                "sample_date": f"2026-01-{(index % 28) + 1:02d}",
+                "analyte": f"A{index % analyte_count}",
+                "result": float(index),
+            }
+            for index in range(requested)
+        ]
 
 
 def _dataset() -> OpenDataDataset:
@@ -132,32 +132,85 @@ def _dataset() -> OpenDataDataset:
     )
 
 
-def test_pipeline_uses_first_pass_candidates_for_historical_sampling() -> None:
+def test_random_sample_with_repeated_entities_estimates_near_observed() -> None:
+    rows = [
+        {"station": f"S{index % 73}"}
+        for index in range(1000)
+    ]
+
+    estimate = pipeline.estimate_entity_population(rows, "station")
+
+    assert estimate.observed_entities == 73
+    assert estimate.estimated_entities == 73
+    assert estimate.singletons == 0
+    assert estimate.confidence == 1.0
+
+
+def test_singleton_tail_increases_population_estimate() -> None:
+    rows = []
+    rows.extend({"station": f"common-{index % 20}"} for index in range(200))
+    rows.extend({"station": f"rare-{index}"} for index in range(10))
+
+    estimate = pipeline.estimate_entity_population(rows, "station")
+
+    assert estimate.observed_entities == 30
+    assert estimate.singletons == 10
+    assert estimate.estimated_entities > estimate.observed_entities
+
+
+def test_retrieval_plan_scales_by_entities_and_dimensions() -> None:
+    dataset = _dataset()
+    rows = [
+        {
+            "site_id": f"S{index % 10}",
+            "sample_date": f"2026-01-{(index % 28) + 1:02d}",
+            "analyte": f"A{index % 4}",
+            "result": float(index),
+        }
+        for index in range(400)
+    ]
+    model = pipeline.analyze_observations(dataset, rows)
+
+    population, plan = pipeline.build_retrieval_plan(
+        model, rows, target_observations_per_entity=25
+    )
+
+    assert population.estimated_entities == 10
+    assert plan.dimension_multiplier == 4
+    assert plan.target_rows == 1000
+    assert plan.entity_limit == 10
+    assert plan.observations_per_entity == 100
+
+
+def test_pipeline_uses_estimated_population_for_final_retrieval() -> None:
     import asyncio
 
     provider = FakeProvider()
     result = asyncio.run(pipeline.async_analyze_dataset(provider, _dataset()))
 
     assert provider.observation_requests[0][:2] == ("site_id", "sample_date")
-    assert provider.observation_requests[0][2] >= 200
-    assert result.initial_row_count == 1
-    assert result.historical_row_count == 7
+    final_request = provider.observation_requests[-1]
+    assert final_request[2] == result.sampling.entity_population.estimated_entities
+    assert final_request[3] == result.sampling.retrieval_plan.observations_per_entity
     assert result.observations.shape.value == "long"
-    assert result.observations.metric_dimension_fields == ("analyte",)
-    assert result.observations.value_fields == ("result",)
-    assert result.sampling.converged is True
     assert result.sampling.stopped_reason == "provider_exhausted"
+    assert result.sampling.imported_row_count == 8
 
 
-def test_pipeline_escalates_to_deep_sample_when_metric_granularity_expands() -> None:
+def test_pipeline_escalates_when_metric_granularity_expands() -> None:
     import asyncio
 
     provider = ExpandingProvider()
-    result = asyncio.run(pipeline.async_analyze_dataset(provider, _dataset()))
+    result = asyncio.run(
+        pipeline.async_analyze_dataset(
+            provider,
+            _dataset(),
+            max_import_rows=20000,
+        )
+    )
 
-    requested = [item[2] for item in provider.observation_requests]
-    assert requested == [200, 1000, 20000]
+    analysis_requests = [entity_limit * per_entity for _, _, entity_limit, per_entity in provider.observation_requests[:-1]]
+    assert analysis_requests == [200, 1000, 20000]
     assert len(result.sampling.stages) == 3
     assert result.sampling.stages[1].metric_value_count > result.sampling.stages[0].metric_value_count
-    assert result.sampling.requested_row_cap == 20000
-    assert result.sampling.retrieved_row_count >= 20000
+    assert result.sampling.retrieval_plan.target_rows <= 20000
