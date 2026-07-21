@@ -1,4 +1,4 @@
-"""Tests for the two-pass history-aware analysis pipeline."""
+"""Tests for the adaptive history-aware analysis pipeline."""
 
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
@@ -41,7 +41,7 @@ class FakeProvider(base.OpenDataProvider):
     portal_url = "https://example.test"
 
     def __init__(self) -> None:
-        self.observation_request = None
+        self.observation_requests = []
 
     async def async_verify_portal(self) -> None:
         return None
@@ -74,7 +74,9 @@ class FakeProvider(base.OpenDataProvider):
         entity_limit=20,
         observations_per_entity=25,
     ):
-        self.observation_request = (entity_field, timestamp_field)
+        self.observation_requests.append(
+            (entity_field, timestamp_field, entity_limit * observations_per_entity)
+        )
         return [
             {
                 "site_id": site,
@@ -88,10 +90,37 @@ class FakeProvider(base.OpenDataProvider):
         ]
 
 
-def test_pipeline_uses_first_pass_candidates_for_historical_sampling() -> None:
-    import asyncio
+class ExpandingProvider(FakeProvider):
+    """Return increasing lower-level metric diversity at each requested stage."""
 
-    dataset = OpenDataDataset(
+    async def async_sample_observations(
+        self,
+        dataset_id,
+        resource_id=None,
+        *,
+        entity_field=None,
+        timestamp_field=None,
+        entity_limit=20,
+        observations_per_entity=25,
+    ):
+        requested = entity_limit * observations_per_entity
+        self.observation_requests.append((entity_field, timestamp_field, requested))
+        analyte_count = 2 if requested <= 200 else 12 if requested <= 1000 else 14
+        rows = []
+        for index in range(requested):
+            rows.append(
+                {
+                    "site_id": f"S{index % 20}",
+                    "sample_date": f"2026-01-{(index % 28) + 1:02d}",
+                    "analyte": f"A{index % analyte_count}",
+                    "result": float(index),
+                }
+            )
+        return rows
+
+
+def _dataset() -> OpenDataDataset:
+    return OpenDataDataset(
         dataset_id="pfas",
         title="PFAS Samples",
         fields=(
@@ -101,13 +130,34 @@ def test_pipeline_uses_first_pass_candidates_for_historical_sampling() -> None:
             OpenDataField("result", "Result"),
         ),
     )
+
+
+def test_pipeline_uses_first_pass_candidates_for_historical_sampling() -> None:
+    import asyncio
+
     provider = FakeProvider()
+    result = asyncio.run(pipeline.async_analyze_dataset(provider, _dataset()))
 
-    result = asyncio.run(pipeline.async_analyze_dataset(provider, dataset))
-
-    assert provider.observation_request == ("site_id", "sample_date")
+    assert provider.observation_requests[0][:2] == ("site_id", "sample_date")
+    assert provider.observation_requests[0][2] >= 200
     assert result.initial_row_count == 1
-    assert result.historical_row_count == 8
+    assert result.historical_row_count == 7
     assert result.observations.shape.value == "long"
     assert result.observations.metric_dimension_fields == ("analyte",)
     assert result.observations.value_fields == ("result",)
+    assert result.sampling.converged is True
+    assert result.sampling.stopped_reason == "provider_exhausted"
+
+
+def test_pipeline_escalates_to_deep_sample_when_metric_granularity_expands() -> None:
+    import asyncio
+
+    provider = ExpandingProvider()
+    result = asyncio.run(pipeline.async_analyze_dataset(provider, _dataset()))
+
+    requested = [item[2] for item in provider.observation_requests]
+    assert requested == [200, 1000, 20000]
+    assert len(result.sampling.stages) == 3
+    assert result.sampling.stages[1].metric_value_count > result.sampling.stages[0].metric_value_count
+    assert result.sampling.requested_row_cap == 20000
+    assert result.sampling.retrieved_row_count >= 20000
