@@ -6,7 +6,6 @@ import asyncio
 import json
 import re
 from typing import Any
-from urllib.parse import urlparse
 
 from aiohttp import ClientError, ClientResponseError
 
@@ -26,7 +25,9 @@ from .common import (
 )
 
 _FIELD_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-_SERVICE_PATTERN = re.compile(r"/(?:FeatureServer|MapServer)(?:/\d+)?/?$", re.IGNORECASE)
+_SERVICE_PATTERN = re.compile(
+    r"/(?:FeatureServer|MapServer)(?:/\d+)?/?$", re.IGNORECASE
+)
 
 
 class ArcGisHubProvider(JsonClient):
@@ -134,10 +135,11 @@ class ArcGisHubProvider(JsonClient):
             return None
         raw = dict(item)
         raw["arcgis_service_urls"] = service_urls
+        description = item.get("description")
         return OpenDataDataset(
             dataset_id=identifier,
             title=title,
-            description=item.get("description") if isinstance(item.get("description"), str) else None,
+            description=description if isinstance(description, str) else None,
             resource_id=service_urls[0],
             raw=raw,
         )
@@ -195,7 +197,11 @@ class ArcGisHubProvider(JsonClient):
             if isinstance(metadata, dict) and isinstance(metadata.get("fields"), list):
                 return url
             layers = metadata.get("layers", []) if isinstance(metadata, dict) else []
-            if layers and isinstance(layers[0], dict) and isinstance(layers[0].get("id"), int):
+            if (
+                layers
+                and isinstance(layers[0], dict)
+                and isinstance(layers[0].get("id"), int)
+            ):
                 return f"{url}/{layers[0]['id']}"
         raise OpenDataResponseError("ArcGIS dataset has no queryable feature layer")
 
@@ -245,7 +251,9 @@ class ArcGisHubProvider(JsonClient):
             raise OpenDataResponseError("ArcGIS query did not return features")
         rows: list[dict[str, Any]] = []
         for feature in features:
-            if not isinstance(feature, dict) or not isinstance(feature.get("attributes"), dict):
+            if not isinstance(feature, dict) or not isinstance(
+                feature.get("attributes"), dict
+            ):
                 continue
             row = dict(feature["attributes"])
             if isinstance(feature.get("geometry"), dict):
@@ -267,7 +275,11 @@ class ArcGisHubProvider(JsonClient):
                 escaped = str(value).replace("'", "''")
                 clauses.append(f"{self._field(name)}='{escaped}'")
             where = " AND ".join(clauses)
-        params = {"where": where, "resultRecordCount": "1", "returnGeometry": "true"}
+        params = {
+            "where": where,
+            "resultRecordCount": "1",
+            "returnGeometry": "true",
+        }
         if timestamp_field:
             params["orderByFields"] = f"{self._field(timestamp_field)} DESC"
         rows = await self._query(dataset_id, resource_id, params)
@@ -321,5 +333,6 @@ class ArcGisHubProvider(JsonClient):
         return [
             dict(feature["attributes"])
             for feature in features
-            if isinstance(feature, dict) and isinstance(feature.get("attributes"), dict)
+            if isinstance(feature, dict)
+            and isinstance(feature.get("attributes"), dict)
         ]
