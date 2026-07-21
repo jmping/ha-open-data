@@ -7,6 +7,7 @@ import re
 from typing import Any, Iterable
 
 from .models import OpenDataDataset
+from .ontology import FieldMapping, match_dataset_profile
 
 _ENVIRONMENT_TERMS: dict[str, int] = {
     "air quality": 35,
@@ -69,6 +70,9 @@ class DatasetCandidate:
     dataset: OpenDataDataset
     score: int
     reasons: tuple[str, ...]
+    profile_id: str | None = None
+    profile_confidence: float = 0.0
+    field_mappings: tuple[FieldMapping, ...] = ()
 
 
 def _text_from_raw(raw: dict[str, Any]) -> str:
@@ -123,7 +127,26 @@ def score_dataset(dataset: OpenDataDataset) -> DatasetCandidate:
                 score += weight
                 reasons.append(f"field:{term}")
 
-    return DatasetCandidate(dataset=dataset, score=score, reasons=tuple(dict.fromkeys(reasons)))
+    profile = match_dataset_profile(dataset)
+    if profile is not None:
+        profile_boost = round(profile.confidence * (55 if dataset.fields else 30))
+        score += profile_boost
+        reasons.insert(0, f"profile:{profile.profile_id} {profile.confidence:.0%}")
+        reasons.extend(profile.reasons[:3])
+        return DatasetCandidate(
+            dataset=dataset,
+            score=score,
+            reasons=tuple(dict.fromkeys(reasons)),
+            profile_id=profile.profile_id,
+            profile_confidence=profile.confidence,
+            field_mappings=profile.mappings,
+        )
+
+    return DatasetCandidate(
+        dataset=dataset,
+        score=score,
+        reasons=tuple(dict.fromkeys(reasons)),
+    )
 
 
 def rank_datasets(
