@@ -20,6 +20,7 @@ CONF_DISPLAY_FIELD = "display_field"
 CONF_SELECTED_RECORDS = "selected_records"
 CONF_DATASET_KIND = "dataset_kind"
 CONF_IGNORED_FIELDS = "ignored_fields"
+CONF_METRIC_FIELDS = "metric_fields"
 
 PROVIDER_SOCRATA = "socrata"
 PROVIDER_CKAN = "ckan"
