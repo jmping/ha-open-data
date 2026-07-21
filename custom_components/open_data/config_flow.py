@@ -19,6 +19,7 @@ from .const import (
     CONF_DISPLAY_FIELD,
     CONF_DISPLAY_FIELDS,
     CONF_FIELD_MAPPINGS,
+    CONF_HIERARCHY_FIELDS,
     CONF_IDENTITY_FIELD,
     CONF_IDENTITY_FIELDS,
     CONF_IGNORED_FIELDS,
@@ -48,6 +49,7 @@ _DISCOVERY_LIMIT = 50
 _CATALOG_LIMIT = 500
 _VALIDATION_LIMIT = 150
 _RECORD_LIMIT = 500
+_AUTO_RECORD_LIMIT = 100
 CONF_DATASET_IDS = "dataset_ids"
 CONF_TITLE = "title"
 
@@ -228,6 +230,7 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             CONF_DISPLAY_FIELDS: list(structure.display_fields),
             CONF_TIMESTAMP_FIELDS: list(structure.timestamp_fields),
             CONF_LOCATION_FIELDS: list(structure.location_fields),
+            CONF_HIERARCHY_FIELDS: list(structure.hierarchy_fields),
         }
         if dataset.resource_id:
             data[CONF_RESOURCE_ID] = dataset.resource_id
@@ -248,6 +251,21 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 }
                 for mapping in candidate.field_mappings
             ]
+
+        # Import a useful set of inferred entities immediately. The options flow
+        # presents the larger discovered set so users can pare it down or expand it.
+        if structure.identity_field:
+            rows = await provider.async_distinct_rows(
+                dataset.dataset_id,
+                dataset.resource_id,
+                structure.identity_field,
+                structure.display_field,
+                structure.hierarchy_fields,
+                limit=_AUTO_RECORD_LIMIT,
+            )
+            records = build_selectable_records(rows, structure)
+            data[CONF_SELECTED_RECORDS] = [record.value for record in records]
+
         return {"unique_id": unique_id, CONF_TITLE: dataset.title, "data": data}
 
     @staticmethod
@@ -301,6 +319,9 @@ class OpenDataOptionsFlow(config_entries.OptionsFlow):
         identity_fields = list(self._config_entry.data.get(CONF_IDENTITY_FIELDS, ()))
         display_fields = list(self._config_entry.data.get(CONF_DISPLAY_FIELDS, ()))
         timestamp_fields = list(self._config_entry.data.get(CONF_TIMESTAMP_FIELDS, ()))
+        hierarchy_fields = tuple(
+            self._config_entry.data.get(CONF_HIERARCHY_FIELDS, ())
+        )
         identity = self._config_entry.options.get(
             CONF_IDENTITY_FIELD, self._config_entry.data.get(CONF_IDENTITY_FIELD)
         )
@@ -330,7 +351,7 @@ class OpenDataOptionsFlow(config_entries.OptionsFlow):
                 dataset.resource_id,
                 identity,
                 display,
-                tuple(),
+                hierarchy_fields,
                 limit=_RECORD_LIMIT,
             )
             structure = DatasetStructure(
@@ -342,15 +363,21 @@ class OpenDataOptionsFlow(config_entries.OptionsFlow):
                 timestamp_field=timestamp,
                 geometry_field=None,
                 geometry_type=None,
-                hierarchy_fields=tuple(),
+                hierarchy_fields=hierarchy_fields,
                 metric_fields=tuple(metrics),
                 ignored_fields=tuple(ignored),
             )
             records = build_selectable_records(rows, structure)
             record_choices = {record.value: record.label for record in records}
             if record_choices:
+                configured_records = self._config_entry.options.get(
+                    CONF_SELECTED_RECORDS,
+                    self._config_entry.data.get(CONF_SELECTED_RECORDS),
+                )
                 current_records = list(
-                    self._config_entry.options.get(CONF_SELECTED_RECORDS, ())
+                    configured_records
+                    if configured_records is not None
+                    else record_choices.keys()
                 )
                 schema[
                     vol.Optional(CONF_SELECTED_RECORDS, default=current_records)
