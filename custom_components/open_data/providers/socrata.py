@@ -36,6 +36,7 @@ class SocrataProvider(JsonClient):
         supports_sample_rows=True,
         supports_distinct_values=True,
         supports_observation_sampling=True,
+        supports_entity_observation_retrieval=True,
     )
 
     @property
@@ -162,6 +163,39 @@ class SocrataProvider(JsonClient):
         dataset_id = self._dataset_id(dataset_id)
         return await self._paged_resource_rows(dataset_id, limit=limit)
 
+    async def async_fetch_observations(
+        self,
+        dataset_id: str,
+        resource_id: str | None = None,
+        *,
+        entity_field: str,
+        entity_values: tuple[str, ...],
+        timestamp_field: str | None = None,
+        observations_per_entity: int = 25,
+    ) -> list[dict[str, Any]]:
+        """Retrieve history for exactly the requested Socrata entities."""
+        dataset_id = self._dataset_id(dataset_id)
+        identity = self._field(entity_field)
+        per_entity = min(
+            max(int(observations_per_entity), 1), _MAX_OBSERVATIONS_PER_ENTITY
+        )
+        values = tuple(dict.fromkeys(str(value) for value in entity_values))[
+            :_MAX_ENTITY_REQUEST
+        ]
+        semaphore = asyncio.Semaphore(6)
+
+        async def fetch_entity(value: str) -> list[dict[str, Any]]:
+            params = {"$where": f"{identity}={self._literal(value)}"}
+            if timestamp_field:
+                params["$order"] = f"{self._field(timestamp_field)} DESC"
+            async with semaphore:
+                return await self._paged_resource_rows(
+                    dataset_id, limit=per_entity, params=params
+                )
+
+        pages = await asyncio.gather(*(fetch_entity(value) for value in values))
+        return [row for page in pages for row in page]
+
     async def async_sample_observations(
         self,
         dataset_id: str,
@@ -199,27 +233,19 @@ class SocrataProvider(JsonClient):
                 "$order": identity,
             },
         )
-
-        semaphore = asyncio.Semaphore(6)
-
-        async def fetch_entity(value: str) -> list[dict[str, Any]]:
-            params = {"$where": f"{identity}={self._literal(value)}"}
-            if timestamp_field:
-                params["$order"] = f"{self._field(timestamp_field)} DESC"
-            async with semaphore:
-                return await self._paged_resource_rows(
-                    dataset_id,
-                    limit=per_entity,
-                    params=params,
-                )
-
-        values = [
+        values = tuple(
             str(row[entity_field])
             for row in entities
             if row.get(entity_field) not in (None, "")
-        ]
-        pages = await asyncio.gather(*(fetch_entity(value) for value in values))
-        return [row for page in pages for row in page]
+        )
+        return await self.async_fetch_observations(
+            dataset_id,
+            resource_id,
+            entity_field=entity_field,
+            entity_values=values,
+            timestamp_field=timestamp_field,
+            observations_per_entity=per_entity,
+        )
 
     async def async_distinct_rows(
         self,
