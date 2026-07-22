@@ -94,6 +94,25 @@ class OpenDataProvider(ABC):
         """Return bounded distinct identity/display combinations."""
         return await self.async_sample_rows(dataset_id, resource_id, limit=limit)
 
+    async def async_observation_rows(
+        self,
+        dataset_id: str,
+        resource_id: str | None,
+        timestamp_field: str | None,
+        filters: dict[str, str] | None = None,
+        *,
+        limit: int = 250,
+    ) -> list[dict[str, Any]]:
+        """Return a bounded observation window for wide or long materialization."""
+        rows = await self.async_sample_rows(dataset_id, resource_id, limit=limit)
+        if not filters:
+            return rows
+        return [
+            row
+            for row in rows
+            if all(str(row.get(field)) == value for field, value in filters.items())
+        ]
+
     async def async_search_datasets(
         self, query: str, limit: int = 20
     ) -> list[OpenDataDataset]:

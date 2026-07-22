@@ -160,6 +160,31 @@ class SocrataProvider(JsonClient):
             raise OpenDataResponseError("Socrata sample query did not return rows")
         return payload
 
+    async def async_observation_rows(
+        self,
+        dataset_id: str,
+        resource_id: str | None,
+        timestamp_field: str | None,
+        filters: dict[str, str] | None = None,
+        *,
+        limit: int = 250,
+    ) -> list[dict[str, Any]]:
+        dataset_id = self._dataset_id(dataset_id)
+        params: dict[str, str] = {"$limit": str(min(max(limit, 1), 500))}
+        if timestamp_field:
+            params["$order"] = f"{self._field(timestamp_field)} DESC"
+        if filters:
+            params["$where"] = " AND ".join(
+                f"{self._field(name)}={self._literal(value)}"
+                for name, value in filters.items()
+            )
+        payload = await self.async_get_json(
+            f"/resource/{dataset_id}.json", params=params
+        )
+        if not isinstance(payload, list) or not all(isinstance(row, dict) for row in payload):
+            raise OpenDataResponseError("Socrata observation query did not return rows")
+        return payload
+
     async def async_distinct_rows(
         self,
         dataset_id: str,

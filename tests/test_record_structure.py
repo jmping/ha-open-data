@@ -80,3 +80,78 @@ def test_inactive_fields_cannot_be_used_in_keys_or_labels() -> None:
 def test_unit_label_requires_a_unit_key() -> None:
     with pytest.raises(ValueError, match="without a unit key"):
         structure.build_record_structure(unit_label_fields=("station_name",))
+
+
+def test_composite_selections_round_trip_to_provider_filters() -> None:
+    configured = structure.build_record_structure(
+        parent_levels=(
+            {
+                "name": "site",
+                "key_fields": ("city", "site_id"),
+                "label_fields": ("city_name", "site_name"),
+            },
+        ),
+        unit_key_fields=("station_id",),
+        unit_label_fields=("station_name",),
+    )
+    selections = structure.build_record_selections(
+        [
+            {
+                "city": "AA",
+                "site_id": 4,
+                "station_id": "AQ-1",
+                "city_name": "Ann Arbor",
+                "site_name": "Downtown",
+                "station_name": "Liberty",
+            },
+            {
+                "city": "AA",
+                "site_id": 4,
+                "station_id": "AQ-1",
+                "city_name": "Ann Arbor",
+                "site_name": "Downtown",
+                "station_name": "Liberty",
+            },
+        ],
+        configured,
+    )
+
+    assert len(selections) == 1
+    selected = selections[0]
+    assert selected.label == "Ann Arbor / Downtown / Liberty"
+    assert structure.decode_unit_key(
+        selected.value, configured.unit_key_fields
+    ) == {"city": "AA", "site_id": "4", "station_id": "AQ-1"}
+
+
+def test_legacy_single_field_selection_is_still_decodable() -> None:
+    assert structure.decode_unit_key("Station A", ("station",)) == {
+        "station": "Station A"
+    }
+    assert structure.decode_unit_key("Station A", ("city", "station")) == {}
+
+
+def test_persisted_structure_loads_all_nested_fields() -> None:
+    original = structure.build_record_structure(
+        parent_levels=(
+            {"name": "city", "key_fields": ("city_id",), "label_fields": ("city",)},
+        ),
+        unit_key_fields=("site_id", "station_id"),
+        unit_label_fields=("site", "station"),
+        record_key_fields=("observed_at", "pollutant"),
+        record_label_fields=("pollutant",),
+    )
+
+    loaded = structure.load_record_structure(original.as_dict())
+
+    assert loaded == original
+
+
+def test_legacy_structure_preserves_single_unit_and_observation_identity() -> None:
+    migrated = structure.legacy_record_structure(
+        "station_id", "station_name", "observed_at"
+    )
+
+    assert migrated.unit_key_fields == ("station_id",)
+    assert migrated.unit_label_fields == ("station_name",)
+    assert migrated.record_key_fields == ("station_id", "observed_at")

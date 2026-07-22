@@ -139,7 +139,28 @@ async def async_setup_entry(
     )
 
     entities: list[SensorEntity] = []
-    if snapshot.records:
+    if coordinator.field_roles:
+        entities.extend(
+            OpenDataObservationSensor(
+                entry,
+                coordinator,
+                stream_id,
+                observation.unit_id,
+                context_fields,
+            )
+            for stream_id, observation in snapshot.observations.items()
+        )
+        if not snapshot.observations:
+            if snapshot.records:
+                entities.extend(
+                    OpenDataStatusSensor(entry, coordinator, record_id, context_fields)
+                    for record_id in snapshot.records
+                )
+            elif not coordinator.identity_field:
+                entities.append(
+                    OpenDataStatusSensor(entry, coordinator, None, context_fields)
+                )
+    elif snapshot.records:
         for record_id in snapshot.records:
             entities.append(
                 OpenDataStatusSensor(entry, coordinator, record_id, context_fields)
@@ -339,3 +360,47 @@ class OpenDataFieldSensor(OpenDataSensorBase):
         if isinstance(value, (str, int, float, bool)) or value is None:
             return value
         return str(value)[:255]
+
+
+class OpenDataObservationSensor(OpenDataSensorBase):
+    """Expose one normalized wide- or long-format observation stream."""
+
+    def __init__(
+        self,
+        entry: ConfigEntry,
+        coordinator: OpenDataCoordinator,
+        stream_id: str,
+        record_id: str | None,
+        context_fields: tuple[str, ...] = (),
+    ) -> None:
+        super().__init__(entry, coordinator, record_id, context_fields)
+        self._stream_id = stream_id
+        observation = coordinator.data.observations[stream_id]
+        self._attr_name = observation.metric
+        self._attr_unique_id = f"{self._identifier}:stream:{stream_id}"
+
+    @property
+    def native_value(self) -> Any:
+        snapshot = self.coordinator.data
+        observation = snapshot.observations.get(self._stream_id) if snapshot else None
+        if observation is None:
+            return None
+        value = observation.value
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            return value
+        return str(value)[:255]
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        attributes = self._source_attributes()
+        snapshot = self.coordinator.data
+        observation = snapshot.observations.get(self._stream_id) if snapshot else None
+        if observation is None:
+            return attributes
+        if observation.timestamp is not None:
+            attributes["observed_at"] = observation.timestamp
+        if observation.record_id is not None:
+            attributes["observation_id"] = observation.record_id
+        if observation.record_label is not None:
+            attributes["observation_label"] = observation.record_label
+        return attributes

@@ -1,0 +1,42 @@
+{
+  "name": "Chicago beach weather",
+  "roles": {
+    "station_name": "location",
+    "measurement_timestamp": "time",
+    "air_temperature": "data",
+    "humidity": "data",
+    "interval_rain": "data",
+    "wind_speed": "data",
+    "measurement_timestamp_label": "descriptive",
+    "measurement_id": "irrelevant"
+  },
+  "structure": {
+    "unit_key_fields": ["station_name"],
+    "unit_label_fields": ["station_name"],
+    "record_key_fields": ["station_name", "measurement_timestamp"],
+    "record_label_fields": ["station_name", "measurement_timestamp_label"]
+  },
+  "rows": [
+    {
+      "station_name": "Oak Street Weather Station",
+      "measurement_timestamp": "2026-07-21T18:00:00.000",
+      "air_temperature": 27.2,
+      "humidity": 50,
+      "interval_rain": 0,
+      "wind_speed": 3.8,
+      "measurement_timestamp_label": "07/21/2026 6:00 PM",
+      "measurement_id": "OakStreetWeatherStation202607211800"
+    },
+    {
+      "station_name": "Oak Street Weather Station",
+      "measurement_timestamp": "2026-07-21T19:00:00.000",
+      "air_temperature": 27.9,
+      "humidity": 48,
+      "interval_rain": 0,
+      "wind_speed": 4,
+      "measurement_timestamp_label": "07/21/2026 7:00 PM",
+      "measurement_id": "OakStreetWeatherStation202607211900"
+    }
+  ],
+  "expected_metrics": ["air_temperature", "humidity", "interval_rain", "wind_speed"]
+}

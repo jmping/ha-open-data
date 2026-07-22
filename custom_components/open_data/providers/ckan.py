@@ -127,6 +127,35 @@ class CkanProvider(JsonClient):
             raise OpenDataResponseError("CKAN sample query did not return records")
         return records
 
+    async def async_observation_rows(
+        self,
+        dataset_id: str,
+        resource_id: str | None,
+        timestamp_field: str | None,
+        filters: dict[str, str] | None = None,
+        *,
+        limit: int = 250,
+    ) -> list[dict[str, Any]]:
+        dataset = await self.async_get_dataset(dataset_id, resource_id)
+        safe_fields = {field.name for field in dataset.fields}
+        if timestamp_field and timestamp_field not in safe_fields:
+            raise ValueError("Timestamp field is not present in the CKAN resource")
+        if filters and not set(filters).issubset(safe_fields):
+            raise ValueError("Filter field is not present in the CKAN resource")
+        params = {
+            "resource_id": dataset.resource_id or "",
+            "limit": str(min(max(limit, 1), 500)),
+        }
+        if timestamp_field:
+            params["sort"] = f'"{timestamp_field}" desc'
+        if filters:
+            params["filters"] = json.dumps(filters, separators=(",", ":"))
+        result = await self._action("datastore_search", params)
+        records = result.get("records", []) if isinstance(result, dict) else []
+        if not isinstance(records, list) or not all(isinstance(row, dict) for row in records):
+            raise OpenDataResponseError("CKAN observation query did not return records")
+        return records
+
     async def async_distinct_rows(
         self,
         dataset_id: str,
