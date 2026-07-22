@@ -10,7 +10,7 @@ if providers_package is not None and not hasattr(
 ):
     setattr(providers_package, "async_detect_provider", None)
 
-from custom_components.open_data.portal_inspector import (
+from custom_components.open_data.portal_inspector import (  # noqa: E402
     _candidate_roots,
     _looks_like_portal_url,
     _sibling_portal_candidates,
