@@ -332,7 +332,7 @@ def analyze_dataset(
     location_fields = list(_candidate_fields(fields, _LOCATION_TERMS))
     location_scores, time_scores = _data_role_scores(fields, rows)
 
-    if rows:
+    if len(rows) >= 2:
         identity_fields = [
             field
             for field in identity_fields
@@ -371,6 +371,43 @@ def analyze_dataset(
 
     timestamp = mapped_timestamp or (timestamp_fields[0] if timestamp_fields else None)
     identity = mapped_station or (identity_fields[0] if identity_fields else None)
+    if rows and timestamp:
+        identity_values = [
+            row.get(identity)
+            for row in rows
+            if identity and row.get(identity) not in (None, "")
+        ]
+        identity_is_row_unique = (
+            identity is None
+            or len({str(value) for value in identity_values}) == len(identity_values)
+        )
+        if identity_is_row_unique:
+            repeated_display = next(
+                (
+                    field
+                    for field in display_fields
+                    if 0
+                    < len(
+                        {
+                            str(row[field])
+                            for row in rows
+                            if row.get(field) not in (None, "")
+                        }
+                    )
+                    < len(
+                        [
+                            row[field]
+                            for row in rows
+                            if row.get(field) not in (None, "")
+                        ]
+                    )
+                ),
+                None,
+            )
+            if repeated_display is not None:
+                identity = repeated_display
+                if repeated_display not in identity_fields:
+                    identity_fields.insert(0, repeated_display)
     display = next((name for name in display_fields if name != identity), None)
     geometry_field, geometry_type = _geometry(dataset, rows)
     if geometry_field and geometry_field not in location_fields:
