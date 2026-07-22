@@ -27,6 +27,7 @@ from .coordinator import OpenDataCoordinator
 from .entity_identity import effective_identity_field, normalize_selected_records
 from .feedback import FeedbackRegistry
 from .providers import create_provider
+from .preparation import DATA_PREPARATIONS, PreparationRegistry
 from .record_structure import legacy_record_structure, load_record_structure
 from .services import async_register_services
 
@@ -42,6 +43,9 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     feedback = FeedbackRegistry(hass)
     await feedback.async_load()
     domain_data[_DATA_FEEDBACK] = feedback
+    preparations = PreparationRegistry(hass)
+    await preparations.async_load()
+    domain_data[DATA_PREPARATIONS] = preparations
     await async_register_services(hass, feedback)
     return True
 
