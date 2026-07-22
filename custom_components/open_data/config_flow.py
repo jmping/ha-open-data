@@ -55,6 +55,7 @@ from .field_roles import (
 )
 from .models import OpenDataDataset
 from .portal_inspector import async_discover_catalog, async_inspect_portal
+from .preparation import DATA_PREPARATIONS, PreparationRegistry
 from .providers import create_provider
 from .providers.base import (
     OpenDataConnectionError,
@@ -95,6 +96,7 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._provider_name: str | None = None
         self._portal_url: str | None = None
         self._candidates: dict[str, DatasetCandidate] = {}
+        self._preparation_task = None
 
     @staticmethod
     def async_get_options_flow(
@@ -107,29 +109,58 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> FlowResult:
         errors: dict[str, str] = {}
         if user_input is not None:
-            try:
-                candidates = await self._async_discover_catalog(user_input[CONF_PORTAL_URL])
-            except OpenDataSecurityError:
-                errors["base"] = "invalid_dataset"
-            except OpenDataConnectionError:
-                errors["base"] = "cannot_connect"
-            except (OpenDataResponseError, ValueError):
-                errors["base"] = "invalid_dataset"
-            except Exception:  # noqa: BLE001
-                errors["base"] = "unknown"
-            else:
-                self._candidates = {
-                    item.dataset.dataset_id: item
-                    for item in candidates[:_DISCOVERY_LIMIT]
-                }
-                if self._candidates:
-                    return await self.async_step_discover()
-                errors["base"] = "no_datasets"
+            portal_url = user_input[CONF_PORTAL_URL]
+            registry: PreparationRegistry = self.hass.data[DOMAIN][DATA_PREPARATIONS]
+            prepared = registry.get(portal_url)
+            if prepared and prepared.status == "ready":
+                self._portal_url = prepared.portal_url
+                self._provider_name = prepared.provider
+                self._set_candidates(prepared.candidates)
+                return await self.async_step_discover()
+
+            async def _prepare() -> tuple[str, str, list[DatasetCandidate]]:
+                candidates = await self._async_discover_catalog(portal_url)
+                if not candidates:
+                    raise ValueError("no_datasets")
+                return (
+                    self._portal_url or portal_url,
+                    self._provider_name or "",
+                    candidates,
+                )
+
+            self._portal_url = portal_url
+            self._preparation_task = registry.start(portal_url, _prepare)
+            return await self.async_step_prepare()
         return self.async_show_form(
             step_id="user",
             data_schema=vol.Schema({vol.Required(CONF_PORTAL_URL): str}),
             errors=errors,
         )
+
+    async def async_step_prepare(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Wait for background portal preparation without creating an entry."""
+        if self._preparation_task is not None and not self._preparation_task.done():
+            return self.async_show_progress(
+                step_id="prepare",
+                progress_action="prepare_catalog",
+                progress_task=self._preparation_task,
+            )
+        registry: PreparationRegistry = self.hass.data[DOMAIN][DATA_PREPARATIONS]
+        prepared = registry.get(self._portal_url or "")
+        if prepared and prepared.status == "ready":
+            self._portal_url = prepared.portal_url
+            self._provider_name = prepared.provider
+            self._set_candidates(prepared.candidates)
+            return self.async_show_progress_done(next_step_id="discover")
+        return self.async_show_progress_done(next_step_id="user")
+
+    def _set_candidates(self, candidates: Any) -> None:
+        self._candidates = {
+            item.dataset.dataset_id: item
+            for item in tuple(candidates)[:_DISCOVERY_LIMIT]
+        }
 
     async def async_step_discover(
         self, user_input: dict[str, Any] | None = None
