@@ -1,0 +1,34 @@
+{
+  "name": "Michigan PFAS public water survey",
+  "roles": {
+    "systemname": "descriptive",
+    "wssn": "location",
+    "locname": "descriptive",
+    "sysloccode": "location",
+    "sampledate": "time",
+    "pfoaresult": "data",
+    "pfosresult": "data",
+    "pfoaflags": "descriptive",
+    "pfosflags": "descriptive"
+  },
+  "structure": {
+    "unit_key_fields": ["wssn", "sysloccode"],
+    "unit_label_fields": ["systemname", "locname"],
+    "record_key_fields": ["wssn", "sysloccode", "sampledate"],
+    "record_label_fields": ["systemname", "locname", "sampledate"]
+  },
+  "rows": [
+    {
+      "systemname": "Example Water Supply",
+      "wssn": "2059544",
+      "locname": "LOC08",
+      "sysloccode": "CHLCMP-022-LOC08",
+      "sampledate": "2019-06-13T16:09:59Z",
+      "pfoaresult": 2.1,
+      "pfosresult": 3.4,
+      "pfoaflags": "",
+      "pfosflags": ""
+    }
+  ],
+  "expected_metrics": ["pfoaresult", "pfosresult"]
+}

@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import codecs
+import csv
 import ipaddress
 import json
 import socket
+from collections.abc import AsyncIterator
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
@@ -18,7 +21,10 @@ from .base import (
 )
 
 REQUEST_TIMEOUT = 15
+CSV_REQUEST_TIMEOUT = 60
 MAX_JSON_BYTES = 2 * 1024 * 1024
+MAX_CSV_BYTES = 128 * 1024 * 1024
+MAX_CSV_ROW_BYTES = 2 * 1024 * 1024
 MAX_REDIRECTS = 5
 USER_AGENT = "Home Assistant Open Data integration"
 
@@ -202,3 +208,130 @@ class JsonClient:
             raise OpenDataResponseError(f"Portal returned invalid JSON for {url}") from err
         except (ClientError, TimeoutError) as err:
             raise OpenDataConnectionError(f"Unable to reach portal: {url}") from err
+
+    async def async_iter_csv_rows(
+        self, url: str
+    ) -> AsyncIterator[dict[str, str]]:
+        """Stream an external CSV resource with bounded, SSRF-safe redirects."""
+        current = urljoin(f"{self.portal_url}/", url)
+        for _ in range(MAX_REDIRECTS + 1):
+            parsed = urlparse(current)
+            normalized = normalize_portal_url(
+                f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+            )
+            normalized_parsed = urlparse(normalized)
+            await _validate_public_hostname(
+                normalized_parsed.hostname or "",
+                normalized_parsed.port
+                or (443 if normalized_parsed.scheme == "https" else 80),
+            )
+            try:
+                async with asyncio.timeout(CSV_REQUEST_TIMEOUT):
+                    async with self._session.get(
+                        current,
+                        headers={"User-Agent": USER_AGENT},
+                        allow_redirects=False,
+                    ) as response:
+                        if 300 <= response.status < 400:
+                            location = response.headers.get("Location")
+                            if not location:
+                                raise OpenDataResponseError(
+                                    "CSV resource redirected without a destination"
+                                )
+                            current = urljoin(current, location)
+                            continue
+                        response.raise_for_status()
+                        if (
+                            response.content_length is not None
+                            and response.content_length > MAX_CSV_BYTES
+                        ):
+                            raise OpenDataResponseError(
+                                f"CSV resource exceeded {MAX_CSV_BYTES} bytes"
+                            )
+                        encoding = response.charset or "utf-8"
+                        decoder = codecs.getincrementaldecoder(encoding)(errors="strict")
+                        pending = ""
+                        logical_lines: list[str] = []
+                        logical_bytes = 0
+                        header: list[str] | None = None
+                        total_bytes = 0
+
+                        async for chunk in response.content.iter_chunked(64 * 1024):
+                            total_bytes += len(chunk)
+                            if total_bytes > MAX_CSV_BYTES:
+                                raise OpenDataResponseError(
+                                    f"CSV resource exceeded {MAX_CSV_BYTES} bytes"
+                                )
+                            text = pending + decoder.decode(chunk)
+                            lines = text.splitlines(keepends=True)
+                            pending = ""
+                            if lines and not lines[-1].endswith(("\n", "\r")):
+                                pending = lines.pop()
+                            for line in lines:
+                                logical_lines.append(line)
+                                logical_bytes += len(line.encode(encoding))
+                                if logical_bytes > MAX_CSV_ROW_BYTES:
+                                    raise OpenDataResponseError(
+                                        "CSV resource contained an oversized row"
+                                    )
+                                try:
+                                    parsed_rows = list(csv.reader(logical_lines, strict=True))
+                                except csv.Error as err:
+                                    if "unexpected end of data" in str(err).casefold():
+                                        continue
+                                    raise OpenDataResponseError(
+                                        "CSV resource could not be parsed"
+                                    ) from err
+                                if len(parsed_rows) != 1:
+                                    raise OpenDataResponseError(
+                                        "CSV resource contained ambiguous rows"
+                                    )
+                                values = parsed_rows[0]
+                                logical_lines = []
+                                logical_bytes = 0
+                                if header is None:
+                                    header = [value.lstrip("\ufeff") for value in values]
+                                    if not header or not all(header):
+                                        raise OpenDataResponseError(
+                                            "CSV resource did not contain a valid header"
+                                        )
+                                    continue
+                                yield {
+                                    field: values[index] if index < len(values) else ""
+                                    for index, field in enumerate(header)
+                                }
+
+                        tail = pending + decoder.decode(b"", final=True)
+                        if tail:
+                            logical_lines.append(tail)
+                        if logical_lines:
+                            try:
+                                parsed_rows = list(csv.reader(logical_lines, strict=True))
+                            except csv.Error as err:
+                                raise OpenDataResponseError(
+                                    "CSV resource ended inside a quoted row"
+                                ) from err
+                            if len(parsed_rows) != 1:
+                                raise OpenDataResponseError(
+                                    "CSV resource contained ambiguous rows"
+                                )
+                            values = parsed_rows[0]
+                            if header is None:
+                                header = [value.lstrip("\ufeff") for value in values]
+                            else:
+                                yield {
+                                    field: values[index] if index < len(values) else ""
+                                    for index, field in enumerate(header)
+                                }
+                        return
+            except (OpenDataSecurityError, OpenDataResponseError):
+                raise
+            except ClientResponseError as err:
+                raise OpenDataResponseError(
+                    f"Portal returned HTTP {err.status} for CSV resource"
+                ) from err
+            except (LookupError, UnicodeDecodeError, ValueError) as err:
+                raise OpenDataResponseError("CSV resource encoding was invalid") from err
+            except (ClientError, TimeoutError) as err:
+                raise OpenDataConnectionError("Unable to reach CSV resource") from err
+        raise OpenDataResponseError("CSV resource returned too many redirects")

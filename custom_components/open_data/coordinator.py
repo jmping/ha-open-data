@@ -12,6 +12,12 @@ from .const import DEFAULT_SCAN_INTERVAL_MINUTES
 from .entity_identity import looks_like_observation_id
 from .models import OpenDataDataset, OpenDataSnapshot
 from .providers.base import OpenDataError, OpenDataProvider
+from .record_structure import (
+    RecordStructure,
+    build_record_selections,
+    decode_unit_key,
+)
+from .semantic_observations import normalize_observations
 
 _MAX_CONCURRENT_RECORD_REQUESTS = 6
 
@@ -30,6 +36,9 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
         display_field: str | None = None,
         selected_records: tuple[str, ...] = (),
         hierarchy_fields: tuple[str, ...] = (),
+        record_structure: RecordStructure | None = None,
+        field_roles: dict[str, str] | None = None,
+        selected_fields: tuple[str, ...] | None = None,
     ) -> None:
         super().__init__(
             hass,
@@ -50,20 +59,38 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
             () if looks_like_observation_id(identity_field) else selected_records
         )
         self.hierarchy_fields = hierarchy_fields
+        self.record_structure = record_structure or RecordStructure(())
+        self.field_roles = field_roles or {}
+        self.selected_fields = selected_fields
         self.dataset: OpenDataDataset | None = None
         self.record_labels: dict[str, str] = {}
 
     async def _async_load_record_labels(self) -> None:
-        if not self.identity_field or not self.selected_records:
+        key_fields = self.record_structure.unit_key_fields
+        if not key_fields and self.identity_field:
+            key_fields = (self.identity_field,)
+        if not key_fields or not self.selected_records:
             return
+        label_fields = self.record_structure.unit_label_fields
+        if not label_fields and self.display_field:
+            label_fields = (self.display_field,)
+        requested_fields = tuple(
+            dict.fromkeys((*key_fields[1:], *label_fields, *self.hierarchy_fields))
+        )
         rows = await self.provider.async_distinct_rows(
             self.dataset_id,
             self.resource_id,
-            self.identity_field,
-            self.display_field,
-            self.hierarchy_fields,
+            key_fields[0],
+            None,
+            requested_fields,
             limit=max(100, len(self.selected_records) * 4),
         )
+        if self.record_structure.unit_key_fields:
+            for selection in build_record_selections(rows, self.record_structure):
+                if selection.value in self.selected_records:
+                    self.record_labels[selection.value] = selection.label
+            return
+
         selected = set(self.selected_records)
         labels: dict[str, list[str]] = {}
         contexts: dict[str, tuple[str, ...]] = {}
@@ -99,13 +126,21 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
     ) -> tuple[str, dict]:
         """Fetch one latest observation without overwhelming a portal."""
         async with semaphore:
-            values = await self.provider.async_latest_row(
+            key_fields = self.record_structure.unit_key_fields
+            filters = (
+                decode_unit_key(record_id, key_fields)
+                if key_fields
+                else {self.identity_field: record_id}
+            )
+            if not filters:
+                raise ValueError("Selected record does not match its configured unit key")
+            rows = await self.provider.async_observation_rows(
                 self.dataset_id,
                 self.resource_id,
                 self.timestamp_field,
-                filters={self.identity_field: record_id},
+                filters=filters,
             )
-        return record_id, values or {}
+        return record_id, rows
 
     async def _async_update_data(self) -> OpenDataSnapshot:
         try:
@@ -116,7 +151,7 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
                 self.resource_id = self.dataset.resource_id or self.resource_id
                 await self._async_load_record_labels()
 
-            if self.identity_field and self.selected_records:
+            if (self.identity_field or self.record_structure.unit_key_fields) and self.selected_records:
                 semaphore = asyncio.Semaphore(_MAX_CONCURRENT_RECORD_REQUESTS)
                 results = await asyncio.gather(
                     *(
@@ -126,6 +161,7 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
                     return_exceptions=True,
                 )
                 records: dict[str, dict] = {}
+                observations = {}
                 failures = 0
                 for record_id, result in zip(self.selected_records, results, strict=True):
                     if isinstance(result, Exception):
@@ -136,9 +172,18 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
                             result,
                         )
                         continue
-                    returned_id, values = result
-                    if values:
-                        records[returned_id] = values
+                    returned_id, rows = result
+                    if rows:
+                        records[returned_id] = rows[0]
+                        observations.update(
+                            normalize_observations(
+                                rows,
+                                field_roles=self.field_roles,
+                                structure=self.record_structure,
+                                selected_fields=self.selected_fields,
+                                unit_id=returned_id,
+                            )
+                        )
                 if failures == len(results) and results:
                     first_error = next(
                         result for result in results if isinstance(result, Exception)
@@ -154,15 +199,26 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
                     values=first,
                     records=records,
                     record_labels=labels,
+                    observations=observations,
                 )
 
-            values = await self.provider.async_latest_row(
+            rows = await self.provider.async_observation_rows(
                 self.dataset_id,
                 self.resource_id,
                 self.timestamp_field,
                 filters=None,
             )
-            return OpenDataSnapshot(dataset=self.dataset, values=values or {})
+            values = rows[0] if rows else {}
+            return OpenDataSnapshot(
+                dataset=self.dataset,
+                values=values,
+                observations=normalize_observations(
+                    rows,
+                    field_roles=self.field_roles,
+                    structure=self.record_structure,
+                    selected_fields=self.selected_fields,
+                ),
+            )
         except UpdateFailed:
             raise
         except (OpenDataError, ValueError) as err:

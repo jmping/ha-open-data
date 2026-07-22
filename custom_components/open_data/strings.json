@@ -4,18 +4,25 @@
     "step": {
       "user": {
         "title": "Discover public datasets",
-        "description": "Enter an institution's public data portal URL. Open Data will detect the provider and rank useful datasets automatically. Large portals may take tens of seconds to scan.",
+        "description": "Enter an institution's public data portal URL. Open Data will prepare and cache the site structure. Large catalogs and CSV files can take several minutes to download; you can leave this screen and return later without affecting regular Home Assistant updates.",
         "data": {
           "portal_url": "Portal URL"
         }
       },
       "discover": {
         "title": "Choose discovered datasets",
-        "description": "Found {count} ranked datasets on {portal} using {provider}. Scores favor queryable environmental, weather, air-quality, water, climate, and energy data.",
+        "description": "Site preparation is complete. Found {count} ranked datasets on {portal} using {provider}. Selecting a large CSV may take another minute while its fields and update frequency are prepared and cached.",
         "data": {
           "dataset_ids": "Datasets"
         }
+      },
+      "prepare": {
+        "title": "Prepare site catalog",
+        "description": "Preparing the site catalog in the background. Large catalogs and CSV resources can take several minutes. You may close this dialog and return later; no entities or regular downloads begin until you select and configure a dataset."
       }
+    },
+    "progress": {
+      "prepare_catalog": "Inspecting the portal, validating datasets, and saving the catalog for later selection"
     },
     "error": {
       "cannot_connect": "Unable to connect to the portal.",

@@ -55,13 +55,19 @@ from .field_roles import (
 )
 from .models import OpenDataDataset
 from .portal_inspector import async_discover_catalog, async_inspect_portal
+from .preparation import DATA_PREPARATIONS, PreparationRegistry
 from .providers import create_provider
 from .providers.base import (
     OpenDataConnectionError,
     OpenDataResponseError,
     OpenDataSecurityError,
 )
-from .record_structure import build_record_structure
+from .record_structure import (
+    build_record_selections,
+    build_record_structure,
+    load_record_structure,
+)
+from .options_reconciliation import reconcile_options
 
 _DISCOVERY_LIMIT = 50
 _CATALOG_LIMIT = 500
@@ -84,12 +90,13 @@ CONF_TITLE = "title"
 class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle an Open Data config flow."""
 
-    VERSION = 1
+    VERSION = 2
 
     def __init__(self) -> None:
         self._provider_name: str | None = None
         self._portal_url: str | None = None
         self._candidates: dict[str, DatasetCandidate] = {}
+        self._preparation_task = None
 
     @staticmethod
     def async_get_options_flow(
@@ -102,29 +109,58 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> FlowResult:
         errors: dict[str, str] = {}
         if user_input is not None:
-            try:
-                candidates = await self._async_discover_catalog(user_input[CONF_PORTAL_URL])
-            except OpenDataSecurityError:
-                errors["base"] = "invalid_dataset"
-            except OpenDataConnectionError:
-                errors["base"] = "cannot_connect"
-            except (OpenDataResponseError, ValueError):
-                errors["base"] = "invalid_dataset"
-            except Exception:  # noqa: BLE001
-                errors["base"] = "unknown"
-            else:
-                self._candidates = {
-                    item.dataset.dataset_id: item
-                    for item in candidates[:_DISCOVERY_LIMIT]
-                }
-                if self._candidates:
-                    return await self.async_step_discover()
-                errors["base"] = "no_datasets"
+            portal_url = user_input[CONF_PORTAL_URL]
+            registry: PreparationRegistry = self.hass.data[DOMAIN][DATA_PREPARATIONS]
+            prepared = registry.get(portal_url)
+            if prepared and prepared.status == "ready":
+                self._portal_url = prepared.portal_url
+                self._provider_name = prepared.provider
+                self._set_candidates(prepared.candidates)
+                return await self.async_step_discover()
+
+            async def _prepare() -> tuple[str, str, list[DatasetCandidate]]:
+                candidates = await self._async_discover_catalog(portal_url)
+                if not candidates:
+                    raise ValueError("no_datasets")
+                return (
+                    self._portal_url or portal_url,
+                    self._provider_name or "",
+                    candidates,
+                )
+
+            self._portal_url = portal_url
+            self._preparation_task = registry.start(portal_url, _prepare)
+            return await self.async_step_prepare()
         return self.async_show_form(
             step_id="user",
             data_schema=vol.Schema({vol.Required(CONF_PORTAL_URL): str}),
             errors=errors,
         )
+
+    async def async_step_prepare(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Wait for background portal preparation without creating an entry."""
+        if self._preparation_task is not None and not self._preparation_task.done():
+            return self.async_show_progress(
+                step_id="prepare",
+                progress_action="prepare_catalog",
+                progress_task=self._preparation_task,
+            )
+        registry: PreparationRegistry = self.hass.data[DOMAIN][DATA_PREPARATIONS]
+        prepared = registry.get(self._portal_url or "")
+        if prepared and prepared.status == "ready":
+            self._portal_url = prepared.portal_url
+            self._provider_name = prepared.provider
+            self._set_candidates(prepared.candidates)
+            return self.async_show_progress_done(next_step_id="discover")
+        return self.async_show_progress_done(next_step_id="user")
+
+    def _set_candidates(self, candidates: Any) -> None:
+        self._candidates = {
+            item.dataset.dataset_id: item
+            for item in tuple(candidates)[:_DISCOVERY_LIMIT]
+        }
 
     async def async_step_discover(
         self, user_input: dict[str, Any] | None = None
@@ -592,15 +628,12 @@ class OpenDataOptionsFlow(config_entries.OptionsFlow):
             for field in dataset.fields
             if field.name in metrics
         }
-        default_fields = metrics & choices.keys()
-        current_fields = list(
-            self._config_entry.options.get(CONF_SELECTED_FIELDS, default_fields)
+        fields_were_configured = (
+            CONF_SELECTED_FIELDS in self._config_entry.options
+            or CONF_SELECTED_FIELDS in self._config_entry.data
         )
-        schema: dict[Any, Any] = {
-            vol.Optional(CONF_SELECTED_FIELDS, default=current_fields): cv.multi_select(
-                choices
-            )
-        }
+        raw_fields = self._current(CONF_SELECTED_FIELDS)
+        schema: dict[Any, Any] = {}
 
         identity = self._structure_options.get(CONF_IDENTITY_FIELD)
         display = self._structure_options.get(CONF_DISPLAY_FIELD)
@@ -611,16 +644,31 @@ class OpenDataOptionsFlow(config_entries.OptionsFlow):
                 self._config_entry.data.get(CONF_HIERARCHY_FIELDS, ()),
             )
         )
-        if identity:
+        persisted_structure = load_record_structure(
+            self._structure_options.get(CONF_RECORD_STRUCTURE)
+        )
+        unit_key_fields = persisted_structure.unit_key_fields
+        unit_label_fields = persisted_structure.unit_label_fields
+        query_identity = unit_key_fields[0] if unit_key_fields else identity
+        if query_identity:
+            extra_fields = tuple(
+                dict.fromkeys(
+                    (
+                        *unit_key_fields[1:],
+                        *unit_label_fields,
+                        *hierarchy_fields,
+                    )
+                )
+            )
             rows = await coordinator.provider.async_distinct_rows(
                 dataset.dataset_id,
                 dataset.resource_id,
-                identity,
-                display,
-                hierarchy_fields,
+                query_identity,
+                None if unit_key_fields else display,
+                extra_fields,
                 limit=_RECORD_LIMIT,
             )
-            structure = DatasetStructure(
+            legacy_structure = DatasetStructure(
                 kind=self._config_entry.data.get(CONF_DATASET_KIND, "records"),
                 profile_id=self._config_entry.data.get(CONF_PROFILE_ID),
                 confidence=1.0,
@@ -633,24 +681,44 @@ class OpenDataOptionsFlow(config_entries.OptionsFlow):
                 metric_fields=tuple(metrics),
                 ignored_fields=tuple(ignored),
             )
-            records = build_selectable_records(rows, structure)
+            if unit_key_fields:
+                records = build_record_selections(rows, persisted_structure)
+            else:
+                records = build_selectable_records(rows, legacy_structure)
             record_choices = {record.value: record.label for record in records}
             if record_choices:
-                configured = self._config_entry.options.get(
-                    CONF_SELECTED_RECORDS,
-                    self._config_entry.data.get(CONF_SELECTED_RECORDS, ()),
+                records_were_configured = (
+                    CONF_SELECTED_RECORDS in self._config_entry.options
+                    or CONF_SELECTED_RECORDS in self._config_entry.data
                 )
-                configured_values = (
-                    [configured] if isinstance(configured, str) else list(configured or ())
+                reconciled = reconcile_options(
+                    raw_records=self._current(CONF_SELECTED_RECORDS),
+                    records_were_configured=records_were_configured,
+                    available_records=records,
+                    unit_key_fields=(unit_key_fields or (identity,)),
+                    raw_fields=raw_fields,
+                    fields_were_configured=fields_were_configured,
+                    available_fields=choices,
                 )
-                current_records = [
-                    value for value in configured_values if value in record_choices
-                ]
-                if not current_records:
-                    current_records = list(record_choices)
                 schema[
-                    vol.Optional(CONF_SELECTED_RECORDS, default=current_records)
+                    vol.Optional(
+                        CONF_SELECTED_RECORDS,
+                        default=list(reconciled.selected_records),
+                    )
                 ] = cv.multi_select(record_choices)
+
+        reconciled_fields = reconcile_options(
+            raw_records=(),
+            records_were_configured=True,
+            available_records=(),
+            unit_key_fields=(),
+            raw_fields=raw_fields,
+            fields_were_configured=fields_were_configured,
+            available_fields=choices,
+        ).selected_fields
+        schema[
+            vol.Optional(CONF_SELECTED_FIELDS, default=list(reconciled_fields))
+        ] = cv.multi_select(choices)
 
         return self.async_show_form(
             step_id="records",
