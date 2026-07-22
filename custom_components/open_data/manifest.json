@@ -3,6 +3,7 @@
   "name": "Open Data",
   "codeowners": ["@jmping"],
   "config_flow": true,
+  "after_dependencies": ["recorder"],
   "documentation": "https://github.com/jmping/ha-open-data",
   "integration_type": "service",
   "iot_class": "cloud_polling",
