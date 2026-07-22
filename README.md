@@ -62,6 +62,20 @@ The config flow asks for:
 It then scans and ranks public datasets. After selecting a dataset, use the
 integration options to choose which discovered fields become sensors.
 
+### History and freshness
+
+Numeric measurements are created as Home Assistant measurement sensors. The
+integration keeps the bounded observation window returned during refresh and
+imports five-minute and hourly statistics, so the entity's default more-info
+view opens with a line graph instead of only a current point. Home Assistant
+continues recording new states normally after setup.
+
+Every configured dataset also creates a **Latest observation** timestamp sensor.
+Its attributes distinguish the newest observation from the portal/resource
+modification time and the integration's last successful check. They also expose
+the inferred update interval and whether the observations are more than five
+expected update waves behind (with a minimum threshold of 30 minutes).
+
 ### Ann Arbor reference portal
 
 ```text

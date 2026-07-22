@@ -38,3 +38,9 @@ def test_fallback_never_triggers_under_thirty_minutes() -> None:
 def test_missing_api_timestamp_requires_authoritative_file() -> None:
     latest = datetime(2026, 7, 21, 12, tzinfo=timezone.utc)
     assert SourceFreshness(timedelta(hours=1), None, latest).fallback_required
+
+
+def test_epoch_milliseconds_are_parsed_for_portal_update_metadata() -> None:
+    assert refresh.parse_timestamp(1784635200000) == datetime(
+        2026, 7, 21, 12, tzinfo=timezone.utc
+    )

@@ -4,13 +4,21 @@ from __future__ import annotations
 
 from typing import Any
 
+from homeassistant.components.recorder import DOMAIN as RECORDER_DOMAIN
+from homeassistant.components.recorder.db_schema import StatisticsShortTerm
+from homeassistant.components.recorder.models import (
+    StatisticMeanType,
+    StatisticMetaData,
+)
+from homeassistant.components.recorder.statistics import async_import_statistics
+from homeassistant.components.recorder.util import get_instance
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
@@ -34,7 +42,9 @@ from .const import (
 )
 from .coordinator import OpenDataCoordinator
 from .field_roles import classify_field_roles, context_attributes
+from .history import hourly_statistics, interval_statistics, is_stale
 from .ontology import metric_definitions
+from .refresh_policy import parse_timestamp
 
 
 async def _async_prune_stale_entities(
@@ -195,6 +205,10 @@ async def async_setup_entry(
             for field in fields
         )
 
+    # Freshness is a dataset-level fact and remains visible even when the user
+    # intentionally selects no records or measurement streams.
+    entities.append(OpenDataFreshnessSensor(entry, coordinator))
+
     desired_unique_ids = {
         entity.unique_id for entity in entities if entity.unique_id is not None
     }
@@ -273,6 +287,24 @@ class OpenDataSensorBase(CoordinatorEntity[OpenDataCoordinator], SensorEntity):
                 attributes["record_label"] = snapshot.record_labels.get(
                     self._record_id, self._record_id
                 )
+        snapshot = self.coordinator.data
+        if snapshot is not None:
+            if snapshot.fetched_at:
+                attributes["last_checked_at"] = snapshot.fetched_at
+            if snapshot.latest_observation_at:
+                attributes["latest_observation_at"] = snapshot.latest_observation_at
+            if snapshot.source_updated_at:
+                attributes["source_updated_at"] = snapshot.source_updated_at
+            if snapshot.update_frequency_seconds is not None:
+                attributes["update_frequency_seconds"] = round(
+                    snapshot.update_frequency_seconds, 1
+                )
+            stale = is_stale(
+                snapshot.latest_observation_at,
+                snapshot.update_frequency_seconds,
+            )
+            if stale is not None:
+                attributes["source_stale"] = stale
         attributes.update(
             context_attributes(self._record_values(), self._context_fields)
         )
@@ -301,6 +333,22 @@ class OpenDataStatusSensor(OpenDataSensorBase):
     @property
     def native_value(self) -> str:
         return "data_available" if self._record_values() else "no_data"
+
+
+class OpenDataFreshnessSensor(OpenDataSensorBase):
+    """Expose the newest underlying observation as a timestamp sensor."""
+
+    _attr_translation_key = "latest_observation"
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+
+    def __init__(self, entry: ConfigEntry, coordinator: OpenDataCoordinator) -> None:
+        super().__init__(entry, coordinator)
+        self._attr_unique_id = f"{self._identifier}:latest_observation"
+
+    @property
+    def native_value(self) -> Any:
+        snapshot = self.coordinator.data
+        return parse_timestamp(snapshot.latest_observation_at) if snapshot else None
 
 
 class OpenDataFieldSensor(OpenDataSensorBase):
@@ -385,6 +433,67 @@ class OpenDataObservationSensor(OpenDataSensorBase):
             # an over-time stream even though a sensor's visible state is the
             # newest point. Historical rows begin accumulating immediately.
             self._attr_state_class = SensorStateClass.MEASUREMENT
+        self._imported_hourly_starts: set[Any] = set()
+        self._imported_short_term_starts: set[Any] = set()
+
+    async def async_added_to_hass(self) -> None:
+        """Import the bounded source history once the entity id is known."""
+        await super().async_added_to_hass()
+        await self._async_import_history()
+
+    async def _async_import_history(self) -> None:
+        """Seed Recorder statistics so the first view already has a graph."""
+        if RECORDER_DOMAIN not in self.hass.config.components:
+            return
+        snapshot = self.coordinator.data
+        observation = snapshot.observations.get(self._stream_id) if snapshot else None
+        if observation is None:
+            return
+        hourly = hourly_statistics(observation.history)
+        hourly = [
+            item
+            for item in hourly
+            if item["start"] not in self._imported_hourly_starts
+        ]
+        short_term = interval_statistics(observation.history, minutes=5)
+        short_term = [
+            item
+            for item in short_term
+            if item["start"] not in self._imported_short_term_starts
+        ]
+        if not hourly and not short_term:
+            return
+        metadata: StatisticMetaData = {
+            "source": RECORDER_DOMAIN,
+            "name": None,
+            "statistic_id": self.entity_id,
+            "unit_class": None,
+            "unit_of_measurement": self.native_unit_of_measurement,
+            "mean_type": StatisticMeanType.ARITHMETIC,
+            "has_sum": False,
+        }
+        if hourly:
+            async_import_statistics(self.hass, metadata, hourly)
+            self._imported_hourly_starts.update(item["start"] for item in hourly)
+        if short_term:
+            # The default more-info graph requests five-minute statistics. The
+            # recorder exposes this queue method for the same validated import
+            # task used by its public hourly helper.
+            get_instance(self.hass).async_import_statistics(
+                metadata, short_term, StatisticsShortTerm
+            )
+            self._imported_short_term_starts.update(
+                item["start"] for item in short_term
+            )
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Record new source-history buckets before writing the newest state."""
+        super()._handle_coordinator_update()
+        self.hass.async_create_task(
+            self._async_import_history(),
+            f"Import open data history for {self.entity_id}",
+        )
 
     @property
     def native_value(self) -> Any:
@@ -406,6 +515,10 @@ class OpenDataObservationSensor(OpenDataSensorBase):
             return attributes
         if observation.timestamp is not None:
             attributes["observed_at"] = observation.timestamp
+        if observation.history:
+            attributes["history_start"] = observation.history[0].timestamp
+            attributes["history_end"] = observation.history[-1].timestamp
+            attributes["history_point_count"] = len(observation.history)
         if observation.record_id is not None:
             attributes["observation_id"] = observation.record_id
         if observation.record_label is not None:

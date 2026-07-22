@@ -15,6 +15,14 @@ def parse_timestamp(value: object) -> datetime | None:
     """Parse common ISO timestamps without imposing a provider dependency."""
     if value in (None, ""):
         return None
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        seconds = float(value)
+        if abs(seconds) > 10_000_000_000:
+            seconds /= 1000
+        try:
+            return datetime.fromtimestamp(seconds, tz=timezone.utc)
+        except (OverflowError, OSError, ValueError):
+            return None
     text = str(value).strip().replace("Z", "+00:00")
     try:
         parsed = datetime.fromisoformat(text)
@@ -57,4 +65,3 @@ class SourceFreshness:
         return self.authoritative_latest - self.api_latest >= stale_lag_threshold(
             self.frequency
         )
-

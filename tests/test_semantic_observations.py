@@ -121,3 +121,26 @@ def test_csv_measurements_become_numeric_time_series_values() -> None:
     observation = next(iter(observations.values()))
     assert observation.value == 7.25
     assert isinstance(observation.value, float)
+
+
+def test_numeric_stream_retains_bounded_rows_as_timestamped_history() -> None:
+    observations = semantic.normalize_observations(
+        [
+            {"observed_at": "2026-07-21T10:15:00Z", "temperature": "20.5"},
+            {"observed_at": "2026-07-21T10:45:00Z", "temperature": "21.5"},
+            {"observed_at": "2026-07-21T11:00:00Z", "temperature": "22.0"},
+        ],
+        field_roles={
+            "observed_at": roles.FIELD_ROLE_TIME,
+            "temperature": roles.FIELD_ROLE_DATA,
+        },
+        structure=records.RecordStructure(()),
+    )
+
+    observation = next(iter(observations.values()))
+    assert observation.value == 22.0
+    assert [(point.timestamp, point.value) for point in observation.history] == [
+        ("2026-07-21T10:15:00Z", 20.5),
+        ("2026-07-21T10:45:00Z", 21.5),
+        ("2026-07-21T11:00:00Z", 22.0),
+    ]

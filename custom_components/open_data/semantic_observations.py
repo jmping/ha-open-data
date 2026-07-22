@@ -13,7 +13,7 @@ from .field_roles import (
     FIELD_ROLE_MEASUREMENT_NAME,
     FIELD_ROLE_TIME,
 )
-from .models import SemanticObservation
+from .models import ObservationPoint, SemanticObservation
 from .record_structure import RecordStructure, encode_unit_key
 
 
@@ -81,6 +81,7 @@ def normalize_observations(
         field for field, role in field_roles.items() if role == FIELD_ROLE_TIME
     )
     latest: dict[str, tuple[tuple[int, object, int], SemanticObservation]] = {}
+    history: dict[str, dict[str, ObservationPoint]] = {}
 
     for index, raw_row in enumerate(rows):
         row = dict(raw_row)
@@ -118,9 +119,38 @@ def normalize_observations(
                 record_label=record_label,
                 source_row=row,
             )
+            numeric_value = observation.value
+            if (
+                timestamp is not None
+                and isinstance(numeric_value, (int, float))
+                and not isinstance(numeric_value, bool)
+            ):
+                history.setdefault(stream_id, {})[timestamp] = ObservationPoint(
+                    timestamp, numeric_value
+                )
             key = _time_key(timestamp, index)
             previous = latest.get(stream_id)
             if previous is None or key >= previous[0]:
                 latest[stream_id] = (key, observation)
 
-    return {stream_id: value[1] for stream_id, value in latest.items()}
+    normalized: dict[str, SemanticObservation] = {}
+    for stream_id, (_, observation) in latest.items():
+        points = tuple(
+            sorted(
+                history.get(stream_id, {}).values(),
+                key=lambda point: _time_key(point.timestamp, 0),
+            )
+        )
+        normalized[stream_id] = SemanticObservation(
+            stream_id=observation.stream_id,
+            unit_id=observation.unit_id,
+            metric=observation.metric,
+            source_field=observation.source_field,
+            value=observation.value,
+            timestamp=observation.timestamp,
+            record_id=observation.record_id,
+            record_label=observation.record_label,
+            history=points,
+            source_row=observation.source_row,
+        )
+    return normalized
