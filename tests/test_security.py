@@ -66,10 +66,17 @@ def test_normalize_portal_url_rejects_non_public_hosts(url: str) -> None:
     (
         "ftp://data.example.com",
         "https://user:pass@data.example.com",
-        "https://data.example.com?redirect=http://127.0.0.1",
-        "https://data.example.com#fragment",
     ),
 )
 def test_normalize_portal_url_rejects_unsafe_shapes(url: str) -> None:
     with pytest.raises(ValueError):
         normalize_portal_url(url)
+
+
+def test_normalize_portal_url_discards_query_and_fragment() -> None:
+    assert (
+        normalize_portal_url(
+            "https://data.example.com?redirect=http://127.0.0.1#results"
+        )
+        == "https://data.example.com"
+    )

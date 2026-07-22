@@ -95,7 +95,9 @@ def inspect_gtfs_archive(payload: bytes) -> GtfsFeedInspection:
             member_set = set(normalized)
             missing = tuple(sorted(GTFS_REQUIRED_FILES - member_set))
             service_calendar = bool(GTFS_SERVICE_FILES & member_set)
-            optional = tuple(sorted(GTFS_OPTIONAL_FILES & member_set))
+            optional = tuple(
+                sorted((GTFS_OPTIONAL_FILES | GTFS_SERVICE_FILES) & member_set)
+            )
             nested = any("/" in item.filename.replace("\\", "/").strip("/") for item in infos)
 
             if missing:
