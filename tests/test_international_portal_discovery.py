@@ -1,5 +1,12 @@
 """Regression tests for multilingual and federated portal discovery."""
 
+import sys
+
+# Some provider unit tests load isolated package stubs during collection. Ensure
+# this integration-level test imports the real provider factory and inspector.
+sys.modules.pop("custom_components.open_data.portal_inspector", None)
+sys.modules.pop("custom_components.open_data.providers", None)
+
 from custom_components.open_data.portal_inspector import (
     _candidate_roots,
     _looks_like_portal_url,
