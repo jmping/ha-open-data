@@ -2,10 +2,13 @@
 
 import sys
 
-# Some provider unit tests load isolated package stubs during collection. Ensure
-# this integration-level test imports the real provider factory and inspector.
-sys.modules.pop("custom_components.open_data.portal_inspector", None)
-sys.modules.pop("custom_components.open_data.providers", None)
+# Some provider unit tests load an isolated package stub during collection.
+# Portal detection is not exercised here, but the inspector imports its symbol.
+providers_package = sys.modules.get("custom_components.open_data.providers")
+if providers_package is not None and not hasattr(
+    providers_package, "async_detect_provider"
+):
+    setattr(providers_package, "async_detect_provider", None)
 
 from custom_components.open_data.portal_inspector import (
     _candidate_roots,
