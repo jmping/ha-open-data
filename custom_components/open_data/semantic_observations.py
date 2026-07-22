@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import datetime
 from hashlib import sha1
+import math
+import re
 from typing import Any, Iterable, Mapping
 
 from .field_roles import (
@@ -37,6 +39,22 @@ def _joined(row: Mapping[str, Any], fields: Iterable[str]) -> str | None:
 def _stream_id(unit_id: str | None, metric: str) -> str:
     raw = f"{unit_id or 'dataset'}\0{metric}".encode()
     return sha1(raw, usedforsecurity=False).hexdigest()[:20]
+
+
+def _measurement_value(value: Any) -> Any:
+    """Preserve text while turning CSV numeric measurements into HA numbers."""
+    if not isinstance(value, str):
+        return value
+    stripped = value.strip()
+    if not stripped:
+        return value
+    try:
+        if re.fullmatch(r"[+-]?\d+", stripped):
+            return int(stripped)
+        number = float(stripped)
+    except ValueError:
+        return value
+    return number if math.isfinite(number) else value
 
 
 def normalize_observations(
@@ -94,7 +112,7 @@ def normalize_observations(
                 unit_id=resolved_unit,
                 metric=metric,
                 source_field=field,
-                value=value,
+                value=_measurement_value(value),
                 timestamp=timestamp,
                 record_id=record_id,
                 record_label=record_label,

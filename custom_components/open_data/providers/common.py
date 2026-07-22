@@ -209,6 +209,63 @@ class JsonClient:
         except (ClientError, TimeoutError) as err:
             raise OpenDataConnectionError(f"Unable to reach portal: {url}") from err
 
+    async def async_get_external_json(self, url: str) -> Any:
+        """Download a bounded JSON resource with SSRF-safe redirect handling."""
+        current = urljoin(f"{self.portal_url}/", url)
+        for _ in range(MAX_REDIRECTS + 1):
+            parsed = urlparse(current)
+            normalized = normalize_portal_url(
+                f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+            )
+            normalized_parsed = urlparse(normalized)
+            await _validate_public_hostname(
+                normalized_parsed.hostname or "",
+                normalized_parsed.port
+                or (443 if normalized_parsed.scheme == "https" else 80),
+            )
+            try:
+                async with asyncio.timeout(CSV_REQUEST_TIMEOUT):
+                    async with self._session.get(
+                        current,
+                        headers={"User-Agent": USER_AGENT},
+                        allow_redirects=False,
+                    ) as response:
+                        if 300 <= response.status < 400:
+                            location = response.headers.get("Location")
+                            if not location:
+                                raise OpenDataResponseError(
+                                    "JSON resource redirected without a destination"
+                                )
+                            current = urljoin(current, location)
+                            continue
+                        response.raise_for_status()
+                        if (
+                            response.content_length is not None
+                            and response.content_length > MAX_CSV_BYTES
+                        ):
+                            raise OpenDataResponseError(
+                                f"JSON resource exceeded {MAX_CSV_BYTES} bytes"
+                            )
+                        body = bytearray()
+                        async for chunk in response.content.iter_chunked(64 * 1024):
+                            body.extend(chunk)
+                            if len(body) > MAX_CSV_BYTES:
+                                raise OpenDataResponseError(
+                                    f"JSON resource exceeded {MAX_CSV_BYTES} bytes"
+                                )
+                        return json.loads(body.decode(response.charset or "utf-8"))
+            except (OpenDataSecurityError, OpenDataResponseError):
+                raise
+            except ClientResponseError as err:
+                raise OpenDataResponseError(
+                    f"Portal returned HTTP {err.status} for JSON resource"
+                ) from err
+            except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as err:
+                raise OpenDataResponseError("JSON resource was invalid") from err
+            except (ClientError, TimeoutError) as err:
+                raise OpenDataConnectionError("Unable to reach JSON resource") from err
+        raise OpenDataResponseError("JSON resource returned too many redirects")
+
     async def async_iter_csv_rows(
         self, url: str
     ) -> AsyncIterator[dict[str, str]]:

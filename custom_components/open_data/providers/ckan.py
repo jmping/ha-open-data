@@ -37,8 +37,8 @@ class CkanProvider(JsonClient):
 
     def __init__(self, session: Any, portal_url: str) -> None:
         super().__init__(session, portal_url)
-        self._csv_cache: dict[str, tuple[float, list[dict[str, str]]]] = {}
-        self._csv_samples: dict[str, list[dict[str, str]]] = {}
+        self._csv_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+        self._csv_samples: dict[str, list[dict[str, Any]]] = {}
         self._csv_locks: dict[str, asyncio.Lock] = {}
         self._resource_frequencies: dict[str, timedelta | None] = {}
         self._incremental_verified: set[str] = set()
@@ -46,7 +46,7 @@ class CkanProvider(JsonClient):
 
     async def _cached_csv_rows(
         self, resource: dict[str, Any], *, force: bool = False
-    ) -> list[dict[str, str]]:
+    ) -> list[dict[str, Any]]:
         """Download a CSV once per refresh window and share it across consumers."""
         url = self._resource_url(resource)
         cached = self._csv_cache.get(url)
@@ -57,9 +57,14 @@ class CkanProvider(JsonClient):
             cached = self._csv_cache.get(url)
             if not force and cached and cached[0] > monotonic():
                 return cached[1]
-            rows = [row async for row in self.async_iter_csv_rows(url)]
+            if self._is_json_resource(resource):
+                rows = self._normalize_json_rows(
+                    await self.async_get_external_json(url)
+                )
+            else:
+                rows = [row async for row in self.async_iter_csv_rows(url)]
             if not rows:
-                raise OpenDataResponseError("CKAN CSV resource did not contain data rows")
+                raise OpenDataResponseError("CKAN file resource did not contain data rows")
             self._csv_cache[url] = (monotonic() + 15 * 60, rows)
             return rows
 
@@ -93,7 +98,7 @@ class CkanProvider(JsonClient):
             raise OpenDataResponseError("CKAN package metadata was not valid")
         selected_resource = self._select_resource(package, resource_id)
         selected_id = selected_resource.get("id")
-        if self._is_csv_resource(selected_resource):
+        if self._is_tabular_file_resource(selected_resource):
             sample = await self._csv_sample(selected_resource, 50)
             fields = self._csv_fields(sample)
         else:
@@ -136,7 +141,7 @@ class CkanProvider(JsonClient):
         filters: dict[str, str] | None = None,
     ) -> dict[str, Any] | None:
         dataset = await self.async_get_dataset(dataset_id, resource_id)
-        if self._is_csv_resource(self._selected_resource(dataset)):
+        if self._is_tabular_file_resource(self._selected_resource(dataset)):
             rows = await self._csv_observation_rows(
                 self._selected_resource(dataset), timestamp_field, filters, 1
             )
@@ -165,7 +170,7 @@ class CkanProvider(JsonClient):
         limit: int = 50,
     ) -> list[dict[str, Any]]:
         dataset = await self.async_get_dataset(dataset_id, resource_id)
-        if self._is_csv_resource(self._selected_resource(dataset)):
+        if self._is_tabular_file_resource(self._selected_resource(dataset)):
             return await self._csv_sample(
                 self._selected_resource(dataset), min(max(limit, 1), 200)
             )
@@ -196,7 +201,7 @@ class CkanProvider(JsonClient):
             raise ValueError("Timestamp field is not present in the CKAN resource")
         if filters and not set(filters).issubset(safe_fields):
             raise ValueError("Filter field is not present in the CKAN resource")
-        if self._is_csv_resource(self._selected_resource(dataset)):
+        if self._is_tabular_file_resource(self._selected_resource(dataset)):
             resource = self._selected_resource(dataset)
             if timestamp_field and resource.get("datastore_active"):
                 api_rows = await self._datastore_observation_rows(
@@ -282,7 +287,7 @@ class CkanProvider(JsonClient):
                 requested.append(field)
         if not set(requested).issubset(safe_fields):
             raise ValueError("Distinct field is not present in the CKAN resource")
-        if self._is_csv_resource(self._selected_resource(dataset)):
+        if self._is_tabular_file_resource(self._selected_resource(dataset)):
             found: dict[tuple[str, ...], dict[str, Any]] = {}
             for row in await self._cached_csv_rows(self._selected_resource(dataset)):
                 key = tuple(str(row.get(field, "")) for field in requested)
@@ -345,16 +350,16 @@ class CkanProvider(JsonClient):
                 {"q": "", "rows": str(page_size), "start": str(start)},
             )
             packages = result.get("results", []) if isinstance(result, dict) else []
-            page = self._normalize_packages(packages)
-            if not page:
+            if not packages:
                 break
+            page = self._normalize_packages(packages)
             for dataset in page:
                 found.setdefault(dataset.dataset_id, dataset)
                 if len(found) >= bounded_limit:
                     break
-            if len(page) < page_size:
+            if len(packages) < page_size:
                 break
-            start += page_size
+            start += len(packages)
         return list(found.values())
 
     @staticmethod
@@ -370,20 +375,24 @@ class CkanProvider(JsonClient):
             )
             if selected is None:
                 raise OpenDataResponseError("Requested CKAN resource was not found")
-            if not CkanProvider._is_csv_resource(selected) and not selected.get(
+            if not CkanProvider._is_tabular_file_resource(selected) and not selected.get(
                 "datastore_active"
             ):
                 raise OpenDataResponseError(
-                    "Requested CKAN resource is neither CSV nor DataStore-enabled"
+                    "Requested CKAN resource is neither CSV/JSON nor DataStore-enabled"
                 )
             return selected
-        csv_resources = [
+        file_resources = [
             item
             for item in resources
-            if CkanProvider._is_csv_resource(item)
+            if CkanProvider._is_tabular_file_resource(item)
             and item.get("state", "active") == "active"
         ]
-        selected = max(csv_resources, key=CkanProvider._resource_freshness, default=None)
+        csv_resources = [
+            item for item in file_resources if CkanProvider._is_csv_resource(item)
+        ]
+        preferred = csv_resources or file_resources
+        selected = max(preferred, key=CkanProvider._resource_freshness, default=None)
         if selected is None:
             selected = next(
                 (
@@ -395,7 +404,9 @@ class CkanProvider(JsonClient):
                 None,
             )
         if selected is None:
-            raise OpenDataResponseError("CKAN dataset has no active CSV or DataStore resource")
+            raise OpenDataResponseError(
+                "CKAN dataset has no active CSV, JSON, or DataStore resource"
+            )
         return selected
 
     @staticmethod
@@ -404,6 +415,22 @@ class CkanProvider(JsonClient):
         media_type = str(resource.get("mimetype") or "").strip().casefold()
         url = str(resource.get("url") or "").casefold().split("?", 1)[0]
         return format_name == "csv" or "text/csv" in media_type or url.endswith(".csv")
+
+    @staticmethod
+    def _is_json_resource(resource: dict[str, Any]) -> bool:
+        format_name = str(resource.get("format") or "").strip().casefold()
+        media_type = str(resource.get("mimetype") or "").strip().casefold()
+        url = str(resource.get("url") or "").casefold().split("?", 1)[0]
+        return (
+            format_name in {"json", "geojson"}
+            or "application/json" in media_type
+            or "application/geo+json" in media_type
+            or url.endswith((".json", ".geojson"))
+        )
+
+    @classmethod
+    def _is_tabular_file_resource(cls, resource: dict[str, Any]) -> bool:
+        return cls._is_csv_resource(resource) or cls._is_json_resource(resource)
 
     @staticmethod
     def _resource_freshness(resource: dict[str, Any]) -> str:
@@ -418,12 +445,46 @@ class CkanProvider(JsonClient):
     def _resource_url(resource: dict[str, Any]) -> str:
         url = resource.get("url")
         if not isinstance(url, str) or not url.strip():
-            raise OpenDataResponseError("CKAN CSV resource did not contain a download URL")
+            raise OpenDataResponseError("CKAN file resource did not contain a download URL")
         return url
+
+    @staticmethod
+    def _normalize_json_rows(payload: Any) -> list[dict[str, Any]]:
+        """Normalize JSON arrays, GeoJSON, and Esri feature collections."""
+        if isinstance(payload, list):
+            candidates = payload
+        elif isinstance(payload, dict):
+            candidates = next(
+                (
+                    payload[key]
+                    for key in ("features", "records", "results", "data", "items")
+                    if isinstance(payload.get(key), list)
+                ),
+                [],
+            )
+        else:
+            candidates = []
+
+        rows: list[dict[str, Any]] = []
+        for item in candidates:
+            if not isinstance(item, dict):
+                continue
+            values = item.get("properties") or item.get("attributes") or item
+            if not isinstance(values, dict):
+                continue
+            row = dict(values)
+            geometry = item.get("geometry")
+            if geometry is not None and "geometry" not in row:
+                row["geometry"] = geometry
+            feature_id = item.get("id")
+            if feature_id not in (None, "") and "feature_id" not in row:
+                row["feature_id"] = feature_id
+            rows.append(row)
+        return rows
 
     async def _csv_sample(
         self, resource: dict[str, Any], limit: int
-    ) -> list[dict[str, str]]:
+    ) -> list[dict[str, Any]]:
         url = self._resource_url(resource)
         cached = self._csv_cache.get(url)
         if cached and cached[0] > monotonic():
@@ -432,17 +493,22 @@ class CkanProvider(JsonClient):
             rows = self._csv_samples[url][:limit]
         else:
             rows = []
-            async for row in self.async_iter_csv_rows(url):
-                rows.append(row)
-                if len(rows) >= limit:
-                    break
+            if self._is_json_resource(resource):
+                rows = self._normalize_json_rows(
+                    await self.async_get_external_json(url)
+                )[:limit]
+            else:
+                async for row in self.async_iter_csv_rows(url):
+                    rows.append(row)
+                    if len(rows) >= limit:
+                        break
             self._csv_samples[url] = rows
         if not rows:
-            raise OpenDataResponseError("CKAN CSV resource did not contain data rows")
+            raise OpenDataResponseError("CKAN file resource did not contain data rows")
         return rows
 
     @staticmethod
-    def _csv_fields(rows: list[dict[str, str]]) -> tuple[OpenDataField, ...]:
+    def _csv_fields(rows: list[dict[str, Any]]) -> tuple[OpenDataField, ...]:
         return tuple(
             OpenDataField(name=name, label=name, data_type="string")
             for name in rows[0]
@@ -454,14 +520,14 @@ class CkanProvider(JsonClient):
         timestamp_field: str | None,
         filters: dict[str, str] | None,
         limit: int,
-    ) -> list[dict[str, str]]:
+    ) -> list[dict[str, Any]]:
         all_rows = await self._cached_csv_rows(resource)
         if timestamp_field:
             resource_id = str(resource.get("id") or self._resource_url(resource))
             self._resource_frequencies[resource_id] = infer_frequency(
                 row.get(timestamp_field) for row in all_rows
             )
-            latest: list[tuple[str, int, dict[str, str]]] = []
+            latest: list[tuple[str, int, dict[str, Any]]] = []
             sequence = 0
             for row in all_rows:
                 if filters and any(
@@ -477,7 +543,7 @@ class CkanProvider(JsonClient):
                     heapreplace(latest, item)
             return [item[2] for item in sorted(latest, reverse=True)]
 
-        latest_rows: deque[dict[str, str]] = deque(maxlen=limit)
+        latest_rows: deque[dict[str, Any]] = deque(maxlen=limit)
         for row in all_rows:
             if filters and any(
                 str(row.get(field)) != str(value) for field, value in filters.items()

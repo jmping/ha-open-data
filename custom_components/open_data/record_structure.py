@@ -24,11 +24,18 @@ class RecordStructure:
     levels: tuple[RecordLevel, ...]
     record_key_fields: tuple[str, ...] = ()
     record_label_fields: tuple[str, ...] = ()
+    hierarchy_paths: tuple[tuple[str, ...], ...] = ()
 
     @property
     def unit_key_fields(self) -> tuple[str, ...]:
         """Return the composite key of the innermost unit."""
-        return tuple(field for level in self.levels for field in level.key_fields)
+        return _fields((*(
+            field
+            for path in self.hierarchy_paths
+            for field in path
+        ), *(
+            field for level in self.levels for field in level.key_fields
+        )))
 
     def as_dict(self) -> dict[str, object]:
         """Return a JSON-serializable persisted representation."""
@@ -43,12 +50,19 @@ class RecordStructure:
             ],
             "record_key_fields": list(self.record_key_fields),
             "record_label_fields": list(self.record_label_fields),
+            "hierarchy_paths": [list(path) for path in self.hierarchy_paths],
         }
 
     @property
     def unit_label_fields(self) -> tuple[str, ...]:
         """Return all configured parent-to-child label fields."""
-        return tuple(field for level in self.levels for field in level.label_fields)
+        return _fields((*(
+            field
+            for path in self.hierarchy_paths
+            for field in path
+        ), *(
+            field for level in self.levels for field in level.label_fields
+        )))
 
 
 @dataclass(slots=True, frozen=True)
@@ -75,6 +89,7 @@ def build_record_structure(
     record_key_fields: Iterable[str] = (),
     record_label_fields: Iterable[str] = (),
     parent_levels: Sequence[Mapping[str, object]] = (),
+    hierarchy_paths: Sequence[Iterable[str]] = (),
     allowed_fields: Iterable[str] | None = None,
 ) -> RecordStructure:
     """Build and validate a composite, potentially nested record structure.
@@ -86,12 +101,16 @@ def build_record_structure(
     """
     allowed = set(allowed_fields) if allowed_fields is not None else None
     levels: list[RecordLevel] = []
+    paths = tuple(path for path in (_fields(item) for item in hierarchy_paths) if path)
     for index, raw_level in enumerate(parent_levels, start=1):
         name = str(raw_level.get("name") or f"level_{index}")
         keys = _fields(raw_level.get("key_fields", ()))  # type: ignore[arg-type]
         labels = _fields(raw_level.get("label_fields", ()))  # type: ignore[arg-type]
         if not keys:
             raise ValueError(f"Record level {name!r} needs at least one key field")
+        # Older configurations represented one hierarchy as linear parent
+        # levels. Preserve it as one ordered path without pretending that
+        # independent hierarchy sets are nested beneath one another.
         levels.append(RecordLevel(name, keys, labels))
 
     unit_keys = _fields(unit_key_fields)
@@ -107,11 +126,13 @@ def build_record_structure(
         field
         for level in levels
         for field in (*level.key_fields, *level.label_fields)
+    } | {
+        field for path in paths for field in path
     } | set(record_keys) | set(record_labels)
     if allowed is not None and (unknown := used_fields - allowed):
         raise ValueError(f"Unknown or inactive record fields: {sorted(unknown)!r}")
 
-    return RecordStructure(tuple(levels), record_keys, record_labels)
+    return RecordStructure(tuple(levels), record_keys, record_labels, paths)
 
 
 def load_record_structure(raw: Mapping[str, object] | None) -> RecordStructure:
@@ -123,6 +144,11 @@ def load_record_structure(raw: Mapping[str, object] | None) -> RecordStructure:
         levels = ()
     return build_record_structure(
         parent_levels=tuple(level for level in levels if isinstance(level, Mapping)),
+        hierarchy_paths=tuple(
+            _sequence(path)
+            for path in raw.get("hierarchy_paths", ())
+            if isinstance(path, Sequence) and not isinstance(path, (str, bytes))
+        ),
         record_key_fields=_sequence(raw.get("record_key_fields")),
         record_label_fields=_sequence(raw.get("record_label_fields")),
     )

@@ -106,3 +106,24 @@ def test_interrupted_preparation_becomes_retryable_failure() -> None:
     site = registry.get("https://data.example")
     assert site.status == "failed"
     assert site.error == "interrupted"
+
+
+def test_old_prepared_catalog_is_rebuilt_after_discovery_changes() -> None:
+    class FakeStore:
+        async def async_load(self):
+            return {"sites": {"https://data.example": {
+                "portal_url": "https://data.example", "provider": "ckan",
+                "status": "ready", "updated_at": "old", "datasets": []}}}
+
+        async def async_save(self, value):
+            self.saved = value
+
+    registry = object.__new__(preparation.PreparationRegistry)
+    registry._store = FakeStore()
+    registry._sites = {}
+    registry._tasks = {}
+    asyncio.run(registry.async_load())
+
+    site = registry.get("https://data.example")
+    assert site.status == "failed"
+    assert site.error == "catalog_schema_changed"

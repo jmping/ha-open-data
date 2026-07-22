@@ -46,11 +46,19 @@ def test_nested_catalog_base_is_preserved_before_navigation_path() -> None:
 
 def test_government_landing_pages_probe_catalog_and_geodata_siblings() -> None:
     assert _sibling_portal_candidates("https://www.example.gov") == [
+        "https://ckan.example.gov",
         "https://data.example.gov",
         "https://opendata.example.gov",
         "https://catalog.example.gov",
         "https://geodata.example.gov",
     ]
+
+
+def test_portaljs_data_host_probes_ckan_sibling() -> None:
+    candidates = _sibling_portal_candidates("https://data.a2gov.org")
+
+    assert candidates[0] == "https://ckan.a2gov.org"
+    assert "https://data.a2gov.org" not in candidates
 
 
 def test_arcgis_and_localized_catalog_links_are_provider_candidates() -> None:

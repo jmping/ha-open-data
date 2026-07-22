@@ -89,6 +89,7 @@ _PORTAL_HOST_PREFIXES = (
     "opendata.",
     "open-data.",
 )
+_PORTAL_ALIAS_PREFIXES = ("ckan", "data", "opendata", "open-data", "catalog")
 _PORTAL_HOST_SUFFIXES = (
     ".arcgis.com",
     ".ckan.org",
@@ -172,16 +173,14 @@ def _sibling_portal_candidates(portal_url: str) -> list[str]:
         return []
     if host.startswith("www."):
         host = host[4:]
-    if host.startswith(_PORTAL_HOST_PREFIXES):
-        return []
-
     scheme = parsed.scheme or "https"
-    return [
-        f"{scheme}://data.{host}",
-        f"{scheme}://opendata.{host}",
-        f"{scheme}://catalog.{host}",
-        f"{scheme}://geodata.{host}",
+    first, separator, remainder = host.partition(".")
+    base_host = remainder if separator and first in _PORTAL_ALIAS_PREFIXES else host
+    candidates = [
+        f"{scheme}://{prefix}.{base_host}"
+        for prefix in ("ckan", "data", "opendata", "catalog", "geodata")
     ]
+    return [candidate for candidate in candidates if candidate != f"{scheme}://{host}"]
 
 
 def _looks_like_portal_url(url: str, source_host: str) -> bool:

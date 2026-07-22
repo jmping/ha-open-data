@@ -17,6 +17,7 @@ from .models import OpenDataDataset, OpenDataField
 STORAGE_KEY = "open_data.prepared_sites"
 STORAGE_VERSION = 1
 DATA_PREPARATIONS = "preparations"
+PREPARATION_SCHEMA_VERSION = 2
 
 
 @dataclass(slots=True, frozen=True)
@@ -29,6 +30,7 @@ class PreparedSite:
     updated_at: str
     candidates: tuple[DatasetCandidate, ...] = ()
     error: str | None = None
+    schema_version: int = PREPARATION_SCHEMA_VERSION
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -37,6 +39,7 @@ class PreparedSite:
             "status": self.status,
             "updated_at": self.updated_at,
             "error": self.error,
+            "schema_version": self.schema_version,
             "datasets": [_dataset_as_dict(item.dataset) for item in self.candidates],
         }
 
@@ -54,6 +57,7 @@ class PreparedSite:
             updated_at=str(value.get("updated_at", "")),
             candidates=datasets,
             error=value.get("error"),
+            schema_version=int(value.get("schema_version", 1)),
         )
 
 
@@ -77,6 +81,14 @@ class PreparationRegistry:
             if site.status == "preparing":
                 self._sites[key] = PreparedSite(
                     site.portal_url, site.provider, "failed", _now(), error="interrupted"
+                )
+            elif site.schema_version != PREPARATION_SCHEMA_VERSION:
+                self._sites[key] = PreparedSite(
+                    site.portal_url,
+                    site.provider,
+                    "failed",
+                    _now(),
+                    error="catalog_schema_changed",
                 )
         await self._async_save()
 
