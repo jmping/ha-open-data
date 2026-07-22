@@ -94,6 +94,89 @@ def test_catalog_keeps_csv_only_packages_and_exposes_resource_id() -> None:
     ]
 
 
+def test_catalog_includes_json_and_geojson_downloads() -> None:
+    datasets = ckan.CkanProvider._normalize_packages(
+        [
+            {
+                "name": "streetlights",
+                "title": "Streetlights",
+                "resources": [{
+                    "id": "lights-json", "format": "JSON",
+                    "url": "https://files.example/lights.json", "state": "active",
+                }],
+            },
+            {
+                "name": "parks",
+                "title": "Parks",
+                "resources": [{
+                    "id": "parks-geojson", "format": "GeoJSON",
+                    "url": "https://files.example/parks.geojson", "state": "active",
+                }],
+            },
+        ]
+    )
+
+    assert [(item.dataset_id, item.resource_id) for item in datasets] == [
+        ("streetlights", "lights-json"),
+        ("parks", "parks-geojson"),
+    ]
+
+
+def test_esri_and_geojson_features_become_mapping_rows() -> None:
+    esri = ckan.CkanProvider._normalize_json_rows({
+        "features": [{
+            "attributes": {"OBJECTID": 1, "Owner": "City"},
+            "geometry": {"x": 1, "y": 2},
+        }]
+    })
+    geojson = ckan.CkanProvider._normalize_json_rows({
+        "features": [{
+            "id": "park-1", "properties": {"name": "West Park"},
+            "geometry": {"type": "Point"},
+        }]
+    })
+
+    assert esri == [{
+        "OBJECTID": 1, "Owner": "City", "geometry": {"x": 1, "y": 2}
+    }]
+    assert geojson == [{
+        "name": "West Park", "geometry": {"type": "Point"},
+        "feature_id": "park-1",
+    }]
+
+
+def test_catalog_paging_continues_past_unsupported_first_page() -> None:
+    class PagedProvider(ckan.CkanProvider):
+        def __init__(self) -> None:
+            super().__init__(None, "https://data.example")
+            self.starts = []
+
+        async def _action(self, action: str, params: dict[str, str]):
+            assert action == "package_search"
+            start = int(params["start"])
+            self.starts.append(start)
+            if start == 0:
+                return {"results": [
+                    {"name": f"pdf-{index}", "resources": [{"format": "PDF"}]}
+                    for index in range(100)
+                ]}
+            if start == 100:
+                return {"results": [{
+                    "name": "streetlights",
+                    "resources": [{
+                        "id": "json", "format": "JSON", "state": "active",
+                        "url": "https://files.example/lights.json",
+                    }],
+                }]}
+            return {"results": []}
+
+    provider = PagedProvider()
+    datasets = asyncio.run(provider.async_list_datasets(200))
+
+    assert [item.dataset_id for item in datasets] == ["streetlights"]
+    assert provider.starts == [0, 100]
+
+
 class _CsvProvider(ckan.CkanProvider):
     def __init__(self, rows: list[dict[str, str]]) -> None:
         super().__init__(None, "https://data.example")

@@ -38,11 +38,8 @@
     "step": {
       "init": {
         "title": "Choose useful dataset fields",
-        "description": "Dataset structure: {kind}. Current identity field: {identity}. Automatic suggestions are preselected. Each category is optional, can contain several fields, and may be left empty. Fields omitted from every category are ignored.",
+        "description": "Dataset structure: {kind}. Automatic suggestions are preselected. Every category is an optional multi-select and may be empty. A field can appear in only one category; fields omitted from every category are ignored.",
         "data": {
-          "identity_field": "Record, station, or location identifier",
-          "display_field": "Record, station, or location name",
-          "timestamp_field": "Observation timestamp",
           "field_role_fields__location": "Location fields",
           "field_role_fields__time": "Time fields",
           "field_role_fields__data": "Data / measurement fields",
@@ -53,9 +50,11 @@
       },
       "structure": {
         "title": "Define units and records",
-        "description": "Combine the selected fields into stable units and observations. Keys and labels may contain several fields and may be left empty when the dataset does not need them.",
+        "description": "Combine selected fields into stable units and observations. Hierarchies are optional. Within each hierarchy set, select fields from largest/broadest to smallest/most specific; independent nested systems belong in separate sets. A record name may be used as its key.",
         "data": {
-          "hierarchy_fields": "Parent hierarchy fields",
+          "hierarchy_fields": "Hierarchy set 1 — broadest to smallest",
+          "hierarchy_fields__2": "Hierarchy set 2 — broadest to smallest (optional)",
+          "hierarchy_fields__3": "Hierarchy set 3 — broadest to smallest (optional)",
           "unit_key_fields": "Unit key fields",
           "unit_label_fields": "Unit label fields",
           "record_key_fields": "Record key fields",

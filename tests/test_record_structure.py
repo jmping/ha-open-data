@@ -82,6 +82,39 @@ def test_unit_label_requires_a_unit_key() -> None:
         structure.build_record_structure(unit_label_fields=("station_name",))
 
 
+def test_multiple_ordered_hierarchy_paths_are_optional_and_independent() -> None:
+    configured = structure.build_record_structure(
+        hierarchy_paths=(
+            ("country", "city", "station"),
+            ("system", "sensor_type"),
+        ),
+        unit_key_fields=("record_name",),
+        unit_label_fields=("record_name",),
+        allowed_fields={
+            "country", "city", "station", "system", "sensor_type", "record_name"
+        },
+    )
+
+    assert configured.hierarchy_paths == (
+        ("country", "city", "station"),
+        ("system", "sensor_type"),
+    )
+    assert configured.unit_key_fields == (
+        "country", "city", "station", "system", "sensor_type", "record_name"
+    )
+    assert structure.load_record_structure(configured.as_dict()) == configured
+
+
+def test_record_name_can_be_the_only_unit_identifier() -> None:
+    configured = structure.build_record_structure(
+        unit_key_fields=("record_name",),
+        allowed_fields={"record_name"},
+    )
+
+    assert configured.unit_key_fields == ("record_name",)
+    assert configured.hierarchy_paths == ()
+
+
 def test_composite_selections_round_trip_to_provider_filters() -> None:
     configured = structure.build_record_structure(
         parent_levels=(

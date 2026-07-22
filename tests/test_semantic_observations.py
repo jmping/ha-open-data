@@ -104,3 +104,20 @@ def test_selected_fields_narrow_data_without_promoting_other_roles() -> None:
     )
 
     assert [item.metric for item in observations.values()] == ["humidity"]
+
+
+def test_csv_measurements_become_numeric_time_series_values() -> None:
+    configured = records.build_record_structure(unit_key_fields=("station",))
+    observations = semantic.normalize_observations(
+        [{"station": "A", "observed_at": "2026-07-21T12:00:00Z", "pm25": "7.25"}],
+        field_roles={
+            "station": roles.FIELD_ROLE_LOCATION,
+            "observed_at": roles.FIELD_ROLE_TIME,
+            "pm25": roles.FIELD_ROLE_DATA,
+        },
+        structure=configured,
+    )
+
+    observation = next(iter(observations.values()))
+    assert observation.value == 7.25
+    assert isinstance(observation.value, float)

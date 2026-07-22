@@ -378,6 +378,13 @@ class OpenDataObservationSensor(OpenDataSensorBase):
         observation = coordinator.data.observations[stream_id]
         self._attr_name = observation.metric
         self._attr_unique_id = f"{self._identifier}:stream:{stream_id}"
+        if isinstance(observation.value, (int, float)) and not isinstance(
+            observation.value, bool
+        ):
+            # Measurement state tells Recorder/statistics that this entity is
+            # an over-time stream even though a sensor's visible state is the
+            # newest point. Historical rows begin accumulating immediately.
+            self._attr_state_class = SensorStateClass.MEASUREMENT
 
     @property
     def native_value(self) -> Any:

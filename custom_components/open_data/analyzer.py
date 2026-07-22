@@ -110,7 +110,7 @@ def _candidate_fields(field_names: Iterable[str], preferred: tuple[str, ...]) ->
                 candidate = (1, index)
                 if best is None or candidate < best:
                     best = candidate
-            elif term in norm:
+            elif len(term) > 3 and term in norm:
                 candidate = (2, index)
                 if best is None or candidate < best:
                     best = candidate
@@ -320,17 +320,26 @@ def analyze_dataset(
     """Analyze schema, provider metadata, ontology matches, and bounded samples."""
     rows = sample_rows or []
     fields = tuple(field.name for field in dataset.fields)
+    provider_helper_fields = {
+        name
+        for name in fields
+        if name.startswith(":@")
+        or _norm(name) in {
+            "shape_starea", "shape_stlength", "objectid", "geometry", "the_geom"
+        }
+    }
+    semantic_fields = tuple(name for name in fields if name not in provider_helper_fields)
     profile = match_dataset_profile(dataset)
     mappings = {
         mapping.source_field: mapping.canonical_metric
         for mapping in map_fields(dataset.fields)
     }
 
-    identity_fields = list(_candidate_fields(fields, _IDENTIFIER_TERMS))
-    display_fields = list(_candidate_fields(fields, _DISPLAY_TERMS))
-    timestamp_fields = list(_candidate_fields(fields, _TIME_TERMS))
-    location_fields = list(_candidate_fields(fields, _LOCATION_TERMS))
-    location_scores, time_scores = _data_role_scores(fields, rows)
+    identity_fields = list(_candidate_fields(semantic_fields, _IDENTIFIER_TERMS))
+    display_fields = list(_candidate_fields(semantic_fields, _DISPLAY_TERMS))
+    timestamp_fields = list(_candidate_fields(semantic_fields, _TIME_TERMS))
+    location_fields = list(_candidate_fields(semantic_fields, _LOCATION_TERMS))
+    location_scores, time_scores = _data_role_scores(semantic_fields, rows)
 
     if len(rows) >= 2:
         identity_fields = [
@@ -345,16 +354,16 @@ def analyze_dataset(
             ) >= 2
         ]
 
-    for field in sorted(fields, key=lambda item: (-location_scores[item], item.casefold())):
+    for field in sorted(semantic_fields, key=lambda item: (-location_scores[item], item.casefold())):
         if location_scores[field] >= 0.55 and field not in identity_fields:
             identity_fields.append(field)
         if location_scores[field] >= 0.45 and field not in location_fields:
             location_fields.append(field)
 
-    for field in sorted(fields, key=lambda item: (-time_scores[item], item.casefold())):
+    for field in sorted(semantic_fields, key=lambda item: (-time_scores[item], item.casefold())):
         if time_scores[field] >= 0.55 and field not in timestamp_fields:
             timestamp_fields.append(field)
-    for field in _temporal_fields(fields, rows):
+    for field in _temporal_fields(semantic_fields, rows):
         if field not in timestamp_fields:
             timestamp_fields.append(field)
 
@@ -381,19 +390,20 @@ def analyze_dataset(
             identity is None
             or len({str(value) for value in identity_values}) == len(identity_values)
         )
-        if identity_is_row_unique:
+        identity_cardinality = len({str(value) for value in identity_values})
+        if identity_is_row_unique or identity_cardinality <= 1:
             repeated_display = next(
                 (
                     field
                     for field in display_fields
-                    if 0
-                    < len(
+                    if (display_cardinality := len(
                         {
                             str(row[field])
                             for row in rows
                             if row.get(field) not in (None, "")
                         }
-                    )
+                    )) > (0 if identity_is_row_unique else identity_cardinality)
+                    and display_cardinality
                     < len(
                         [
                             row[field]
@@ -415,7 +425,7 @@ def analyze_dataset(
 
     hierarchy = tuple(
         name
-        for name in fields
+        for name in semantic_fields
         if name not in {identity, display, timestamp, geometry_field}
         and any(term == _norm(name) or term in _norm(name) for term in _HIERARCHY_TERMS)
     )
@@ -424,18 +434,22 @@ def analyze_dataset(
         for name, metric in mappings.items()
         if metric not in {"station", "timestamp", "latitude", "longitude"}
     )
-    structural = {
-        identity, display, timestamp, geometry_field, *identity_fields, *display_fields,
-        *timestamp_fields, *location_fields, *hierarchy,
-    }
-    ignored = tuple(
-        name
-        for name in fields
-        if name in structural
-        or _norm(name) in {"shape_starea", "shape_stlength", "objectid", "geometry", "the_geom"}
+    ignored = tuple(name for name in fields if name in provider_helper_fields)
+
+    numeric_observation = any(
+        name not in {
+            identity, display, timestamp, geometry_field,
+            *identity_fields, *display_fields, *timestamp_fields, *location_fields,
+            *hierarchy,
+        }
+        and (
+            values := [row.get(name) for row in rows if row.get(name) not in (None, "")]
+        )
+        and sum(_looks_numeric(value) for value in values) / len(values) >= 0.6
+        for name in semantic_fields
     )
 
-    if timestamp and identity and metric_fields:
+    if timestamp and identity and (metric_fields or numeric_observation):
         kind = "time_series"
     elif identity and geometry_type in {"point", "multipoint", "location"}:
         kind = "locations"
@@ -479,6 +493,17 @@ def analyze_dataset(
         timestamp_fields=tuple(timestamp_fields),
         location_fields=tuple(location_fields),
     )
+
+
+def _looks_numeric(value: Any) -> bool:
+    """Return whether provider data represents a finite numeric observation."""
+    if isinstance(value, bool) or value is None:
+        return False
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return False
+    return number == number and number not in {float("inf"), float("-inf")}
 
 
 def dataset_hypotheses(

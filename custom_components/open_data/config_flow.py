@@ -10,7 +10,12 @@ from homeassistant import config_entries
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.selector import SelectOptionDict, SelectSelector, SelectSelectorConfig
+from homeassistant.helpers.selector import (
+    SelectOptionDict,
+    SelectSelector,
+    SelectSelectorConfig,
+    SelectSelectorMode,
+)
 
 from .analyzer import DatasetStructure, analyze_dataset, build_selectable_records
 from .const import (
@@ -21,6 +26,7 @@ from .const import (
     CONF_FIELD_MAPPINGS,
     CONF_FIELD_ROLES,
     CONF_HIERARCHY_FIELDS,
+    CONF_HIERARCHY_SETS,
     CONF_IDENTITY_FIELD,
     CONF_IDENTITY_FIELDS,
     CONF_IGNORED_FIELDS,
@@ -69,9 +75,8 @@ from .record_structure import (
 )
 from .options_reconciliation import reconcile_options
 
-_DISCOVERY_LIMIT = 50
+_DISCOVERY_LIMIT = 500
 _CATALOG_LIMIT = 500
-_VALIDATION_LIMIT = 150
 _RECORD_LIMIT = 500
 _AUTO_RECORD_LIMIT = 100
 _FIELD_ROLE_CATEGORY_PREFIX = "field_role_fields__"
@@ -243,21 +248,12 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._portal_url = inspected.description.portal_url
         self._provider_name = inspected.description.provider
         datasets, _errors = await async_discover_catalog(inspected, limit=_CATALOG_LIMIT)
-        ranked = rank_datasets(datasets)
-        usable: list[DatasetCandidate] = []
-        for candidate in ranked[:_VALIDATION_LIMIT]:
-            try:
-                dataset = await inspected.provider.async_get_dataset(
-                    candidate.dataset.dataset_id
-                )
-            except OpenDataResponseError:
-                continue
-            usable.append(score_dataset(dataset))
-            if len(usable) >= _DISCOVERY_LIMIT:
-                break
-        return sorted(
-            usable, key=lambda item: (-item.score, item.dataset.title.casefold())
-        )
+        # Catalog enumeration must stay a metadata-only operation. Eagerly
+        # opening as many as 150 resources made large Socrata portals spin for
+        # minutes and turned a transient error in one dataset into an apparent
+        # portal failure. The selected datasets are still fully validated in
+        # _async_prepare_dataset_entry.
+        return rank_datasets(datasets)[:_DISCOVERY_LIMIT]
 
     async def _async_prepare_dataset_entry(
         self, discovered: OpenDataDataset
@@ -359,15 +355,6 @@ class OpenDataOptionsFlow(config_entries.OptionsFlow):
         self._structure_options: dict[str, Any] = {}
 
     @staticmethod
-    def _field_selector(values: list[str]) -> SelectSelector:
-        return SelectSelector(
-            SelectSelectorConfig(
-                options=[SelectOptionDict(value=value, label=value) for value in values],
-                multiple=False,
-            )
-        )
-
-    @staticmethod
     def _fields_selector(values: list[str]) -> SelectSelector:
         return SelectSelector(
             SelectSelectorConfig(
@@ -375,6 +362,8 @@ class OpenDataOptionsFlow(config_entries.OptionsFlow):
                     SelectOptionDict(value=value, label=value) for value in values
                 ],
                 multiple=True,
+                mode=SelectSelectorMode.LIST,
+                sort=False,
             )
         )
 
@@ -410,21 +399,6 @@ class OpenDataOptionsFlow(config_entries.OptionsFlow):
         dataset = coordinator.data.dataset
         ignored = set(self._config_entry.data.get(CONF_IGNORED_FIELDS, ()))
         all_fields = [field.name for field in dataset.fields if field.name not in ignored]
-        identity_fields = list(
-            dict.fromkeys(
-                (*self._config_entry.data.get(CONF_IDENTITY_FIELDS, ()), *all_fields)
-            )
-        )
-        display_fields = list(
-            dict.fromkeys(
-                (*self._config_entry.data.get(CONF_DISPLAY_FIELDS, ()), *all_fields)
-            )
-        )
-        timestamp_fields = list(
-            dict.fromkeys(
-                (*self._config_entry.data.get(CONF_TIMESTAMP_FIELDS, ()), *all_fields)
-            )
-        )
         current_roles = self._current(CONF_FIELD_ROLES) or {}
         if not current_roles:
             role_rows = (
@@ -453,21 +427,11 @@ class OpenDataOptionsFlow(config_entries.OptionsFlow):
 
         schema: dict[Any, Any] = {}
         identity = self._current(CONF_IDENTITY_FIELD)
-        display = self._current(CONF_DISPLAY_FIELD)
-        timestamp = self._current(CONF_TIMESTAMP_FIELD)
-        if identity_fields:
-            schema[vol.Optional(CONF_IDENTITY_FIELD, default=identity)] = self._field_selector(
-                identity_fields
-            )
-        if display_fields:
-            schema[vol.Optional(CONF_DISPLAY_FIELD, default=display)] = self._field_selector(
-                display_fields
-            )
-        if timestamp_fields:
-            schema[vol.Optional(CONF_TIMESTAMP_FIELD, default=timestamp)] = self._field_selector(
-                timestamp_fields
-            )
-        role_fields = [field.name for field in dataset.fields]
+        # The role categories and following structure step supersede the three
+        # legacy single-choice selectors. Besides duplicating the same choices,
+        # their None defaults produced Home Assistant's raw "expected str"
+        # validation error. A record name can now be used directly as a unit key.
+        role_fields = all_fields
         for role, _label in _FIELD_ROLE_OPTIONS:
             role_key = f"{_FIELD_ROLE_CATEGORY_PREFIX}{role}"
             schema[vol.Optional(
@@ -500,21 +464,25 @@ class OpenDataOptionsFlow(config_entries.OptionsFlow):
         }
         if user_input is not None:
             submitted = dict(user_input)
+            hierarchy_sets = tuple(
+                tuple(submitted.pop(key, ()) or ())
+                for key in (
+                    CONF_HIERARCHY_FIELDS,
+                    f"{CONF_HIERARCHY_FIELDS}__2",
+                    f"{CONF_HIERARCHY_FIELDS}__3",
+                )
+                if submitted.get(key)
+            )
+            submitted[CONF_HIERARCHY_SETS] = [list(path) for path in hierarchy_sets]
+            submitted[CONF_HIERARCHY_FIELDS] = list(
+                dict.fromkeys(field for path in hierarchy_sets for field in path)
+            )
             submitted[CONF_RECORD_STRUCTURE] = build_record_structure(
                 unit_key_fields=submitted.get(CONF_UNIT_KEY_FIELDS, ()),
                 unit_label_fields=submitted.get(CONF_UNIT_LABEL_FIELDS, ()),
                 record_key_fields=submitted.get(CONF_RECORD_KEY_FIELDS, ()),
                 record_label_fields=submitted.get(CONF_RECORD_LABEL_FIELDS, ()),
-                parent_levels=tuple(
-                    {
-                        "name": f"parent_{index}",
-                        "key_fields": (field,),
-                        "label_fields": (field,),
-                    }
-                    for index, field in enumerate(
-                        submitted.get(CONF_HIERARCHY_FIELDS, ()), start=1
-                    )
-                ),
+                hierarchy_paths=hierarchy_sets,
                 allowed_fields=active_fields,
             ).as_dict()
             self._structure_options.update(submitted)
@@ -571,15 +539,29 @@ class OpenDataOptionsFlow(config_entries.OptionsFlow):
         current_record_labels = [
             field for field in current_record_labels if field in record_fields
         ]
-        schema: dict[Any, Any] = {
-            vol.Optional(
+        current_hierarchy_sets = self._current(CONF_HIERARCHY_SETS) or (
+            self._current(CONF_HIERARCHY_FIELDS) or (),
+        )
+        current_hierarchy_sets = tuple(
+            tuple(field for field in path if field in label_fields)
+            for path in current_hierarchy_sets
+            if isinstance(path, (list, tuple))
+        )
+        schema: dict[Any, Any] = {}
+        for index, key in enumerate(
+            (
                 CONF_HIERARCHY_FIELDS,
-                default=[
-                    field
-                    for field in (self._current(CONF_HIERARCHY_FIELDS) or ())
-                    if field in label_fields
-                ],
-            ): self._fields_selector(label_fields),
+                f"{CONF_HIERARCHY_FIELDS}__2",
+                f"{CONF_HIERARCHY_FIELDS}__3",
+            )
+        ):
+            schema[vol.Optional(
+                key,
+                default=list(current_hierarchy_sets[index])
+                if index < len(current_hierarchy_sets)
+                else [],
+            )] = self._fields_selector(label_fields)
+        schema.update({
             vol.Optional(
                 CONF_UNIT_KEY_FIELDS, default=list(current_unit_keys)
             ): self._fields_selector(unit_fields),
@@ -592,7 +574,7 @@ class OpenDataOptionsFlow(config_entries.OptionsFlow):
             vol.Optional(
                 CONF_RECORD_LABEL_FIELDS, default=list(current_record_labels)
             ): self._fields_selector(record_fields),
-        }
+        })
         return self.async_show_form(
             step_id="structure",
             data_schema=vol.Schema(schema),

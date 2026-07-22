@@ -57,6 +57,40 @@ def test_stream_dataset_becomes_selectable_time_series() -> None:
     assert set(structure.metric_fields) >= {"gage_height", "discharge"}
 
 
+def test_socrata_computed_regions_do_not_break_open_air_time_series() -> None:
+    dataset = OpenDataDataset(
+        dataset_id="xfya-dxtq",
+        title="Open Air Chicago Individual Measurements",
+        fields=tuple(
+            OpenDataField(name, name)
+            for name in (
+                "time", "sensor_name", "pm2_5concmassindividual_value",
+                "latitude", "longitude", "location", ":@computed_region_rpca_8um6",
+            )
+        ),
+    )
+    rows = [
+        {
+            "time": f"2026-07-21T0{hour}:00:00.000",
+            "sensor_name": sensor,
+            "pm2_5concmassindividual_value": str(8 + hour),
+            "latitude": "41.9",
+            "longitude": "-87.6",
+            "location": {"type": "Point", "coordinates": [-87.6, 41.9]},
+            ":@computed_region_rpca_8um6": "1",
+        }
+        for hour, sensor in enumerate(("A", "B", "A", "B"))
+    ]
+
+    result = analyzer.analyze_dataset(dataset, rows)
+
+    assert result.kind == "time_series"
+    assert result.identity_field == "sensor_name"
+    assert result.timestamp_field == "time"
+    assert result.hierarchy_fields == ()
+    assert result.ignored_fields == (":@computed_region_rpca_8um6",)
+
+
 def test_polygon_dataset_is_not_treated_as_measurement_set() -> None:
     dataset = OpenDataDataset(
         dataset_id="counties",

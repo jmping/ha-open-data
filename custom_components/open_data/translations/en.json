@@ -4,18 +4,25 @@
     "step": {
       "user": {
         "title": "Discover public datasets",
-        "description": "Enter an institution's public data portal URL. Open Data will detect the provider and rank useful datasets automatically.",
+        "description": "Enter an institution's public data portal URL. Open Data will prepare and cache the site structure. Large catalogs and CSV/JSON files can take several minutes to download; you can leave this screen and return later without affecting regular Home Assistant updates.",
         "data": {
           "portal_url": "Portal URL"
         }
       },
       "discover": {
         "title": "Choose discovered datasets",
-        "description": "Found {count} ranked datasets on {portal} using {provider}. Scores favor queryable environmental, weather, air-quality, water, climate, and energy data.",
+        "description": "Site preparation is complete. Found {count} ranked datasets on {portal} using {provider}. Selecting a large CSV or JSON file may take another minute while its fields and update frequency are prepared and cached.",
         "data": {
           "dataset_ids": "Datasets"
         }
+      },
+      "prepare": {
+        "title": "Prepare site catalog",
+        "description": "Preparing the site catalog in the background. Large catalogs and file resources can take several minutes. You may close this dialog and return later; no entities or regular downloads begin until you select and configure a dataset."
       }
+    },
+    "progress": {
+      "prepare_catalog": "Inspecting the portal, cataloguing datasets, and saving the catalog for later selection"
     },
     "error": {
       "cannot_connect": "Unable to connect to the portal.",
@@ -31,11 +38,8 @@
     "step": {
       "init": {
         "title": "Choose useful dataset fields",
-        "description": "Dataset structure: {kind}. Current identity field: {identity}. Automatic suggestions are preselected. Each category is optional, can contain several fields, and may be left empty. Fields omitted from every category are ignored.",
+        "description": "Dataset structure: {kind}. Automatic suggestions are preselected. Every category is an optional multi-select and may be empty. A field can appear in only one category; fields omitted from every category are ignored.",
         "data": {
-          "identity_field": "Record, station, or location identifier",
-          "display_field": "Record, station, or location name",
-          "timestamp_field": "Observation timestamp",
           "field_role_fields__location": "Location fields",
           "field_role_fields__time": "Time fields",
           "field_role_fields__data": "Data / measurement fields",
@@ -46,9 +50,11 @@
       },
       "structure": {
         "title": "Define units and records",
-        "description": "Combine the selected fields into stable units and observations. Keys and labels may contain several fields and may be left empty when the dataset does not need them.",
+        "description": "Combine selected fields into stable units and observations. Hierarchies are optional. Within each hierarchy set, select fields from largest/broadest to smallest/most specific; independent nested systems belong in separate sets. A record name may be used as its key.",
         "data": {
-          "hierarchy_fields": "Parent hierarchy fields",
+          "hierarchy_fields": "Hierarchy set 1 — broadest to smallest",
+          "hierarchy_fields__2": "Hierarchy set 2 — broadest to smallest (optional)",
+          "hierarchy_fields__3": "Hierarchy set 3 — broadest to smallest (optional)",
           "unit_key_fields": "Unit key fields",
           "unit_label_fields": "Unit label fields",
           "record_key_fields": "Record key fields",
