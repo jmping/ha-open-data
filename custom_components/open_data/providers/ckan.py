@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+from collections import deque
+from heapq import heappush, heapreplace
 from typing import Any
 
 from ..models import OpenDataDataset, OpenDataField
@@ -24,7 +26,7 @@ class CkanProvider(JsonClient):
         supports_spatial_queries=False,
         supports_incremental_updates=False,
         supports_statistics=True,
-        supports_streaming=False,
+        supports_streaming=True,
         supports_sample_rows=True,
         supports_distinct_values=True,
     )
@@ -59,29 +61,40 @@ class CkanProvider(JsonClient):
             raise OpenDataResponseError("CKAN package metadata was not valid")
         selected_resource = self._select_resource(package, resource_id)
         selected_id = selected_resource.get("id")
-        result = await self._action(
-            "datastore_search", {"resource_id": selected_id, "limit": "0"}
-        )
-        if not isinstance(result, dict):
-            raise OpenDataResponseError("CKAN DataStore metadata was not valid")
-        fields = tuple(
-            OpenDataField(
-                name=field.get("id", ""),
-                label=field.get("info", {}).get("label") or field.get("id", ""),
-                data_type=field.get("type", "string"),
-                description=field.get("info", {}).get("notes"),
+        if self._is_csv_resource(selected_resource):
+            sample = await self._csv_sample(selected_resource, 50)
+            fields = self._csv_fields(sample)
+        else:
+            result = await self._action(
+                "datastore_search", {"resource_id": selected_id, "limit": "0"}
             )
-            for field in result.get("fields", [])
-            if isinstance(field, dict) and field.get("id") != "_id"
-        )
+            if not isinstance(result, dict):
+                raise OpenDataResponseError("CKAN DataStore metadata was not valid")
+            fields = tuple(
+                OpenDataField(
+                    name=field.get("id", ""),
+                    label=field.get("info", {}).get("label") or field.get("id", ""),
+                    data_type=field.get("type", "string"),
+                    description=field.get("info", {}).get("notes"),
+                )
+                for field in result.get("fields", [])
+                if isinstance(field, dict) and field.get("id") != "_id"
+            )
+        raw = dict(package)
+        raw["_selected_resource"] = selected_resource
         return OpenDataDataset(
             dataset_id=package.get("name") or package.get("id") or dataset_id,
             title=package.get("title") or package.get("name") or dataset_id,
             description=package.get("notes"),
             resource_id=selected_id,
             fields=fields,
-            raw=package,
+            raw=raw,
         )
+
+    @staticmethod
+    def _selected_resource(dataset: OpenDataDataset) -> dict[str, Any]:
+        resource = dataset.raw.get("_selected_resource")
+        return resource if isinstance(resource, dict) else {}
 
     async def async_latest_row(
         self,
@@ -91,6 +104,11 @@ class CkanProvider(JsonClient):
         filters: dict[str, str] | None = None,
     ) -> dict[str, Any] | None:
         dataset = await self.async_get_dataset(dataset_id, resource_id)
+        if self._is_csv_resource(self._selected_resource(dataset)):
+            rows = await self._csv_observation_rows(
+                self._selected_resource(dataset), timestamp_field, filters, 1
+            )
+            return rows[0] if rows else None
         params = {"resource_id": dataset.resource_id or "", "limit": "1"}
         safe_fields = {field.name for field in dataset.fields}
         if timestamp_field:
@@ -115,6 +133,10 @@ class CkanProvider(JsonClient):
         limit: int = 50,
     ) -> list[dict[str, Any]]:
         dataset = await self.async_get_dataset(dataset_id, resource_id)
+        if self._is_csv_resource(self._selected_resource(dataset)):
+            return await self._csv_sample(
+                self._selected_resource(dataset), min(max(limit, 1), 200)
+            )
         result = await self._action(
             "datastore_search",
             {
@@ -142,6 +164,13 @@ class CkanProvider(JsonClient):
             raise ValueError("Timestamp field is not present in the CKAN resource")
         if filters and not set(filters).issubset(safe_fields):
             raise ValueError("Filter field is not present in the CKAN resource")
+        if self._is_csv_resource(self._selected_resource(dataset)):
+            return await self._csv_observation_rows(
+                self._selected_resource(dataset),
+                timestamp_field,
+                filters,
+                min(max(limit, 1), 500),
+            )
         params = {
             "resource_id": dataset.resource_id or "",
             "limit": str(min(max(limit, 1), 500)),
@@ -174,6 +203,16 @@ class CkanProvider(JsonClient):
                 requested.append(field)
         if not set(requested).issubset(safe_fields):
             raise ValueError("Distinct field is not present in the CKAN resource")
+        if self._is_csv_resource(self._selected_resource(dataset)):
+            found: dict[tuple[str, ...], dict[str, Any]] = {}
+            async for row in self.async_iter_csv_rows(
+                self._resource_url(self._selected_resource(dataset))
+            ):
+                key = tuple(str(row.get(field, "")) for field in requested)
+                found.setdefault(key, {field: row.get(field) for field in requested})
+                if len(found) >= min(max(limit, 1), 1000):
+                    break
+            return list(found.values())
         quoted = ", ".join(f'"{field}"' for field in requested)
         sql = (
             f'SELECT DISTINCT {quoted} FROM "{dataset.resource_id}" '
@@ -185,18 +224,28 @@ class CkanProvider(JsonClient):
             raise OpenDataResponseError("CKAN distinct query did not return records")
         return records
 
-    @staticmethod
-    def _normalize_packages(packages: Any) -> list[OpenDataDataset]:
-        return [
-            OpenDataDataset(
-                dataset_id=package.get("name", ""),
-                title=package.get("title") or package.get("name", ""),
-                description=package.get("notes"),
-                raw=package,
+    @classmethod
+    def _normalize_packages(cls, packages: Any) -> list[OpenDataDataset]:
+        normalized = []
+        if not isinstance(packages, list):
+            return normalized
+        for package in packages:
+            if not isinstance(package, dict) or not package.get("name"):
+                continue
+            try:
+                resource = cls._select_resource(package, None)
+            except OpenDataResponseError:
+                continue
+            normalized.append(
+                OpenDataDataset(
+                    dataset_id=package["name"],
+                    title=package.get("title") or package["name"],
+                    description=package.get("notes"),
+                    resource_id=resource.get("id"),
+                    raw=package,
+                )
             )
-            for package in packages
-            if isinstance(package, dict) and package.get("name")
-        ] if isinstance(packages, list) else []
+        return normalized
 
     async def async_search_datasets(
         self, query: str, limit: int = 20
@@ -244,18 +293,105 @@ class CkanProvider(JsonClient):
             )
             if selected is None:
                 raise OpenDataResponseError("Requested CKAN resource was not found")
-            if not selected.get("datastore_active"):
-                raise OpenDataResponseError("Requested CKAN resource is not DataStore-enabled")
+            if not CkanProvider._is_csv_resource(selected) and not selected.get(
+                "datastore_active"
+            ):
+                raise OpenDataResponseError(
+                    "Requested CKAN resource is neither CSV nor DataStore-enabled"
+                )
             return selected
-        selected = next(
-            (
-                item
-                for item in resources
-                if item.get("datastore_active")
-                and item.get("state", "active") == "active"
-            ),
-            None,
-        )
+        csv_resources = [
+            item
+            for item in resources
+            if CkanProvider._is_csv_resource(item)
+            and item.get("state", "active") == "active"
+        ]
+        selected = max(csv_resources, key=CkanProvider._resource_freshness, default=None)
         if selected is None:
-            raise OpenDataResponseError("CKAN dataset has no active DataStore resource")
+            selected = next(
+                (
+                    item
+                    for item in resources
+                    if item.get("datastore_active")
+                    and item.get("state", "active") == "active"
+                ),
+                None,
+            )
+        if selected is None:
+            raise OpenDataResponseError("CKAN dataset has no active CSV or DataStore resource")
         return selected
+
+    @staticmethod
+    def _is_csv_resource(resource: dict[str, Any]) -> bool:
+        format_name = str(resource.get("format") or "").strip().casefold()
+        media_type = str(resource.get("mimetype") or "").strip().casefold()
+        url = str(resource.get("url") or "").casefold().split("?", 1)[0]
+        return format_name == "csv" or "text/csv" in media_type or url.endswith(".csv")
+
+    @staticmethod
+    def _resource_freshness(resource: dict[str, Any]) -> str:
+        return str(
+            resource.get("last_modified")
+            or resource.get("metadata_modified")
+            or resource.get("created")
+            or ""
+        )
+
+    @staticmethod
+    def _resource_url(resource: dict[str, Any]) -> str:
+        url = resource.get("url")
+        if not isinstance(url, str) or not url.strip():
+            raise OpenDataResponseError("CKAN CSV resource did not contain a download URL")
+        return url
+
+    async def _csv_sample(
+        self, resource: dict[str, Any], limit: int
+    ) -> list[dict[str, str]]:
+        rows = []
+        async for row in self.async_iter_csv_rows(self._resource_url(resource)):
+            rows.append(row)
+            if len(rows) >= limit:
+                break
+        if not rows:
+            raise OpenDataResponseError("CKAN CSV resource did not contain data rows")
+        return rows
+
+    @staticmethod
+    def _csv_fields(rows: list[dict[str, str]]) -> tuple[OpenDataField, ...]:
+        return tuple(
+            OpenDataField(name=name, label=name, data_type="string")
+            for name in rows[0]
+        )
+
+    async def _csv_observation_rows(
+        self,
+        resource: dict[str, Any],
+        timestamp_field: str | None,
+        filters: dict[str, str] | None,
+        limit: int,
+    ) -> list[dict[str, str]]:
+        if timestamp_field:
+            latest: list[tuple[str, int, dict[str, str]]] = []
+            sequence = 0
+            async for row in self.async_iter_csv_rows(self._resource_url(resource)):
+                if filters and any(
+                    str(row.get(field)) != str(value)
+                    for field, value in filters.items()
+                ):
+                    continue
+                item = (str(row.get(timestamp_field, "")), sequence, row)
+                sequence += 1
+                if len(latest) < limit:
+                    heappush(latest, item)
+                elif item[:2] > latest[0][:2]:
+                    heapreplace(latest, item)
+            return [item[2] for item in sorted(latest, reverse=True)]
+
+        latest_rows: deque[dict[str, str]] = deque(maxlen=limit)
+        async for row in self.async_iter_csv_rows(self._resource_url(resource)):
+            if filters and any(
+                str(row.get(field)) != str(value) for field, value in filters.items()
+            ):
+                continue
+            latest_rows.append(row)
+        return list(reversed(latest_rows))
