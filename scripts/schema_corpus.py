@@ -14,7 +14,7 @@ from dataclasses import asdict, dataclass
 import hashlib
 import json
 from pathlib import Path
-import re
+import unicodedata
 from typing import Any, Iterable
 
 MAX_SAMPLE_ROWS = 5
@@ -23,7 +23,17 @@ MAX_SAMPLE_VALUE_LENGTH = 160
 
 def normalize_field_name(value: str) -> str:
     """Return a conservative comparison key without discarding non-Latin text."""
-    return re.sub(r"[^\w]+", "_", value.casefold(), flags=re.UNICODE).strip("_")
+    normalized: list[str] = []
+    previous_was_separator = False
+    for character in value.casefold():
+        category = unicodedata.category(character)
+        if character == "_" or category[0] in {"L", "M", "N"}:
+            normalized.append(character)
+            previous_was_separator = False
+        elif not previous_was_separator:
+            normalized.append("_")
+            previous_was_separator = True
+    return "".join(normalized).strip("_")
 
 
 @dataclass(frozen=True, slots=True)
