@@ -145,3 +145,28 @@ def test_csv_schema_and_latest_rows_do_not_query_datastore() -> None:
         {"station": "A", "observed_at": "2026-07-22", "pm2_5": "7"}
     ]
     assert set(provider.actions) == {"package_show"}
+
+
+def test_full_csv_is_reused_for_multiple_record_filters() -> None:
+    provider = _CsvProvider(
+        [
+            {"station": "A", "observed_at": "2026-07-21", "pm2_5": "7"},
+            {"station": "B", "observed_at": "2026-07-21", "pm2_5": "8"},
+        ]
+    )
+    downloads = 0
+    original = provider.async_iter_csv_rows
+
+    async def counted(url: str):
+        nonlocal downloads
+        downloads += 1
+        async for row in original(url):
+            yield row
+
+    provider.async_iter_csv_rows = counted
+    asyncio.run(provider.async_get_dataset("air-quality"))
+    asyncio.run(provider.async_observation_rows("air-quality", None, "observed_at", {"station": "A"}))
+    asyncio.run(provider.async_observation_rows("air-quality", None, "observed_at", {"station": "B"}))
+
+    # One bounded schema sample, then one complete cached preparation pass.
+    assert downloads == 2

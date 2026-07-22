@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections import deque
+from datetime import timedelta
 from heapq import heappush, heapreplace
+from time import monotonic
 from typing import Any
 
 from ..models import OpenDataDataset, OpenDataField
+from ..refresh_policy import SourceFreshness, infer_frequency, parse_timestamp
 from .base import OpenDataResponseError, ProviderCapabilities
 from .common import JsonClient
 
@@ -30,6 +34,34 @@ class CkanProvider(JsonClient):
         supports_sample_rows=True,
         supports_distinct_values=True,
     )
+
+    def __init__(self, session: Any, portal_url: str) -> None:
+        super().__init__(session, portal_url)
+        self._csv_cache: dict[str, tuple[float, list[dict[str, str]]]] = {}
+        self._csv_samples: dict[str, list[dict[str, str]]] = {}
+        self._csv_locks: dict[str, asyncio.Lock] = {}
+        self._resource_frequencies: dict[str, timedelta | None] = {}
+        self._incremental_verified: set[str] = set()
+        self._csv_retry_after: dict[str, float] = {}
+
+    async def _cached_csv_rows(
+        self, resource: dict[str, Any], *, force: bool = False
+    ) -> list[dict[str, str]]:
+        """Download a CSV once per refresh window and share it across consumers."""
+        url = self._resource_url(resource)
+        cached = self._csv_cache.get(url)
+        if not force and cached and cached[0] > monotonic():
+            return cached[1]
+        lock = self._csv_locks.setdefault(url, asyncio.Lock())
+        async with lock:
+            cached = self._csv_cache.get(url)
+            if not force and cached and cached[0] > monotonic():
+                return cached[1]
+            rows = [row async for row in self.async_iter_csv_rows(url)]
+            if not rows:
+                raise OpenDataResponseError("CKAN CSV resource did not contain data rows")
+            self._csv_cache[url] = (monotonic() + 15 * 60, rows)
+            return rows
 
     async def _action(self, action: str, params: dict[str, str]) -> Any:
         payload = await self.async_get_json(f"/api/3/action/{action}", params=params)
@@ -165,8 +197,31 @@ class CkanProvider(JsonClient):
         if filters and not set(filters).issubset(safe_fields):
             raise ValueError("Filter field is not present in the CKAN resource")
         if self._is_csv_resource(self._selected_resource(dataset)):
+            resource = self._selected_resource(dataset)
+            if timestamp_field and resource.get("datastore_active"):
+                api_rows = await self._datastore_observation_rows(
+                    dataset, timestamp_field, filters, limit
+                )
+                if api_rows:
+                    csv_rows = await self._csv_observation_rows(
+                        resource, timestamp_field, filters, min(max(limit, 1), 500)
+                    )
+                    resource_key = str(resource.get("id") or self._resource_url(resource))
+                    freshness = SourceFreshness(
+                        self._resource_frequencies.get(resource_key),
+                        parse_timestamp(api_rows[0].get(timestamp_field)),
+                        parse_timestamp(csv_rows[0].get(timestamp_field)) if csv_rows else None,
+                    )
+                    if not freshness.fallback_required:
+                        self._incremental_verified.add(resource_key)
+                        return api_rows
+                    if resource_key in self._incremental_verified:
+                        now = monotonic()
+                        if now >= self._csv_retry_after.get(resource_key, 0):
+                            self._csv_retry_after[resource_key] = now + 30 * 60
+                            await self._cached_csv_rows(resource, force=True)
             return await self._csv_observation_rows(
-                self._selected_resource(dataset),
+                resource,
                 timestamp_field,
                 filters,
                 min(max(limit, 1), 500),
@@ -183,6 +238,30 @@ class CkanProvider(JsonClient):
         records = result.get("records", []) if isinstance(result, dict) else []
         if not isinstance(records, list) or not all(isinstance(row, dict) for row in records):
             raise OpenDataResponseError("CKAN observation query did not return records")
+        return records
+
+    async def _datastore_observation_rows(
+        self,
+        dataset: OpenDataDataset,
+        timestamp_field: str,
+        filters: dict[str, str] | None,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        """Probe a bounded, ordered DataStore window for incremental use."""
+        params = {
+            "resource_id": dataset.resource_id or "",
+            "limit": str(min(max(limit, 1), 500)),
+            "sort": f'"{timestamp_field}" desc',
+        }
+        if filters:
+            params["filters"] = json.dumps(filters, separators=(",", ":"))
+        try:
+            result = await self._action("datastore_search", params)
+        except OpenDataResponseError:
+            return []
+        records = result.get("records", []) if isinstance(result, dict) else []
+        if not isinstance(records, list) or not all(isinstance(row, dict) for row in records):
+            return []
         return records
 
     async def async_distinct_rows(
@@ -205,9 +284,7 @@ class CkanProvider(JsonClient):
             raise ValueError("Distinct field is not present in the CKAN resource")
         if self._is_csv_resource(self._selected_resource(dataset)):
             found: dict[tuple[str, ...], dict[str, Any]] = {}
-            async for row in self.async_iter_csv_rows(
-                self._resource_url(self._selected_resource(dataset))
-            ):
+            for row in await self._cached_csv_rows(self._selected_resource(dataset)):
                 key = tuple(str(row.get(field, "")) for field in requested)
                 found.setdefault(key, {field: row.get(field) for field in requested})
                 if len(found) >= min(max(limit, 1), 1000):
@@ -347,11 +424,19 @@ class CkanProvider(JsonClient):
     async def _csv_sample(
         self, resource: dict[str, Any], limit: int
     ) -> list[dict[str, str]]:
-        rows = []
-        async for row in self.async_iter_csv_rows(self._resource_url(resource)):
-            rows.append(row)
-            if len(rows) >= limit:
-                break
+        url = self._resource_url(resource)
+        cached = self._csv_cache.get(url)
+        if cached and cached[0] > monotonic():
+            rows = cached[1][:limit]
+        elif url in self._csv_samples:
+            rows = self._csv_samples[url][:limit]
+        else:
+            rows = []
+            async for row in self.async_iter_csv_rows(url):
+                rows.append(row)
+                if len(rows) >= limit:
+                    break
+            self._csv_samples[url] = rows
         if not rows:
             raise OpenDataResponseError("CKAN CSV resource did not contain data rows")
         return rows
@@ -370,10 +455,15 @@ class CkanProvider(JsonClient):
         filters: dict[str, str] | None,
         limit: int,
     ) -> list[dict[str, str]]:
+        all_rows = await self._cached_csv_rows(resource)
         if timestamp_field:
+            resource_id = str(resource.get("id") or self._resource_url(resource))
+            self._resource_frequencies[resource_id] = infer_frequency(
+                row.get(timestamp_field) for row in all_rows
+            )
             latest: list[tuple[str, int, dict[str, str]]] = []
             sequence = 0
-            async for row in self.async_iter_csv_rows(self._resource_url(resource)):
+            for row in all_rows:
                 if filters and any(
                     str(row.get(field)) != str(value)
                     for field, value in filters.items()
@@ -388,7 +478,7 @@ class CkanProvider(JsonClient):
             return [item[2] for item in sorted(latest, reverse=True)]
 
         latest_rows: deque[dict[str, str]] = deque(maxlen=limit)
-        async for row in self.async_iter_csv_rows(self._resource_url(resource)):
+        for row in all_rows:
             if filters and any(
                 str(row.get(field)) != str(value) for field, value in filters.items()
             ):
