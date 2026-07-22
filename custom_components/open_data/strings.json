@@ -15,7 +15,14 @@
         "data": {
           "dataset_ids": "Datasets"
         }
+      },
+      "prepare": {
+        "title": "Prepare site catalog",
+        "description": "Preparing the site catalog in the background. Large catalogs and CSV resources can take several minutes. You may close this dialog and return later; no entities or regular downloads begin until you select and configure a dataset."
       }
+    },
+    "progress": {
+      "prepare_catalog": "Inspecting the portal, validating datasets, and saving the catalog for later selection"
     },
     "error": {
       "cannot_connect": "Unable to connect to the portal.",
