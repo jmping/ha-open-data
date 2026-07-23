@@ -16,6 +16,14 @@ from .field_roles import (
 from .models import ObservationPoint, SemanticObservation
 from .record_structure import RecordStructure, encode_unit_key
 
+_UNIT_FIELD_NAMES = {
+    "unit",
+    "units",
+    "uom",
+    "unit_of_measurement",
+    "measurement_unit",
+}
+
 
 def _time_key(value: object, index: int) -> tuple[int, object, int]:
     if isinstance(value, datetime):
@@ -32,12 +40,45 @@ def _time_key(value: object, index: int) -> tuple[int, object, int]:
 
 
 def _joined(row: Mapping[str, Any], fields: Iterable[str]) -> str | None:
-    values = [str(row[field]) for field in fields if row.get(field) not in (None, "")]
+    values = [
+        _display_text(row[field])
+        for field in fields
+        if row.get(field) not in (None, "")
+    ]
     return " / ".join(values) if values else None
 
 
-def _stream_id(unit_id: str | None, metric: str) -> str:
-    raw = f"{unit_id or 'dataset'}\0{metric}".encode()
+def _display_text(value: object) -> str:
+    return " ".join(str(value).strip().split())
+
+
+def _canonical_text(value: object) -> str:
+    """Normalize equivalent categorical representations for stream identity."""
+    text = _display_text(value)
+    try:
+        number = float(text)
+    except ValueError:
+        return text.casefold()
+    if not math.isfinite(number):
+        return text.casefold()
+    return format(number, ".15g")
+
+
+def _stream_id(
+    unit_id: str | None,
+    metric: str,
+    dimensions: tuple[tuple[str, str], ...],
+) -> str:
+    canonical_dimensions = tuple(
+        (field.casefold(), _canonical_text(value)) for field, value in dimensions
+    )
+    raw = repr(
+        (
+            _canonical_text(unit_id or "dataset"),
+            _canonical_text(metric),
+            canonical_dimensions,
+        )
+    ).encode()
     return sha1(raw, usedforsecurity=False).hexdigest()[:20]
 
 
@@ -57,6 +98,15 @@ def _measurement_value(value: Any) -> Any:
     return number if math.isfinite(number) else value
 
 
+def _unit_field(rows: Iterable[Mapping[str, Any]]) -> str | None:
+    names = {
+        str(field).strip().casefold(): str(field)
+        for row in rows
+        for field in row
+    }
+    return next((names[name] for name in _UNIT_FIELD_NAMES if name in names), None)
+
+
 def normalize_observations(
     rows: Iterable[Mapping[str, Any]],
     *,
@@ -66,6 +116,7 @@ def normalize_observations(
     unit_id: str | None = None,
 ) -> dict[str, SemanticObservation]:
     """Return the latest logical stream values from wide or long physical rows."""
+    materialized = tuple(rows)
     data_fields = tuple(
         field for field, role in field_roles.items() if role == FIELD_ROLE_DATA
     )
@@ -80,10 +131,11 @@ def normalize_observations(
     time_fields = tuple(
         field for field, role in field_roles.items() if role == FIELD_ROLE_TIME
     )
+    unit_field = _unit_field(materialized)
     latest: dict[str, tuple[tuple[int, object, int], SemanticObservation]] = {}
     history: dict[str, dict[str, ObservationPoint]] = {}
 
-    for index, raw_row in enumerate(rows):
+    for index, raw_row in enumerate(materialized):
         row = dict(raw_row)
         resolved_unit = unit_id
         if resolved_unit is None and structure.unit_key_fields:
@@ -99,6 +151,19 @@ def normalize_observations(
         )
         record_label = _joined(row, structure.record_label_fields)
         metric_name = _joined(row, metric_name_fields)
+        dimensions = tuple(
+            (field, _display_text(row[field]))
+            for field in metric_name_fields
+            if row.get(field) not in (None, "")
+        )
+        source_unit = (
+            _display_text(row[unit_field])
+            if unit_field and row.get(unit_field) not in (None, "")
+            else None
+        )
+        identity_dimensions = dimensions
+        if source_unit is not None:
+            identity_dimensions = (*dimensions, ("unit", source_unit))
 
         for field in data_fields:
             value = row.get(field)
@@ -107,7 +172,12 @@ def normalize_observations(
             metric = metric_name or field
             if metric_name and len(data_fields) > 1:
                 metric = f"{metric_name} / {field}"
-            stream_id = _stream_id(resolved_unit, metric)
+            # Long-format stream identity is defined by the canonicalized metric
+            # dimensions plus the physical value field. The display label remains
+            # source-faithful, so equivalent values such as 1 and 1.0 collapse
+            # without renaming an existing entity.
+            identity_metric = field if dimensions else metric
+            stream_id = _stream_id(resolved_unit, identity_metric, identity_dimensions)
             observation = SemanticObservation(
                 stream_id=stream_id,
                 unit_id=resolved_unit,
@@ -115,6 +185,8 @@ def normalize_observations(
                 source_field=field,
                 value=_measurement_value(value),
                 timestamp=timestamp,
+                unit=source_unit,
+                dimensions=dimensions,
                 record_id=record_id,
                 record_label=record_label,
                 source_row=row,
@@ -148,6 +220,8 @@ def normalize_observations(
             source_field=observation.source_field,
             value=observation.value,
             timestamp=observation.timestamp,
+            unit=observation.unit,
+            dimensions=observation.dimensions,
             record_id=observation.record_id,
             record_label=observation.record_label,
             history=points,

@@ -46,6 +46,8 @@ class SemanticObservation:
     source_field: str
     value: Any
     timestamp: str | None = None
+    unit: str | None = None
+    dimensions: tuple[tuple[str, str], ...] = ()
     record_id: str | None = None
     record_label: str | None = None
     history: tuple[ObservationPoint, ...] = ()

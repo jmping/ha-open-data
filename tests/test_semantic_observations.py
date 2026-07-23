@@ -64,7 +64,7 @@ def test_ann_arbor_wide_rows_only_emit_user_selected_data_fields() -> None:
     assert {item.value for item in observations.values()} == {8.4, 11.2}
 
 
-def test_long_rows_pivot_measurement_names_and_keep_latest_value() -> None:
+def test_environmental_long_rows_pivot_and_retain_source_unit() -> None:
     configured = records.build_record_structure(
         unit_key_fields=("station",),
         record_key_fields=("station", "observed_at", "pollutant"),
@@ -72,23 +72,102 @@ def test_long_rows_pivot_measurement_names_and_keep_latest_value() -> None:
     )
     observations = semantic.normalize_observations(
         [
-            {"station": "A", "observed_at": "2026-07-20", "pollutant": "PM2.5", "value": 5},
-            {"station": "A", "observed_at": "2026-07-21", "pollutant": "PM2.5", "value": 7},
-            {"station": "A", "observed_at": "2026-07-21", "pollutant": "NO2", "value": 9},
+            {
+                "station": "A",
+                "observed_at": "2026-07-20",
+                "pollutant": "PM2.5",
+                "value": 5,
+                "unit": "µg/m³",
+            },
+            {
+                "station": "A",
+                "observed_at": "2026-07-21",
+                "pollutant": " PM2.5 ",
+                "value": 7,
+                "unit": "µg/m³",
+            },
+            {
+                "station": "A",
+                "observed_at": "2026-07-21",
+                "pollutant": "NO2",
+                "value": 9,
+                "unit": "ppb",
+            },
         ],
         field_roles={
             "station": roles.FIELD_ROLE_LOCATION,
             "observed_at": roles.FIELD_ROLE_TIME,
             "pollutant": roles.FIELD_ROLE_MEASUREMENT_NAME,
             "value": roles.FIELD_ROLE_DATA,
+            "unit": roles.FIELD_ROLE_DESCRIPTIVE,
         },
         structure=configured,
     )
 
-    by_metric = {item.metric: item for item in observations.values()}
+    by_metric = {item.metric.strip(): item for item in observations.values()}
     assert set(by_metric) == {"PM2.5", "NO2"}
     assert by_metric["PM2.5"].value == 7
-    assert by_metric["PM2.5"].timestamp == "2026-07-21"
+    assert by_metric["PM2.5"].unit == "µg/m³"
+    assert by_metric["PM2.5"].dimensions == (("pollutant", "PM2.5"),)
+
+
+def test_transit_long_rows_keep_direction_as_metric_dimension() -> None:
+    observations = semantic.normalize_observations(
+        [
+            {
+                "stop_id": "100",
+                "observed_at": "2026-07-21T12:00:00Z",
+                "measure": "headway",
+                "direction": "Inbound",
+                "value": 8,
+                "units": "min",
+            },
+            {
+                "stop_id": "100",
+                "observed_at": "2026-07-21T12:00:00Z",
+                "measure": "headway",
+                "direction": "Outbound",
+                "value": 12,
+                "units": "min",
+            },
+        ],
+        field_roles={
+            "stop_id": roles.FIELD_ROLE_LOCATION,
+            "observed_at": roles.FIELD_ROLE_TIME,
+            "measure": roles.FIELD_ROLE_MEASUREMENT_NAME,
+            "direction": roles.FIELD_ROLE_MEASUREMENT_NAME,
+            "value": roles.FIELD_ROLE_DATA,
+            "units": roles.FIELD_ROLE_DESCRIPTIVE,
+        },
+        structure=records.build_record_structure(unit_key_fields=("stop_id",)),
+    )
+
+    assert {item.metric for item in observations.values()} == {
+        "headway / Inbound",
+        "headway / Outbound",
+    }
+    assert {item.unit for item in observations.values()} == {"min"}
+    assert len({item.stream_id for item in observations.values()}) == 2
+
+
+def test_generic_categorical_values_are_canonicalized_for_identity() -> None:
+    observations = semantic.normalize_observations(
+        [
+            {"category": "Count", "segment": " 1 ", "value": 10},
+            {"category": " count ", "segment": "1.0", "value": 11},
+        ],
+        field_roles={
+            "category": roles.FIELD_ROLE_MEASUREMENT_NAME,
+            "segment": roles.FIELD_ROLE_MEASUREMENT_NAME,
+            "value": roles.FIELD_ROLE_DATA,
+        },
+        structure=records.RecordStructure(()),
+    )
+
+    assert len(observations) == 1
+    observation = next(iter(observations.values()))
+    assert observation.value == 11
+    assert observation.metric == "count / 1.0"
 
 
 def test_selected_fields_narrow_data_without_promoting_other_roles() -> None:
