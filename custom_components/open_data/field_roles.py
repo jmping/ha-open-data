@@ -124,14 +124,18 @@ def assignments_from_categories(
 ) -> dict[str, str]:
     """Build roles from optional category selections.
 
-    Fields omitted from every category are deliberately inactive.  This lets a
+    Fields omitted from every category are deliberately inactive. This lets a
     user classify only the variables that matter without reviewing every
     column in a wide dataset.
+
+    A field selected in more than one category is reassigned to the last
+    submitted category. Home Assistant renders the categories in deterministic
+    order, so selecting a field in a new category no longer requires manually
+    clearing its previous checkbox before saving.
     """
     fields = tuple(dict.fromkeys(field_names))
     known_fields = set(fields)
     assignments = dict.fromkeys(fields, FIELD_ROLE_UNASSIGNED)
-    assigned_fields: set[str] = set()
 
     invalid_roles = set(fields_by_role) - set(ASSIGNABLE_FIELD_ROLES)
     if invalid_roles:
@@ -141,10 +145,7 @@ def assignments_from_categories(
         for field in selected_fields:
             if field not in known_fields:
                 raise ValueError(f"Unknown field in role assignment: {field!r}")
-            if field in assigned_fields:
-                raise ValueError(f"Field assigned to more than one role: {field!r}")
             assignments[field] = role
-            assigned_fields.add(field)
 
     return assignments
 
@@ -159,11 +160,12 @@ def classify_field_roles(
     ignored_fields: Iterable[str] = (),
     explicit_roles: Mapping[str, str] | None = None,
 ) -> FieldRoles:
-    """Classify fields conservatively, preserving non-metrics as context.
+    """Classify fields conservatively and leave uncertain fields unassigned.
 
     Explicit ontology/configuration metrics win. Otherwise numeric values and
     measurement vocabulary are used together. Time components and structural
     identifiers never become sensors merely because they contain numbers.
+    Fields without strong evidence remain inactive until the user assigns them.
     """
     fields = tuple(dict.fromkeys(field_names))
     ignored = set(ignored_fields)
@@ -230,8 +232,10 @@ def classify_field_roles(
             metrics.append(field)
         elif numeric_ratio >= 0.8 and not context_name:
             metrics.append(field)
-        else:
+        elif context_name:
             context.append(field)
+        else:
+            unassigned.append(field)
 
     return FieldRoles(
         tuple(metrics),
