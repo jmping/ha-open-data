@@ -33,8 +33,9 @@ class OpenDataUnsupportedCapabilityError(OpenDataError):
 class ProviderCapabilities:
     """Explicit features exposed by an open-data provider.
 
-    The contract describes behavior used by the current config flow and runtime;
-    it is intentionally not a second provider SDK or entity-planning layer.
+    Extended capabilities default from the concrete operations a provider already
+    declares. Providers may override those defaults when the derived value is not
+    accurate. This keeps one contract without a second provider registry.
     """
 
     supports_search: bool = False
@@ -43,20 +44,39 @@ class ProviderCapabilities:
     supports_latest_row: bool = False
     supports_timeseries: bool = False
     supports_station_filtering: bool = False
-    supports_selected_history: bool = False
     supports_spatial_queries: bool = False
     supports_incremental_updates: bool = False
     supports_statistics: bool = False
     supports_streaming: bool = False
     supports_sample_rows: bool = False
     supports_distinct_values: bool = False
-    supports_source_modified_time: bool = False
-    supports_ordering: bool = False
-    supports_downloadable_resources: bool = False
+    supports_selected_history: bool | None = None
+    supports_source_modified_time: bool | None = None
+    supports_ordering: bool | None = None
+    supports_downloadable_resources: bool | None = None
+
+    def __post_init__(self) -> None:
+        """Resolve conservative defaults from already-declared operations."""
+        if self.supports_selected_history is None:
+            object.__setattr__(
+                self,
+                "supports_selected_history",
+                self.supports_timeseries and self.supports_station_filtering,
+            )
+        if self.supports_source_modified_time is None:
+            object.__setattr__(
+                self, "supports_source_modified_time", self.supports_schema
+            )
+        if self.supports_ordering is None:
+            object.__setattr__(self, "supports_ordering", self.supports_latest_row)
+        if self.supports_downloadable_resources is None:
+            object.__setattr__(
+                self, "supports_downloadable_resources", self.supports_streaming
+            )
 
     def as_dict(self) -> dict[str, bool]:
         """Return a stable diagnostic representation."""
-        return asdict(self)
+        return {name: bool(value) for name, value in asdict(self).items()}
 
 
 class OpenDataProvider(ABC):
