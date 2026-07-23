@@ -37,6 +37,7 @@ from .const import (
     CONF_UNIT_KEY_FIELDS,
     CONF_UNIT_LABEL_FIELDS,
 )
+from .coordinate_fields import coordinate_candidate_fields
 from .field_roles import (
     FIELD_ROLE_DATA,
     FIELD_ROLE_DESCRIPTIVE,
@@ -48,6 +49,7 @@ from .field_roles import (
     assignments_from_categories,
     classify_field_roles,
 )
+from .location_ranking import rank_location_rows
 from .options_reconciliation import reconcile_options
 from .record_structure import (
     build_record_selections,
@@ -78,9 +80,7 @@ class OpenDataOptionsFlow(config_entries.OptionsFlow):
     def _fields_selector(values: list[str]) -> SelectSelector:
         return SelectSelector(
             SelectSelectorConfig(
-                options=[
-                    SelectOptionDict(value=value, label=value) for value in values
-                ],
+                options=[SelectOptionDict(value=value, label=value) for value in values],
                 multiple=True,
                 mode=SelectSelectorMode.LIST,
                 sort=False,
@@ -100,8 +100,7 @@ class OpenDataOptionsFlow(config_entries.OptionsFlow):
             dataset = self._config_entry.runtime_data.data.dataset
             fields_by_role: dict[str, list[str]] = {}
             for role, _label in _FIELD_ROLE_OPTIONS:
-                key = f"{_FIELD_ROLE_CATEGORY_PREFIX}{role}"
-                selected = submitted.pop(key, ())
+                selected = submitted.pop(f"{_FIELD_ROLE_CATEGORY_PREFIX}{role}", ())
                 if isinstance(selected, str):
                     selected = [selected]
                 fields_by_role[role] = list(selected or ())
@@ -147,17 +146,17 @@ class OpenDataOptionsFlow(config_entries.OptionsFlow):
 
         schema: dict[Any, Any] = {}
         identity = self._current(CONF_IDENTITY_FIELD)
-        role_fields = all_fields
         for role, _label in _FIELD_ROLE_OPTIONS:
-            role_key = f"{_FIELD_ROLE_CATEGORY_PREFIX}{role}"
-            schema[vol.Optional(
-                role_key,
-                default=[
-                    field for field in role_fields
-                    if current_roles.get(field, FIELD_ROLE_UNASSIGNED) == role
-                ],
-            )] = self._fields_selector(role_fields)
-
+            schema[
+                vol.Optional(
+                    f"{_FIELD_ROLE_CATEGORY_PREFIX}{role}",
+                    default=[
+                        field
+                        for field in all_fields
+                        if current_roles.get(field, FIELD_ROLE_UNASSIGNED) == role
+                    ],
+                )
+            ] = self._fields_selector(all_fields)
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(schema),
@@ -205,12 +204,15 @@ class OpenDataOptionsFlow(config_entries.OptionsFlow):
             return await self.async_step_records()
 
         location_fields = [
-            field for field in active_fields
+            field
+            for field in active_fields
             if field_roles.get(field) == FIELD_ROLE_LOCATION
         ]
         label_fields = [
-            field for field in active_fields
-            if field_roles.get(field) in {
+            field
+            for field in active_fields
+            if field_roles.get(field)
+            in {
                 FIELD_ROLE_LOCATION,
                 FIELD_ROLE_MEASUREMENT_NAME,
                 FIELD_ROLE_DESCRIPTIVE,
@@ -218,8 +220,10 @@ class OpenDataOptionsFlow(config_entries.OptionsFlow):
         ]
         unit_fields = list(label_fields)
         record_fields = [
-            field for field in active_fields
-            if field_roles.get(field) in {
+            field
+            for field in active_fields
+            if field_roles.get(field)
+            in {
                 FIELD_ROLE_LOCATION,
                 FIELD_ROLE_TIME,
                 FIELD_ROLE_MEASUREMENT_NAME,
@@ -241,10 +245,16 @@ class OpenDataOptionsFlow(config_entries.OptionsFlow):
             field for field in current_unit_labels if field in label_fields
         ]
         current_record_keys = self._current(CONF_RECORD_KEY_FIELDS) or list(
-            dict.fromkeys((*current_unit_keys, *(
-                field for field in record_fields
-                if field_roles.get(field) == FIELD_ROLE_TIME
-            )))
+            dict.fromkeys(
+                (
+                    *current_unit_keys,
+                    *(
+                        field
+                        for field in record_fields
+                        if field_roles.get(field) == FIELD_ROLE_TIME
+                    ),
+                )
+            )
         )
         current_record_keys = [
             field for field in current_record_keys if field in record_fields
@@ -271,26 +281,30 @@ class OpenDataOptionsFlow(config_entries.OptionsFlow):
                 f"{CONF_HIERARCHY_FIELDS}__3",
             )
         ):
-            schema[vol.Optional(
-                key,
-                default=list(current_hierarchy_sets[index])
-                if index < len(current_hierarchy_sets)
-                else [],
-            )] = self._fields_selector(label_fields)
-        schema.update({
-            vol.Optional(
-                CONF_UNIT_KEY_FIELDS, default=list(current_unit_keys)
-            ): self._fields_selector(unit_fields),
-            vol.Optional(
-                CONF_UNIT_LABEL_FIELDS, default=list(current_unit_labels)
-            ): self._fields_selector(label_fields),
-            vol.Optional(
-                CONF_RECORD_KEY_FIELDS, default=list(current_record_keys)
-            ): self._fields_selector(record_fields),
-            vol.Optional(
-                CONF_RECORD_LABEL_FIELDS, default=list(current_record_labels)
-            ): self._fields_selector(record_fields),
-        })
+            schema[
+                vol.Optional(
+                    key,
+                    default=list(current_hierarchy_sets[index])
+                    if index < len(current_hierarchy_sets)
+                    else [],
+                )
+            ] = self._fields_selector(label_fields)
+        schema.update(
+            {
+                vol.Optional(
+                    CONF_UNIT_KEY_FIELDS, default=list(current_unit_keys)
+                ): self._fields_selector(unit_fields),
+                vol.Optional(
+                    CONF_UNIT_LABEL_FIELDS, default=list(current_unit_labels)
+                ): self._fields_selector(label_fields),
+                vol.Optional(
+                    CONF_RECORD_KEY_FIELDS, default=list(current_record_keys)
+                ): self._fields_selector(record_fields),
+                vol.Optional(
+                    CONF_RECORD_LABEL_FIELDS, default=list(current_record_labels)
+                ): self._fields_selector(record_fields),
+            }
+        )
         return self.async_show_form(
             step_id="structure",
             data_schema=vol.Schema(schema),
@@ -303,19 +317,20 @@ class OpenDataOptionsFlow(config_entries.OptionsFlow):
     async def async_step_records(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Build record choices from the just-selected structural fields."""
+        """Build record choices and rank trusted locations locally."""
         if user_input is not None:
-            options = {**self._structure_options, **user_input}
-            return self.async_create_entry(title="", data=options)
+            return self.async_create_entry(
+                title="", data={**self._structure_options, **user_input}
+            )
 
         coordinator = self._config_entry.runtime_data
         dataset = coordinator.data.dataset
         field_roles = self._structure_options.get(
-            CONF_FIELD_ROLES,
-            self._current(CONF_FIELD_ROLES) or {},
+            CONF_FIELD_ROLES, self._current(CONF_FIELD_ROLES) or {}
         )
         ignored = {
-            field for field, role in field_roles.items()
+            field
+            for field, role in field_roles.items()
             if role in {FIELD_ROLE_IRRELEVANT, FIELD_ROLE_UNASSIGNED}
         }
         metrics = {
@@ -349,12 +364,16 @@ class OpenDataOptionsFlow(config_entries.OptionsFlow):
         unit_label_fields = persisted_structure.unit_label_fields
         query_identity = unit_key_fields[0] if unit_key_fields else identity
         if query_identity:
+            coordinate_fields = coordinate_candidate_fields(
+                field.name for field in dataset.fields
+            )
             extra_fields = tuple(
                 dict.fromkeys(
                     (
                         *unit_key_fields[1:],
                         *unit_label_fields,
                         *hierarchy_fields,
+                        *coordinate_fields,
                     )
                 )
             )
@@ -365,6 +384,17 @@ class OpenDataOptionsFlow(config_entries.OptionsFlow):
                 None if unit_key_fields else display,
                 extra_fields,
                 limit=_RECORD_LIMIT,
+            )
+            rows = rank_location_rows(
+                rows,
+                home_latitude=self.hass.config.latitude,
+                home_longitude=self.hass.config.longitude,
+                label_fields=tuple(
+                    dict.fromkeys(
+                        (*unit_label_fields, *((display,) if display else ()))
+                    )
+                ),
+                hierarchy_fields=hierarchy_fields,
             )
             legacy_structure = DatasetStructure(
                 kind=self._config_entry.data.get(CONF_DATASET_KIND, "records"),
@@ -379,10 +409,11 @@ class OpenDataOptionsFlow(config_entries.OptionsFlow):
                 metric_fields=tuple(metrics),
                 ignored_fields=tuple(ignored),
             )
-            if unit_key_fields:
-                records = build_record_selections(rows, persisted_structure)
-            else:
-                records = build_selectable_records(rows, legacy_structure)
+            records = (
+                build_record_selections(rows, persisted_structure)
+                if unit_key_fields
+                else build_selectable_records(rows, legacy_structure)
+            )
             record_choices = {record.value: record.label for record in records}
             if record_choices:
                 records_were_configured = (
@@ -417,7 +448,6 @@ class OpenDataOptionsFlow(config_entries.OptionsFlow):
         schema[
             vol.Optional(CONF_SELECTED_FIELDS, default=list(reconciled_fields))
         ] = cv.multi_select(choices)
-
         return self.async_show_form(
             step_id="records",
             data_schema=vol.Schema(schema),
