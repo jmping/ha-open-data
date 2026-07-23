@@ -1,6 +1,7 @@
 {
   "domain": "open_data",
   "name": "Open Data",
+  "after_dependencies": ["recorder"],
   "codeowners": ["@jmping"],
   "config_flow": true,
   "documentation": "https://github.com/jmping/ha-open-data",
@@ -8,5 +9,5 @@
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/jmping/ha-open-data/issues",
   "requirements": [],
-  "version": "0.1.1"
+  "version": "0.1.2"
 }

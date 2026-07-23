@@ -29,6 +29,14 @@ class OpenDataDataset:
 
 
 @dataclass(slots=True, frozen=True)
+class ObservationPoint:
+    """One timestamped point retained for initial graph history."""
+
+    timestamp: str
+    value: int | float
+
+
+@dataclass(slots=True, frozen=True)
 class SemanticObservation:
     """Latest value for one stable unit and logical measurement stream."""
 
@@ -40,6 +48,7 @@ class SemanticObservation:
     timestamp: str | None = None
     record_id: str | None = None
     record_label: str | None = None
+    history: tuple[ObservationPoint, ...] = ()
     source_row: dict[str, Any] = field(default_factory=dict, compare=False, repr=False)
 
 
@@ -52,3 +61,7 @@ class OpenDataSnapshot:
     records: dict[str, dict[str, Any]] = field(default_factory=dict)
     record_labels: dict[str, str] = field(default_factory=dict)
     observations: dict[str, SemanticObservation] = field(default_factory=dict)
+    fetched_at: str | None = None
+    latest_observation_at: str | None = None
+    source_updated_at: str | None = None
+    update_frequency_seconds: float | None = None

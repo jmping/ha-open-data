@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import DEFAULT_SCAN_INTERVAL_MINUTES
 from .entity_identity import looks_like_observation_id
+from .history import snapshot_freshness
 from .models import OpenDataDataset, OpenDataSnapshot
 from .providers.base import OpenDataError, OpenDataProvider
 from .record_structure import (
@@ -194,12 +195,19 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
                     for record_id in records
                 }
                 first = next(iter(records.values()), {})
+                latest, source_updated, frequency = snapshot_freshness(
+                    self.dataset, observations
+                )
                 return OpenDataSnapshot(
                     dataset=self.dataset,
                     values=first,
                     records=records,
                     record_labels=labels,
                     observations=observations,
+                    fetched_at=datetime.now(timezone.utc).isoformat(),
+                    latest_observation_at=latest,
+                    source_updated_at=source_updated,
+                    update_frequency_seconds=frequency,
                 )
 
             rows = await self.provider.async_observation_rows(
@@ -209,15 +217,23 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
                 filters=None,
             )
             values = rows[0] if rows else {}
+            observations = normalize_observations(
+                rows,
+                field_roles=self.field_roles,
+                structure=self.record_structure,
+                selected_fields=self.selected_fields,
+            )
+            latest, source_updated, frequency = snapshot_freshness(
+                self.dataset, observations
+            )
             return OpenDataSnapshot(
                 dataset=self.dataset,
                 values=values,
-                observations=normalize_observations(
-                    rows,
-                    field_roles=self.field_roles,
-                    structure=self.record_structure,
-                    selected_fields=self.selected_fields,
-                ),
+                observations=observations,
+                fetched_at=datetime.now(timezone.utc).isoformat(),
+                latest_observation_at=latest,
+                source_updated_at=source_updated,
+                update_frequency_seconds=frequency,
             )
         except UpdateFailed:
             raise

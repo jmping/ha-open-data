@@ -82,6 +82,9 @@
           "data_available": "Data available",
           "no_data": "No data"
         }
+      },
+      "latest_observation": {
+        "name": "Latest observation"
       }
     }
   }
