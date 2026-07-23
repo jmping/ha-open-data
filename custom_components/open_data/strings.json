@@ -3,29 +3,47 @@
   "config": {
     "step": {
       "user": {
+        "title": "Add open data",
+        "description": "Choose whether to discover datasets from a public portal or add one dataset directly.",
+        "menu_options": {
+          "portal": "Discover a portal",
+          "dataset": "Add a dataset directly"
+        }
+      },
+      "portal": {
         "title": "Discover public datasets",
-        "description": "Enter an institution's public data portal URL. Open Data will prepare and cache the site structure. Large catalogs and CSV files can take several minutes to download; you can leave this screen and return later without affecting regular Home Assistant updates.",
+        "description": "Enter an institution's public data portal URL. Open Data will prepare and cache the site structure. Large catalogs and file resources can take several minutes; you can leave this screen and return later.",
         "data": {
           "portal_url": "Portal URL"
         }
       },
+      "dataset": {
+        "title": "Add a dataset directly",
+        "description": "Paste a CKAN or Socrata dataset page, resource/API URL, or dataset ID. A portal URL is required when entering an ID by itself.",
+        "data": {
+          "source_location": "Dataset URL or ID",
+          "portal_url": "Portal URL for a bare ID (optional)"
+        }
+      },
       "discover": {
         "title": "Choose discovered datasets",
-        "description": "Site preparation is complete. Found {count} ranked datasets on {portal} using {provider}. Selecting a large CSV may take another minute while its fields and update frequency are prepared and cached.",
+        "description": "Site preparation is complete. Found {count} ranked datasets on {portal} using {provider}. Selecting a large file may take another minute while its fields and update frequency are prepared and cached.",
         "data": {
           "dataset_ids": "Datasets"
         }
       },
       "prepare": {
         "title": "Prepare site catalog",
-        "description": "Preparing the site catalog in the background. Large catalogs and CSV resources can take several minutes. You may close this dialog and return later; no entities or regular downloads begin until you select and configure a dataset."
+        "description": "Preparing the site catalog in the background. You may close this dialog and return later; no entities or regular downloads begin until you select and configure a dataset."
       }
     },
     "progress": {
-      "prepare_catalog": "Inspecting the portal, validating datasets, and saving the catalog for later selection"
+      "prepare_catalog": "Inspecting the portal, cataloguing datasets, and saving the catalog for later selection"
     },
     "error": {
-      "cannot_connect": "Unable to connect to the portal.",
+      "cannot_connect": "Unable to connect to the supplied portal.",
+      "invalid_reference": "The dataset reference could not be recognized or resolved. Check the URL or provide the portal URL for a bare ID.",
+      "unsafe_source": "The supplied source was blocked by Open Data's network safety checks.",
       "invalid_dataset": "The portal or selected dataset is invalid.",
       "no_datasets": "No suitable queryable datasets were discovered on this portal.",
       "unknown": "Unexpected error. Check the Home Assistant logs."
@@ -38,7 +56,7 @@
     "step": {
       "init": {
         "title": "Choose useful dataset fields",
-        "description": "Dataset structure: {kind}. Automatic suggestions are preselected. Every category is an optional multi-select and may be empty. A field can appear in only one category; fields omitted from every category are ignored.",
+        "description": "Dataset structure: {kind}. Automatic suggestions are preselected. Every category is optional and may be empty. Selecting a field in a later category moves it there; fields omitted from every category remain unassigned.",
         "data": {
           "field_role_fields__location": "Location fields",
           "field_role_fields__time": "Time fields",
@@ -71,7 +89,7 @@
       }
     },
     "error": {
-      "invalid_field_roles": "A field can belong to only one category. Remove any duplicate selection and try again."
+      "invalid_field_roles": "One or more field assignments were invalid. Review the selected fields and try again."
     }
   },
   "entity": {
