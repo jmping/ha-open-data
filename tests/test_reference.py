@@ -55,6 +55,16 @@ def test_parse_ckan_action_package_url() -> None:
     assert parsed.dataset_id == "air-quality"
 
 
+def test_parse_ckan_datastore_resource_url() -> None:
+    parsed = parse_reference(
+        "https://data.example.gov/api/3/action/datastore_search?"
+        "resource_id=d16be6d6-9738-4c1c-8a86-1849942953ad"
+    )
+    assert parsed.provider == const.PROVIDER_CKAN
+    assert parsed.dataset_id is None
+    assert parsed.resource_id == "d16be6d6-9738-4c1c-8a86-1849942953ad"
+
+
 def test_parse_socrata_resource_api() -> None:
     parsed = parse_reference("https://data.example.gov/resource/abcd-1234.json")
     assert parsed.provider == const.PROVIDER_SOCRATA
@@ -87,6 +97,15 @@ def test_bare_id_without_portal_is_actionable_error() -> None:
         assert "portal URL is required" in str(err)
     else:
         raise AssertionError("Expected a portal-hint error")
+
+
+def test_invalid_portal_hint_is_actionable_error() -> None:
+    try:
+        parse_reference("air-quality", "data.example.gov")
+    except ValueError as err:
+        assert "HTTP or HTTPS" in str(err)
+    else:
+        raise AssertionError("Expected an invalid portal-hint error")
 
 
 def test_rejects_unsupported_location() -> None:
