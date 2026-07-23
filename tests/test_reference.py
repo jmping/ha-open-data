@@ -7,6 +7,20 @@ from types import ModuleType
 
 _ROOT = Path(__file__).parents[1] / "custom_components" / "open_data"
 _PACKAGE = "open_data_reference_tests"
+
+homeassistant = ModuleType("homeassistant")
+homeassistant.__path__ = []
+homeassistant_const = ModuleType("homeassistant.const")
+
+
+class _Platform:
+    SENSOR = "sensor"
+
+
+homeassistant_const.Platform = _Platform
+sys.modules.setdefault("homeassistant", homeassistant)
+sys.modules["homeassistant.const"] = homeassistant_const
+
 package = ModuleType(_PACKAGE)
 package.__path__ = [str(_ROOT)]
 sys.modules[_PACKAGE] = package
