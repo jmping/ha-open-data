@@ -43,6 +43,10 @@ from .const import (
 from .coordinator import OpenDataCoordinator
 from .field_roles import classify_field_roles, context_attributes
 from .history import hourly_statistics, interval_statistics, is_stale
+from .observation_discovery import (
+    ObservationStreamTracker,
+    observation_metadata_attributes,
+)
 from .ontology import metric_definitions
 from .refresh_policy import parse_timestamp
 
@@ -129,15 +133,11 @@ async def async_setup_entry(
     selected = set(entry.options.get(CONF_SELECTED_FIELDS, ()))
     metric_names = set(roles.metric_fields)
     if selected:
-        # Options may narrow measurements, but old options cannot turn metadata
-        # such as year, vendor, or station IDs back into sensors.
         metric_names &= selected
     fields = tuple(
         field for field in snapshot.dataset.fields if field.name in metric_names
     )
 
-    # If classification cannot identify a metric, keep source context available
-    # on valid status sensors rather than recreating every column as a sensor.
     context_fields = tuple(
         field
         for field in (
@@ -149,7 +149,9 @@ async def async_setup_entry(
     )
 
     entities: list[SensorEntity] = []
+    stream_tracker: ObservationStreamTracker | None = None
     if coordinator.field_roles:
+        stream_tracker = ObservationStreamTracker.from_initial(snapshot.observations)
         entities.extend(
             OpenDataObservationSensor(
                 entry,
@@ -188,9 +190,6 @@ async def async_setup_entry(
                 for field in fields
             )
     elif not coordinator.identity_field:
-        # Only datasets without a record identity get a dataset-level entity.
-        # A record-scoped configuration with no selected or available records
-        # must produce zero entities and prune any stale per-record devices.
         entities.append(OpenDataStatusSensor(entry, coordinator, None, context_fields))
         entities.extend(
             OpenDataFieldSensor(
@@ -205,16 +204,45 @@ async def async_setup_entry(
             for field in fields
         )
 
-    # Freshness is a dataset-level fact and remains visible even when the user
-    # intentionally selects no records or measurement streams.
     entities.append(OpenDataFreshnessSensor(entry, coordinator))
 
-    desired_unique_ids = {
-        entity.unique_id for entity in entities if entity.unique_id is not None
-    }
-    await _async_prune_stale_entities(hass, entry, desired_unique_ids)
+    # Semantic streams are intentionally append-only during normal refreshes.
+    # A sparse response must not remove an existing Home Assistant entity.
+    if stream_tracker is None:
+        desired_unique_ids = {
+            entity.unique_id for entity in entities if entity.unique_id is not None
+        }
+        await _async_prune_stale_entities(hass, entry, desired_unique_ids)
+
     if entities:
         async_add_entities(entities)
+
+    if stream_tracker is not None:
+
+        @callback
+        def _async_discover_observation_streams() -> None:
+            current = coordinator.data
+            if current is None:
+                return
+            new_stream_ids = stream_tracker.newly_observed(current.observations)
+            if not new_stream_ids:
+                return
+            async_add_entities(
+                [
+                    OpenDataObservationSensor(
+                        entry,
+                        coordinator,
+                        stream_id,
+                        current.observations[stream_id].unit_id,
+                        context_fields,
+                    )
+                    for stream_id in new_stream_ids
+                ]
+            )
+
+        entry.async_on_unload(
+            coordinator.async_add_listener(_async_discover_observation_streams)
+        )
 
 
 class OpenDataSensorBase(CoordinatorEntity[OpenDataCoordinator], SensorEntity):
@@ -245,7 +273,9 @@ class OpenDataSensorBase(CoordinatorEntity[OpenDataCoordinator], SensorEntity):
         self._portal = portal
         self._resource_id = dataset.resource_id
         self._identifier = (
-            f"{base_identifier}:record:{record_id}" if record_id is not None else base_identifier
+            f"{base_identifier}:record:{record_id}"
+            if record_id is not None
+            else base_identifier
         )
         profile_id = entry.data.get(CONF_PROFILE_ID)
         model = (
@@ -426,12 +456,11 @@ class OpenDataObservationSensor(OpenDataSensorBase):
         observation = coordinator.data.observations[stream_id]
         self._attr_name = observation.metric
         self._attr_unique_id = f"{self._identifier}:stream:{stream_id}"
+        if observation.unit is not None:
+            self._attr_native_unit_of_measurement = observation.unit
         if isinstance(observation.value, (int, float)) and not isinstance(
             observation.value, bool
         ):
-            # Measurement state tells Recorder/statistics that this entity is
-            # an over-time stream even though a sensor's visible state is the
-            # newest point. Historical rows begin accumulating immediately.
             self._attr_state_class = SensorStateClass.MEASUREMENT
         self._imported_hourly_starts: set[Any] = set()
         self._imported_short_term_starts: set[Any] = set()
@@ -449,16 +478,14 @@ class OpenDataObservationSensor(OpenDataSensorBase):
         observation = snapshot.observations.get(self._stream_id) if snapshot else None
         if observation is None:
             return
-        hourly = hourly_statistics(observation.history)
         hourly = [
             item
-            for item in hourly
+            for item in hourly_statistics(observation.history)
             if item["start"] not in self._imported_hourly_starts
         ]
-        short_term = interval_statistics(observation.history, minutes=5)
         short_term = [
             item
-            for item in short_term
+            for item in interval_statistics(observation.history, minutes=5)
             if item["start"] not in self._imported_short_term_starts
         ]
         if not hourly and not short_term:
@@ -476,9 +503,6 @@ class OpenDataObservationSensor(OpenDataSensorBase):
             async_import_statistics(self.hass, metadata, hourly)
             self._imported_hourly_starts.update(item["start"] for item in hourly)
         if short_term:
-            # The default more-info graph requests five-minute statistics. The
-            # recorder exposes this queue method for the same validated import
-            # task used by its public hourly helper.
             get_instance(self.hass).async_import_statistics(
                 metadata, short_term, StatisticsShortTerm
             )
@@ -513,6 +537,7 @@ class OpenDataObservationSensor(OpenDataSensorBase):
         observation = snapshot.observations.get(self._stream_id) if snapshot else None
         if observation is None:
             return attributes
+        attributes.update(observation_metadata_attributes(observation))
         if observation.timestamp is not None:
             attributes["observed_at"] = observation.timestamp
         if observation.history:
