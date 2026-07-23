@@ -39,7 +39,10 @@ def _declared_capabilities(path: Path) -> dict[str, bool]:
     for node in ast.walk(tree):
         if not isinstance(node, ast.Assign):
             continue
-        if not any(isinstance(target, ast.Name) and target.id == "capabilities" for target in node.targets):
+        if not any(
+            isinstance(target, ast.Name) and target.id == "capabilities"
+            for target in node.targets
+        ):
             continue
         call = node.value
         if not isinstance(call, ast.Call):
