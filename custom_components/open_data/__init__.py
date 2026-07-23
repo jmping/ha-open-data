@@ -33,6 +33,7 @@ from .reanalysis_runtime import (
     DATA_SUPPRESS_RELOAD,
     ReanalysisController,
 )
+from .reanalysis_service import async_register_reanalysis_service
 from .record_structure import legacy_record_structure, load_record_structure
 from .services import async_register_services
 
@@ -54,6 +55,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     domain_data.setdefault(DATA_REANALYSIS_CONTROLLERS, {})
     domain_data.setdefault(DATA_SUPPRESS_RELOAD, set())
     await async_register_services(hass, feedback)
+    await async_register_reanalysis_service(hass)
     return True
 
 
