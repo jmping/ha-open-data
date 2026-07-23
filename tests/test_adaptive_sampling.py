@@ -1,11 +1,26 @@
 """Tests for provider-neutral adaptive sampling diagnostics."""
 
-from custom_components.open_data.adaptive_sampling import (
-    DatasetOrdering,
-    build_retrieval_plan,
-    estimate_entity_population,
-    infer_dataset_ordering,
+import sys
+from importlib.util import module_from_spec, spec_from_file_location
+from pathlib import Path
+
+
+_PATH = (
+    Path(__file__).parents[1]
+    / "custom_components"
+    / "open_data"
+    / "adaptive_sampling.py"
 )
+_SPEC = spec_from_file_location("open_data_adaptive_sampling", _PATH)
+assert _SPEC is not None and _SPEC.loader is not None
+sampling = module_from_spec(_SPEC)
+sys.modules[_SPEC.name] = sampling
+_SPEC.loader.exec_module(sampling)
+
+DatasetOrdering = sampling.DatasetOrdering
+build_retrieval_plan = sampling.build_retrieval_plan
+estimate_entity_population = sampling.estimate_entity_population
+infer_dataset_ordering = sampling.infer_dataset_ordering
 
 
 def test_population_estimate_stays_near_observed_when_entities_repeat() -> None:
@@ -41,15 +56,27 @@ def test_time_ordering_is_detected() -> None:
         for day in range(1, 6)
     ]
     descending = list(reversed(ascending))
-    assert infer_dataset_ordering(ascending, None, "observed_at") == DatasetOrdering.TIME_ASCENDING
-    assert infer_dataset_ordering(descending, None, "observed_at") == DatasetOrdering.TIME_DESCENDING
+    assert (
+        infer_dataset_ordering(ascending, None, "observed_at")
+        == DatasetOrdering.TIME_ASCENDING
+    )
+    assert (
+        infer_dataset_ordering(descending, None, "observed_at")
+        == DatasetOrdering.TIME_DESCENDING
+    )
 
 
 def test_entity_grouping_and_random_interleaving_are_detected() -> None:
     grouped = [{"station": value} for value in ("A", "A", "A", "B", "B", "B")]
     interleaved = [{"station": value} for value in ("A", "B", "C", "A", "B", "C")]
-    assert infer_dataset_ordering(grouped, "station", None) == DatasetOrdering.ENTITY_GROUPED
-    assert infer_dataset_ordering(interleaved, "station", None) == DatasetOrdering.EFFECTIVELY_RANDOM
+    assert (
+        infer_dataset_ordering(grouped, "station", None)
+        == DatasetOrdering.ENTITY_GROUPED
+    )
+    assert (
+        infer_dataset_ordering(interleaved, "station", None)
+        == DatasetOrdering.EFFECTIVELY_RANDOM
+    )
 
 
 def test_retrieval_plan_accounts_for_dimensions_and_cap() -> None:
