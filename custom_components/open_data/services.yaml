@@ -87,6 +87,17 @@ refresh_entry:
         config_entry:
           integration: open_data
 
+reanalyze_entry:
+  name: Re-analyze entry
+  description: Run a bounded structural analysis immediately, bypassing the automatic cooldown while preserving reviewed choices.
+  fields:
+    entry_id:
+      name: Config entry ID
+      required: true
+      selector:
+        config_entry:
+          integration: open_data
+
 feedback_preview:
   name: Preview feedback
   description: Build a privacy-safe metadata report and show whether local deduplication would suppress it.
