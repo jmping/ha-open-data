@@ -172,7 +172,12 @@ def normalize_observations(
             metric = metric_name or field
             if metric_name and len(data_fields) > 1:
                 metric = f"{metric_name} / {field}"
-            stream_id = _stream_id(resolved_unit, metric, identity_dimensions)
+            # Long-format stream identity is defined by the canonicalized metric
+            # dimensions plus the physical value field. The display label remains
+            # source-faithful, so equivalent values such as 1 and 1.0 collapse
+            # without renaming an existing entity.
+            identity_metric = field if dimensions else metric
+            stream_id = _stream_id(resolved_unit, identity_metric, identity_dimensions)
             observation = SemanticObservation(
                 stream_id=stream_id,
                 unit_id=resolved_unit,
