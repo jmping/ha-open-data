@@ -25,7 +25,6 @@ def test_time_components_and_vendor_are_context_not_sensors() -> None:
         configured_metrics=("pm25",),
         timestamp_fields=("year", "month", "day", "hour"),
     )
-
     assert result.metric_fields == ("pm25",)
     assert result.time_fields == ("year", "month", "day", "hour")
     assert result.context_fields == ("vendor",)
@@ -34,19 +33,16 @@ def test_time_components_and_vendor_are_context_not_sensors() -> None:
 def test_pfas_measurements_remain_metrics_with_text_qualifiers() -> None:
     result = roles.classify_field_roles(
         ("water_body", "sample_no", "pfoa", "pfos", "sum_of_all_pfas"),
-        [
-            {
-                "water_body": "Huron River",
-                "sample_no": "AM12670-1",
-                "pfoa": "Not Detected",
-                "pfos": 3,
-                "sum_of_all_pfas": 6.0,
-            }
-        ],
+        [{
+            "water_body": "Huron River",
+            "sample_no": "AM12670-1",
+            "pfoa": "Not Detected",
+            "pfos": 3,
+            "sum_of_all_pfas": 6.0,
+        }],
         configured_metrics=("pfoa", "pfos", "sum_of_all_pfas"),
         structural_fields=("water_body", "sample_no"),
     )
-
     assert result.metric_fields == ("pfoa", "pfos", "sum_of_all_pfas")
     assert result.location_fields == ("water_body", "sample_no")
 
@@ -57,7 +53,6 @@ def test_numeric_identifiers_do_not_become_measurements() -> None:
         [{"station_id": 101, "county_fips": 26161, "temperature": 24.7}],
         structural_fields=("station_id", "county_fips"),
     )
-
     assert result.metric_fields == ("temperature",)
     assert result.location_fields == ("station_id", "county_fips")
 
@@ -65,7 +60,6 @@ def test_numeric_identifiers_do_not_become_measurements() -> None:
 def test_context_attributes_are_bounded_and_safe() -> None:
     values = {f"field_{index}": index for index in range(40)}
     attributes = roles.context_attributes(values, values, limit=30)
-
     assert len(attributes) == 30
     assert attributes["field_0"] == 0
 
@@ -83,14 +77,13 @@ def test_nyc_traffic_speed_orientation() -> None:
         }],
         structural_fields=("link_id",),
     )
-
     assert result.metric_fields == ("speed", "travel_time", "volume")
     assert result.time_fields == ("measurement_date",)
     assert result.location_fields == ("link_id",)
     assert result.context_fields == ("roadway_name",)
 
 
-def test_nyc_air_quality_orientation() -> None:
+def test_nyc_air_quality_leaves_uncertain_unit_metadata_unassigned() -> None:
     result = roles.classify_field_roles(
         ("indicator_id", "geo_place_name", "start_date", "data_value", "measure_info"),
         [{
@@ -102,11 +95,11 @@ def test_nyc_air_quality_orientation() -> None:
         }],
         structural_fields=("indicator_id", "geo_place_name"),
     )
-
     assert result.metric_fields == ("data_value",)
     assert result.time_fields == ("start_date",)
     assert result.location_fields == ("indicator_id", "geo_place_name")
-    assert result.context_fields == ("measure_info",)
+    assert result.context_fields == ()
+    assert result.unassigned_fields == ("measure_info",)
 
 
 def test_nyc_tree_inventory_is_not_entity_explosion() -> None:
@@ -123,7 +116,6 @@ def test_nyc_tree_inventory_is_not_entity_explosion() -> None:
         }],
         structural_fields=("tree_id",),
     )
-
     assert result.metric_fields == ("tree_dbh",)
     assert result.location_fields == ("tree_id",)
     assert set(result.context_fields) == {
@@ -144,7 +136,6 @@ def test_nyc_crime_event_coordinates_remain_context() -> None:
         }],
         structural_fields=("incident_key",),
     )
-
     assert result.metric_fields == ()
     assert result.time_fields == ("event_date",)
     assert result.location_fields == ("incident_key",)
@@ -159,7 +150,6 @@ def test_numeric_strings_with_commas_are_measurements() -> None:
         [{"community_district": "01", "collected_tonnage": "1,234.5"}],
         structural_fields=("community_district",),
     )
-
     assert result.metric_fields == ("collected_tonnage",)
     assert result.location_fields == ("community_district",)
 
@@ -184,7 +174,6 @@ def test_user_assignments_are_authoritative_and_mutually_exclusive() -> None:
             "fixed_code": "unassigned",
         },
     )
-
     assert result.as_assignments() == {
         "station": "location",
         "observed_at": "time",
@@ -206,7 +195,6 @@ def test_irrelevant_and_unassigned_fields_are_not_context_or_metrics() -> None:
             "internal_id": "irrelevant",
         },
     )
-
     assert result.metric_fields == ("pm25",)
     assert result.context_fields == ()
     assert result.unassigned_fields == ("constant",)
@@ -225,7 +213,6 @@ def test_category_assignments_only_require_relevant_fields() -> None:
             "irrelevant": ("internal_id",),
         },
     )
-
     assert assignments == {
         "station": "location",
         "observed_at": "time",
@@ -241,15 +228,12 @@ def test_all_categories_may_be_empty() -> None:
         ("constant", "helper"),
         {role: () for role in roles.ASSIGNABLE_FIELD_ROLES},
     )
-
     assert assignments == {"constant": "unassigned", "helper": "unassigned"}
 
 
-def test_field_cannot_be_selected_in_multiple_categories() -> None:
-    import pytest
-
-    with pytest.raises(ValueError, match="more than one role"):
-        roles.assignments_from_categories(
-            ("station",),
-            {"location": ("station",), "descriptive": ("station",)},
-        )
+def test_later_category_reassigns_without_manual_unchecking() -> None:
+    assignments = roles.assignments_from_categories(
+        ("station",),
+        {"location": ("station",), "descriptive": ("station",)},
+    )
+    assert assignments == {"station": "descriptive"}
