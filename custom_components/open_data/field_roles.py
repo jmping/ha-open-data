@@ -232,6 +232,8 @@ def classify_field_roles(
             metrics.append(field)
         elif numeric_ratio >= 0.8 and not context_name:
             metrics.append(field)
+        elif context_name:
+            context.append(field)
         else:
             unassigned.append(field)
 
