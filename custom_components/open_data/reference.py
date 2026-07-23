@@ -15,6 +15,10 @@ _CKAN_UUID = re.compile(
 )
 
 
+class ReferenceConnectionError(ValueError):
+    """Raised when provider detection could not reach the supplied portal."""
+
+
 @dataclass(slots=True, frozen=True)
 class OpenDataReference:
     """Normalized reference parsed from a portal, dataset, or API URL."""
@@ -101,8 +105,13 @@ async def async_resolve_reference(session, reference: OpenDataReference) -> Open
         raise ValueError("Portal URL could not be determined")
 
     portal = reference.portal_url
+    failures = 0
+    responses = 0
     try:
-        async with session.get(f"{portal}/api/3/action/site_read", timeout=10) as response:
+        async with session.get(
+            f"{portal}/api/3/action/site_read", timeout=10
+        ) as response:
+            responses += 1
             if response.status == 200:
                 payload = await response.json(content_type=None)
                 if isinstance(payload, dict) and payload.get("success") is True:
@@ -114,7 +123,7 @@ async def async_resolve_reference(session, reference: OpenDataReference) -> Open
                         reference.is_portal,
                     )
     except Exception:  # noqa: BLE001
-        pass
+        failures += 1
 
     try:
         async with session.get(
@@ -122,6 +131,7 @@ async def async_resolve_reference(session, reference: OpenDataReference) -> Open
             params={"limit": "1", "search_context": portal},
             timeout=10,
         ) as response:
+            responses += 1
             if response.status == 200:
                 payload = await response.json(content_type=None)
                 if isinstance(payload, dict) and isinstance(payload.get("results"), list):
@@ -133,13 +143,15 @@ async def async_resolve_reference(session, reference: OpenDataReference) -> Open
                         reference.is_portal,
                     )
     except Exception:  # noqa: BLE001
-        pass
+        failures += 1
 
+    if failures == 2 and responses == 0:
+        raise ReferenceConnectionError("The portal could not be reached")
     raise ValueError("The portal provider could not be detected")
 
 
 def _parse_bare_reference(value: str, portal_url: str | None) -> OpenDataReference:
-    portal = portal_url.rstrip("/") if portal_url else None
+    portal = _normalize_portal_hint(portal_url) if portal_url else None
     if _SOCRATA_ID.fullmatch(value):
         if portal is None:
             raise ValueError("A portal URL is required for a bare Socrata dataset ID")
@@ -151,6 +163,13 @@ def _parse_bare_reference(value: str, portal_url: str | None) -> OpenDataReferen
             raise ValueError("A portal URL is required for a bare dataset ID")
         return OpenDataReference(None, portal, value)
     raise ValueError("Dataset location could not be recognized")
+
+
+def _normalize_portal_hint(value: str) -> str:
+    parsed = urlparse(value.strip())
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("Portal hint must be an HTTP or HTTPS URL")
+    return urlunparse((parsed.scheme, parsed.netloc, "", "", "", "")).rstrip("/")
 
 
 def _first_query_value(query: dict[str, list[str]], key: str) -> str | None:
