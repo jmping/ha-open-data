@@ -18,6 +18,25 @@ Before creating a new feature branch or making a cross-cutting architectural cha
 
 Implementation must pause for clarification when two branches encode materially different product behavior and the intended behavior cannot be inferred from existing issues or user direction.
 
+## Feature ledger
+
+Every requested feature that reaches implementation must have one durable status record. The preferred location is a tracking issue with this table:
+
+| Feature | Source request/PR | Current implementation | Status | Validation | Follow-up |
+| --- | --- | --- | --- | --- | --- |
+| Example | #7 | PR #27 | extracted | tests named here | runtime wiring issue |
+
+Allowed statuses are:
+
+- `planned`
+- `in progress`
+- `merged`
+- `superseded`
+- `rejected`
+- `blocked`
+
+A feature is not `merged` merely because code exists on a branch. The ledger may mark it merged only after it is present on `main` and the relevant validation has passed.
+
 ## Feature-accounting requirement
 
 Every substantial PR must contain a feature-accounting section with:
@@ -60,4 +79,4 @@ At least once per development cycle:
 
 ## Current recovery process
 
-Issue #26 is the authoritative record for reconciling PRs #1, #2, and #7 with current `main`. Those PRs are feature sources, not direct merge candidates. Each retained feature must land through a small current-base PR with regression coverage before the old PR is closed.
+Issue #26 is the authoritative feature ledger for reconciling PRs #1, #2, and #7 with current `main`. Those PRs are feature sources, not direct merge candidates. Each retained feature must land through a small current-base PR with regression coverage before the old PR is closed.
