@@ -28,6 +28,11 @@ from .entity_identity import effective_identity_field, normalize_selected_record
 from .feedback import FeedbackRegistry
 from .providers import create_provider
 from .preparation import DATA_PREPARATIONS, PreparationRegistry
+from .reanalysis_runtime import (
+    DATA_REANALYSIS_CONTROLLERS,
+    DATA_SUPPRESS_RELOAD,
+    ReanalysisController,
+)
 from .record_structure import legacy_record_structure, load_record_structure
 from .services import async_register_services
 
@@ -46,6 +51,8 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     preparations = PreparationRegistry(hass)
     await preparations.async_load()
     domain_data[DATA_PREPARATIONS] = preparations
+    domain_data.setdefault(DATA_REANALYSIS_CONTROLLERS, {})
+    domain_data.setdefault(DATA_SUPPRESS_RELOAD, set())
     await async_register_services(hass, feedback)
     return True
 
@@ -85,10 +92,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: OpenDataConfigEntry) -> 
     )
     identity_field = effective_identity_field(configured_identity, configured_display)
 
-    # Record values saved under an observation ID cannot be reused after repairing
-    # the identity to a stable place name. Persist the repaired structural choice so
-    # subsequent reloads do not repeat the migration or fall back to a dataset-level
-    # entity while the user has intentionally selected no locations yet.
     if identity_field != configured_identity:
         selected_records = ()
         repaired_options = dict(entry.options)
@@ -128,16 +131,37 @@ async def async_setup_entry(hass: HomeAssistant, entry: OpenDataConfigEntry) -> 
     )
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = coordinator
+
+    controller = ReanalysisController(hass, entry, coordinator)
+    hass.data[DOMAIN][DATA_REANALYSIS_CONTROLLERS][entry.entry_id] = controller
+
+    def _schedule_reanalysis() -> None:
+        hass.async_create_task(
+            controller.async_run(),
+            f"Check open data analysis for {entry.entry_id}",
+        )
+
+    entry.async_on_unload(coordinator.async_add_listener(_schedule_reanalysis))
     entry.async_on_unload(entry.add_update_listener(_async_reload_entry))
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    _schedule_reanalysis()
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: OpenDataConfigEntry) -> bool:
     """Unload an Open Data config entry."""
-    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    if unloaded:
+        hass.data.get(DOMAIN, {}).get(DATA_REANALYSIS_CONTROLLERS, {}).pop(
+            entry.entry_id, None
+        )
+    return unloaded
 
 
 async def _async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Reload an entry after its options change."""
+    """Reload an entry after user-facing options change."""
+    suppressed = hass.data.get(DOMAIN, {}).get(DATA_SUPPRESS_RELOAD, set())
+    if entry.entry_id in suppressed:
+        suppressed.discard(entry.entry_id)
+        return
     await hass.config_entries.async_reload(entry.entry_id)
