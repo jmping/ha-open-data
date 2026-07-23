@@ -51,7 +51,15 @@ jobs:
           name: pytest-output
           path: pytest-output.txt
       - name: Lint integration and tests
-        run: ruff check custom_components tests scripts
+        run: |
+          set -o pipefail
+          ruff check custom_components tests scripts 2>&1 | tee ruff-output.txt
+      - name: Upload lint output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ruff-output
+          path: ruff-output.txt
       - name: Validate repository, manifest, and service metadata
         run: |
           python - <<'PY'
