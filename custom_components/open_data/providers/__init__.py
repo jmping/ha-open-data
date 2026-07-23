@@ -22,12 +22,28 @@ from .opendatasoft import OpendatasoftProvider
 from .socrata import SocrataProvider
 
 
+class DirectReferenceCkanProvider(CkanProvider):
+    """CKAN adapter with resource-to-package reference resolution."""
+
+    async def async_resolve_resource_package(self, resource_id: str) -> str:
+        """Return the package owning a CKAN resource ID."""
+        resource = await self._action("resource_show", {"id": resource_id.strip()})
+        if not isinstance(resource, dict):
+            raise OpenDataResponseError("CKAN resource metadata was not valid")
+        package_id = resource.get("package_id")
+        if not isinstance(package_id, str) or not package_id.strip():
+            raise OpenDataResponseError(
+                "CKAN resource metadata did not identify its parent dataset"
+            )
+        return package_id.strip()
+
+
 def create_provider(
     provider: str, session: ClientSession, portal_url: str
 ) -> OpenDataProvider:
     """Create the configured provider."""
     if provider == PROVIDER_CKAN:
-        return CkanProvider(session, portal_url)
+        return DirectReferenceCkanProvider(session, portal_url)
     if provider == PROVIDER_SOCRATA:
         return SocrataProvider(session, portal_url)
     if provider == PROVIDER_ARCGIS_HUB:
