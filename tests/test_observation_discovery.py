@@ -90,3 +90,16 @@ def test_observation_metadata_exposes_source_unit_and_dimensions() -> None:
         "source_unit": "km/h",
         "dimensions": {"direction": "Northbound", "lane": "1"},
     }
+
+
+def test_discovery_remains_append_only_across_multiple_refreshes() -> None:
+    tracker = discovery.ObservationStreamTracker.from_initial({})
+
+    assert tracker.newly_observed({"temperature": _observation("temperature")}) == (
+        "temperature",
+    )
+    assert tracker.newly_observed({}) == ()
+    assert tracker.newly_observed({"humidity": _observation("humidity")}) == (
+        "humidity",
+    )
+    assert tracker.known_stream_ids == {"temperature", "humidity"}
