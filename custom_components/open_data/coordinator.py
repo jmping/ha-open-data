@@ -10,6 +10,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from .const import DEFAULT_SCAN_INTERVAL_MINUTES
 from .entity_identity import looks_like_observation_id
+from .freshness import apply_observation_freshness
 from .history import snapshot_freshness
 from .models import OpenDataDataset, OpenDataSnapshot
 from .providers.base import OpenDataError, OpenDataProvider
@@ -19,6 +20,7 @@ from .record_structure import (
     decode_unit_key,
 )
 from .semantic_observations import normalize_observations
+from .snapshot_merge import carry_forward_failed_records
 
 _MAX_CONCURRENT_RECORD_REQUESTS = 6
 
@@ -124,7 +126,7 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
 
     async def _async_latest_record(
         self, record_id: str, semaphore: asyncio.Semaphore
-    ) -> tuple[str, dict]:
+    ) -> tuple[str, list[dict]]:
         """Fetch one latest observation without overwhelming a portal."""
         async with semaphore:
             key_fields = self.record_structure.unit_key_fields
@@ -152,7 +154,10 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
                 self.resource_id = self.dataset.resource_id or self.resource_id
                 await self._async_load_record_labels()
 
-            if (self.identity_field or self.record_structure.unit_key_fields) and self.selected_records:
+            checked_at = datetime.now(timezone.utc)
+            if (
+                self.identity_field or self.record_structure.unit_key_fields
+            ) and self.selected_records:
                 semaphore = asyncio.Semaphore(_MAX_CONCURRENT_RECORD_REQUESTS)
                 results = await asyncio.gather(
                     *(
@@ -163,10 +168,12 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
                 )
                 records: dict[str, dict] = {}
                 observations = {}
-                failures = 0
+                failed_record_ids: list[str] = []
+                first_error: Exception | None = None
                 for record_id, result in zip(self.selected_records, results, strict=True):
                     if isinstance(result, Exception):
-                        failures += 1
+                        failed_record_ids.append(record_id)
+                        first_error = first_error or result
                         self.logger.warning(
                             "Unable to refresh open-data record %s: %s",
                             record_id,
@@ -185,26 +192,35 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
                                 unit_id=returned_id,
                             )
                         )
-                if failures == len(results) and results:
-                    first_error = next(
-                        result for result in results if isinstance(result, Exception)
-                    )
+                if len(failed_record_ids) == len(results) and results:
                     raise UpdateFailed(str(first_error))
+
+                records, observations = carry_forward_failed_records(
+                    self.data,
+                    records,
+                    observations,
+                    failed_record_ids,
+                )
+                latest, source_updated, frequency = snapshot_freshness(
+                    self.dataset, observations
+                )
+                observations = apply_observation_freshness(
+                    observations,
+                    frequency,
+                    checked_at=checked_at,
+                )
                 labels = {
                     record_id: self.record_labels.get(record_id, record_id)
                     for record_id in records
                 }
                 first = next(iter(records.values()), {})
-                latest, source_updated, frequency = snapshot_freshness(
-                    self.dataset, observations
-                )
                 return OpenDataSnapshot(
                     dataset=self.dataset,
                     values=first,
                     records=records,
                     record_labels=labels,
                     observations=observations,
-                    fetched_at=datetime.now(timezone.utc).isoformat(),
+                    fetched_at=checked_at.isoformat(),
                     latest_observation_at=latest,
                     source_updated_at=source_updated,
                     update_frequency_seconds=frequency,
@@ -226,11 +242,16 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
             latest, source_updated, frequency = snapshot_freshness(
                 self.dataset, observations
             )
+            observations = apply_observation_freshness(
+                observations,
+                frequency,
+                checked_at=checked_at,
+            )
             return OpenDataSnapshot(
                 dataset=self.dataset,
                 values=values,
                 observations=observations,
-                fetched_at=datetime.now(timezone.utc).isoformat(),
+                fetched_at=checked_at.isoformat(),
                 latest_observation_at=latest,
                 source_updated_at=source_updated,
                 update_frequency_seconds=frequency,
