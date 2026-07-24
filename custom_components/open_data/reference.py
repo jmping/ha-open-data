@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
-from urllib.parse import parse_qs, urlparse, urlunparse
+from urllib.parse import parse_qs, unquote, urlparse, urlunparse
 
 from .const import PROVIDER_CKAN, PROVIDER_SOCRATA
 
@@ -13,6 +13,34 @@ _CKAN_UUID = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
     re.IGNORECASE,
 )
+_PORTAL_PATH_HINTS = {
+    "browse",
+    "catalog",
+    "catalogue",
+    "data",
+    "datasets",
+    "explore",
+    "geodata",
+    "home",
+    "open-data",
+    "opendata",
+    "portal",
+    "search",
+    "donnees",
+    "données",
+    "dados",
+    "dati",
+    "datos",
+    "dades",
+    "daten",
+    "δεδομενα",
+    "δεδομένα",
+    "veri",
+    "ข้อมูล",
+    "ชุดข้อมูล",
+    "데이터",
+    "데이터셋",
+}
 
 
 class ReferenceConnectionError(ValueError):
@@ -55,6 +83,7 @@ def parse_reference(value: str, portal_url: str | None = None) -> OpenDataRefere
         )
     ).rstrip("/")
     segments = [segment for segment in parsed.path.split("/") if segment]
+    normalized_segments = {unquote(segment).casefold() for segment in segments}
     query = parse_qs(parsed.query)
 
     if "dataset" in segments:
@@ -104,18 +133,16 @@ def parse_reference(value: str, portal_url: str | None = None) -> OpenDataRefere
     if not segments:
         return OpenDataReference(None, portal, is_portal=True)
 
-    # A URL with an unrecognized path is much more likely to be a portal
-    # landing/catalog page than an unsupported direct dataset reference. Keep
-    # the path and query so portal inspection can resolve localized, proxied,
-    # and query-bearing catalog locations.
-    return OpenDataReference(None, location, is_portal=True)
+    # Preserve recognized landing/catalog paths for the richer portal inspector,
+    # but keep arbitrary URL paths classified as unsupported static references.
+    if normalized_segments & _PORTAL_PATH_HINTS:
+        return OpenDataReference(None, location, is_portal=True)
+
+    return OpenDataReference(None, portal, is_portal=False)
 
 
 async def async_resolve_reference(session, reference: OpenDataReference) -> OpenDataReference:
     """Detect a provider when URL shape or a bare CKAN ID is inconclusive."""
-    # Portal references are resolved by the portal inspector, which can probe
-    # origins, path prefixes, redirects, linked catalogs, and sibling hosts.
-    # Direct provider probing here incorrectly rejects valid landing-page URLs.
     if reference.is_portal:
         return reference
     if reference.provider is not None:
