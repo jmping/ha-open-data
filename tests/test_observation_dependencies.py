@@ -2,6 +2,7 @@
 
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
+import sys
 
 
 _PATH = (
@@ -13,6 +14,7 @@ _PATH = (
 _SPEC = spec_from_file_location("observation_sampling_dependencies", _PATH)
 assert _SPEC is not None and _SPEC.loader is not None
 sampling = module_from_spec(_SPEC)
+sys.modules[_SPEC.name] = sampling
 _SPEC.loader.exec_module(sampling)
 
 
