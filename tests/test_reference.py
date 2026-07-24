@@ -122,8 +122,16 @@ def test_invalid_portal_hint_is_actionable_error() -> None:
         raise AssertionError("Expected an invalid portal-hint error")
 
 
-def test_rejects_unsupported_location() -> None:
-    parsed = parse_reference("https://example.gov/not-a-supported-dataset")
+def test_unrecognized_url_path_is_treated_as_portal_location() -> None:
+    parsed = parse_reference("https://example.gov/open-data/search")
     assert parsed.provider is None
+    assert parsed.portal_url == "https://example.gov/open-data/search"
     assert parsed.dataset_id is None
-    assert parsed.is_portal is False
+    assert parsed.is_portal is True
+
+
+def test_query_bearing_portal_location_is_preserved() -> None:
+    parsed = parse_reference("https://example.gov/catalog?lang=fr")
+    assert parsed.provider is None
+    assert parsed.portal_url == "https://example.gov/catalog?lang=fr"
+    assert parsed.is_portal is True

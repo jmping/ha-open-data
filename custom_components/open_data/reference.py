@@ -44,6 +44,16 @@ def parse_reference(value: str, portal_url: str | None = None) -> OpenDataRefere
         raise ValueError("Location must be an HTTP or HTTPS URL")
 
     portal = urlunparse((parsed.scheme, parsed.netloc, "", "", "", "")).rstrip("/")
+    location = urlunparse(
+        (
+            parsed.scheme,
+            parsed.netloc,
+            parsed.path.rstrip("/"),
+            "",
+            parsed.query,
+            "",
+        )
+    ).rstrip("/")
     segments = [segment for segment in parsed.path.split("/") if segment]
     query = parse_qs(parsed.query)
 
@@ -94,11 +104,20 @@ def parse_reference(value: str, portal_url: str | None = None) -> OpenDataRefere
     if not segments:
         return OpenDataReference(None, portal, is_portal=True)
 
-    return OpenDataReference(None, portal, is_portal=False)
+    # A URL with an unrecognized path is much more likely to be a portal
+    # landing/catalog page than an unsupported direct dataset reference. Keep
+    # the path and query so portal inspection can resolve localized, proxied,
+    # and query-bearing catalog locations.
+    return OpenDataReference(None, location, is_portal=True)
 
 
 async def async_resolve_reference(session, reference: OpenDataReference) -> OpenDataReference:
     """Detect a provider when URL shape or a bare CKAN ID is inconclusive."""
+    # Portal references are resolved by the portal inspector, which can probe
+    # origins, path prefixes, redirects, linked catalogs, and sibling hosts.
+    # Direct provider probing here incorrectly rejects valid landing-page URLs.
+    if reference.is_portal:
+        return reference
     if reference.provider is not None:
         return reference
     if reference.portal_url is None:
