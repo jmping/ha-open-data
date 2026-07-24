@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
+from typing import Mapping
 
 from .models import SemanticObservation
 from .refresh_policy import parse_timestamp, stale_lag_threshold
+
+_FRESHNESS_DIMENSIONS = {
+    "_open_data_freshness_status",
+    "_open_data_observation_age_seconds",
+    "_open_data_observation_stale_after_seconds",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,8 +28,27 @@ class ObservationFreshness:
 
     @property
     def available(self) -> bool:
-        """Return whether the value is safe to present as current."""
-        return self.stale is False
+        """Return whether the value is known not to be stale."""
+        return self.stale is not True
+
+    @property
+    def status(self) -> str:
+        """Return a stable diagnostic status."""
+        if self.stale is True:
+            return "stale"
+        if self.stale is False:
+            return "current"
+        return "unknown"
+
+
+def _latest_observed_at(observation: SemanticObservation | None) -> datetime | None:
+    """Return the newest valid timestamp carried by one observation."""
+    if observation is None:
+        return None
+    timestamps = [parse_timestamp(observation.timestamp)]
+    timestamps.extend(parse_timestamp(point.timestamp) for point in observation.history)
+    valid = [timestamp for timestamp in timestamps if timestamp is not None]
+    return max(valid, default=None)
 
 
 def observation_freshness(
@@ -33,12 +59,12 @@ def observation_freshness(
 ) -> ObservationFreshness:
     """Evaluate one observation independently of fresher sibling streams.
 
-    Missing or unparseable timestamps are deliberately not considered current.
-    The threshold follows the integration-wide policy of five missed update waves,
-    with the existing thirty-minute minimum when cadence is unknown or very fast.
+    A missing timestamp remains an explicit ``unknown`` result. It is not marked
+    stale automatically because many useful static datasets do not publish an
+    observation timestamp at all.
     """
     checked = parse_timestamp(checked_at) or datetime.now(timezone.utc)
-    observed = parse_timestamp(observation.timestamp) if observation else None
+    observed = _latest_observed_at(observation)
     frequency = (
         None
         if frequency_seconds is None
@@ -66,6 +92,7 @@ def observation_freshness(
 def freshness_attributes(state: ObservationFreshness) -> dict[str, object]:
     """Return Home Assistant-safe diagnostic attributes."""
     attributes: dict[str, object] = {
+        "freshness_status": state.status,
         "observation_stale_after_seconds": round(state.stale_after_seconds, 1),
     }
     if state.observed_at is not None:
@@ -75,3 +102,44 @@ def freshness_attributes(state: ObservationFreshness) -> dict[str, object]:
     if state.stale is not None:
         attributes["observation_stale"] = state.stale
     return attributes
+
+
+def apply_observation_freshness(
+    observations: Mapping[str, SemanticObservation],
+    frequency_seconds: float | None,
+    *,
+    checked_at: object = None,
+) -> dict[str, SemanticObservation]:
+    """Mask only demonstrably stale values while preserving stream identity.
+
+    The stream, source history, unit, metric, and unique-ID inputs remain intact.
+    Untimed observations remain usable but are marked with unknown freshness.
+    """
+    result: dict[str, SemanticObservation] = {}
+    for stream_id, observation in observations.items():
+        state = observation_freshness(
+            observation, frequency_seconds, checked_at=checked_at
+        )
+        dimensions = tuple(
+            item for item in observation.dimensions if item[0] not in _FRESHNESS_DIMENSIONS
+        )
+        dimensions += (
+            ("_open_data_freshness_status", state.status),
+            (
+                "_open_data_observation_stale_after_seconds",
+                str(round(state.stale_after_seconds, 1)),
+            ),
+        )
+        if state.age_seconds is not None:
+            dimensions += (
+                (
+                    "_open_data_observation_age_seconds",
+                    str(round(state.age_seconds, 1)),
+                ),
+            )
+        result[stream_id] = replace(
+            observation,
+            value=None if state.stale is True else observation.value,
+            dimensions=dimensions,
+        )
+    return result
