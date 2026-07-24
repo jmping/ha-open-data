@@ -28,6 +28,7 @@ def _load(name: str):
 
 
 _load("adaptive_sampling")
+_load("observation_sampling")
 roles = _load("field_roles")
 reanalysis = _load("reanalysis")
 runtime = _load("reanalysis_runtime")
@@ -67,6 +68,8 @@ def test_coordinate_mode_requires_unambiguous_pairs() -> None:
 
 def test_sample_cap_is_bounded() -> None:
     assert 1 <= runtime.MAX_REANALYSIS_SAMPLE_ROWS <= 200
+    assert runtime.MAX_REANALYSIS_SAMPLE_ROWS < runtime.MAX_REANALYSIS_CANDIDATE_ROWS
+    assert runtime.MAX_REANALYSIS_CANDIDATE_ROWS <= 800
 
 
 def test_reviewed_assignments_win_over_conflicting_inference() -> None:

@@ -12,7 +12,6 @@ from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .analyzer import dataset_explorer_summary
 from .const import (
     CONF_DATASET_ID,
     CONF_PORTAL_URL,
@@ -20,6 +19,7 @@ from .const import (
     DOMAIN,
 )
 from .feedback import FeedbackRegistry
+from .inspection_evidence import build_dataset_inspection_evidence
 from .portal_inspector import async_discover_catalog, async_inspect_portal
 
 SERVICE_INSPECT_PORTAL = "inspect_portal"
@@ -117,15 +117,20 @@ async def async_register_services(hass: HomeAssistant, feedback: FeedbackRegistr
         dataset = await inspected.provider.async_get_dataset(
             call.data[CONF_DATASET_ID], call.data.get(CONF_RESOURCE_ID)
         )
-        sample_rows = await inspected.provider.async_sample_rows(
+        sample_limit = call.data[CONF_SAMPLE_LIMIT]
+        candidate_rows = await inspected.provider.async_sample_rows(
             dataset.dataset_id,
             dataset.resource_id,
-            limit=call.data[CONF_SAMPLE_LIMIT],
+            limit=min(800, sample_limit * 4),
         )
         return {
             **inspected.description.as_dict(),
             "dataset": _dataset_dict(dataset, include_raw=True),
-            "analysis": dataset_explorer_summary(dataset, sample_rows),
+            "analysis": build_dataset_inspection_evidence(
+                dataset,
+                candidate_rows,
+                sample_limit=sample_limit,
+            ),
         }
 
     async def async_refresh_entry(call: ServiceCall) -> dict[str, Any]:
