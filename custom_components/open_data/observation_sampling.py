@@ -20,7 +20,11 @@ def _parse_timestamp(value: object) -> datetime | None:
 
 
 def _entity_value(row: Mapping[str, Any], identity_fields: Sequence[str]) -> str | None:
-    values = [str(row[field]).strip() for field in identity_fields if row.get(field) not in (None, "")]
+    values = [
+        str(row[field]).strip()
+        for field in identity_fields
+        if row.get(field) not in (None, "")
+    ]
     return "|".join(values) if values else None
 
 
@@ -59,6 +63,27 @@ class ObservationSample:
     evidence: ObservationSamplingEvidence
 
 
+@dataclass(frozen=True, slots=True)
+class FunctionalDependency:
+    """Observed parent-to-child relationship in a bounded sample."""
+
+    parent_field: str
+    child_field: str
+    parent_count: int
+    child_count: int
+    confidence: float
+
+    def as_dict(self) -> dict[str, Any]:
+        """Return stable diagnostics for explorer and review flows."""
+        return {
+            "parent_field": self.parent_field,
+            "child_field": self.child_field,
+            "parent_count": self.parent_count,
+            "child_count": self.child_count,
+            "confidence": round(self.confidence, 4),
+        }
+
+
 def stratify_observation_rows(
     rows: Iterable[Mapping[str, Any]],
     *,
@@ -77,7 +102,9 @@ def stratify_observation_rows(
     materialized = list(rows)
     indexed: list[tuple[datetime | None, str, int, Mapping[str, Any]]] = []
     for index, row in enumerate(materialized):
-        timestamp = _parse_timestamp(row.get(timestamp_field)) if timestamp_field else None
+        timestamp = (
+            _parse_timestamp(row.get(timestamp_field)) if timestamp_field else None
+        )
         entity = _entity_value(row, identity_fields) or ""
         indexed.append((timestamp, entity, index, row))
 
@@ -139,3 +166,58 @@ def stratify_observation_rows(
         truncated=len(materialized) > len(selected),
     )
     return ObservationSample(tuple(item[3] for item in selected), evidence)
+
+
+def infer_functional_dependencies(
+    rows: Iterable[Mapping[str, Any]],
+    *,
+    fields: Sequence[str],
+    minimum_parent_values: int = 2,
+    minimum_confidence: float = 0.95,
+) -> tuple[FunctionalDependency, ...]:
+    """Infer conservative parent/child relationships from bounded observations.
+
+    A parent field functionally determines a child field when each observed
+    parent value maps to one child value. Confidence is the fraction of parent
+    groups that satisfy that rule, allowing a small amount of dirty source data
+    without manufacturing a hierarchy from weak evidence.
+    """
+    materialized = tuple(rows)
+    dependencies: list[FunctionalDependency] = []
+    for parent in fields:
+        for child in fields:
+            if parent == child:
+                continue
+            groups: dict[str, set[str]] = {}
+            for row in materialized:
+                parent_value = row.get(parent)
+                child_value = row.get(child)
+                if parent_value in (None, "") or child_value in (None, ""):
+                    continue
+                groups.setdefault(str(parent_value), set()).add(str(child_value))
+            if len(groups) < max(2, minimum_parent_values):
+                continue
+            stable = sum(len(values) == 1 for values in groups.values())
+            confidence = stable / len(groups)
+            child_values = {value for values in groups.values() for value in values}
+            if confidence < minimum_confidence or len(child_values) <= 1:
+                continue
+            dependencies.append(
+                FunctionalDependency(
+                    parent_field=parent,
+                    child_field=child,
+                    parent_count=len(groups),
+                    child_count=len(child_values),
+                    confidence=confidence,
+                )
+            )
+    dependencies.sort(
+        key=lambda item: (
+            -item.confidence,
+            item.parent_count,
+            item.child_count,
+            item.parent_field,
+            item.child_field,
+        )
+    )
+    return tuple(dependencies)
