@@ -120,6 +120,27 @@ class ReanalysisController:
             self._lock = asyncio.Lock()
         return self._lock
 
+    async def _async_candidate_rows(self, dataset: Any) -> list[dict[str, Any]]:
+        """Prefer an ordered history window when the provider supports it."""
+        provider = self.coordinator.provider
+        capabilities = getattr(provider, "capabilities", None)
+        if (
+            self.coordinator.timestamp_field is not None
+            and capabilities is not None
+            and capabilities.supports_timeseries
+        ):
+            return await provider.async_observation_rows(
+                dataset.dataset_id,
+                dataset.resource_id,
+                self.coordinator.timestamp_field,
+                limit=MAX_REANALYSIS_CANDIDATE_ROWS,
+            )
+        return await provider.async_sample_rows(
+            dataset.dataset_id,
+            dataset.resource_id,
+            limit=MAX_REANALYSIS_CANDIDATE_ROWS,
+        )
+
     async def async_build_fingerprint(self) -> AnalysisFingerprint:
         """Collect a capped stratified provider sample and build current evidence."""
         dataset = self.coordinator.dataset
@@ -127,11 +148,7 @@ class ReanalysisController:
             dataset = await self.coordinator.provider.async_get_dataset(
                 self.coordinator.dataset_id, self.coordinator.resource_id
             )
-        candidate_rows = await self.coordinator.provider.async_sample_rows(
-            dataset.dataset_id,
-            dataset.resource_id,
-            limit=MAX_REANALYSIS_CANDIDATE_ROWS,
-        )
+        candidate_rows = await self._async_candidate_rows(dataset)
         identity_fields = (
             (self.coordinator.identity_field,)
             if self.coordinator.identity_field is not None
