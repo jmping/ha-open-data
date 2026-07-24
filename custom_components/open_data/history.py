@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
+from statistics import median
 from typing import Any, Iterable, Mapping
 
 from .models import ObservationPoint, OpenDataDataset, SemanticObservation
-from .refresh_policy import infer_frequency, parse_timestamp, stale_lag_threshold
+from .refresh_policy import parse_timestamp, stale_lag_threshold
+
+_FREQUENCY_WINDOW = 30
 
 
 def dataset_source_updated_at(dataset: OpenDataDataset) -> str | None:
@@ -29,11 +32,46 @@ def dataset_source_updated_at(dataset: OpenDataDataset) -> str | None:
     return max(parsed).isoformat() if parsed else None
 
 
+def estimate_observation_frequency_seconds(
+    observations: Mapping[str, SemanticObservation],
+    *,
+    window: int = _FREQUENCY_WINDOW,
+) -> float | None:
+    """Estimate dataset cadence from bounded latest per-site timestamp windows.
+
+    Each semantic stream contributes at most ``window`` latest valid timestamps.
+    Its estimate is the elapsed time across that window divided by ``window``,
+    matching the product definition. The median of stream estimates prevents one
+    irregular or stale site from dominating the dataset-level value.
+    """
+    estimates: list[float] = []
+    for observation in observations.values():
+        parsed = sorted(
+            {
+                value
+                for value in (
+                    parse_timestamp(point.timestamp) for point in observation.history
+                )
+                if value is not None
+            }
+        )
+        if len(parsed) < 2:
+            continue
+        recent = parsed[-window:]
+        elapsed = (recent[-1] - recent[0]).total_seconds()
+        if elapsed <= 0:
+            continue
+        estimate = elapsed / window
+        if estimate > 0:
+            estimates.append(estimate)
+    return float(median(estimates)) if estimates else None
+
+
 def snapshot_freshness(
     dataset: OpenDataDataset,
     observations: Mapping[str, SemanticObservation],
 ) -> tuple[str | None, str | None, float | None]:
-    """Summarize newest observation, source modification, and typical cadence."""
+    """Summarize newest observation, source modification, and estimated cadence."""
     timestamps = [
         point.timestamp
         for observation in observations.values()
@@ -41,11 +79,10 @@ def snapshot_freshness(
     ]
     parsed = [value for value in (parse_timestamp(item) for item in timestamps) if value]
     newest = max(parsed).isoformat() if parsed else None
-    frequency = infer_frequency(timestamps)
     return (
         newest,
         dataset_source_updated_at(dataset),
-        frequency.total_seconds() if frequency is not None else None,
+        estimate_observation_frequency_seconds(observations),
     )
 
 
