@@ -87,50 +87,7 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Choose portal discovery or direct dataset setup."""
-        return self.async_show_menu(
-            step_id="user",
-            menu_options=["portal", "dataset"],
-        )
-
-    async def async_step_portal(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Discover and cache datasets from a portal root."""
-        errors: dict[str, str] = {}
-        if user_input is not None:
-            portal_url = user_input[CONF_PORTAL_URL]
-            registry: PreparationRegistry = self.hass.data[DOMAIN][DATA_PREPARATIONS]
-            prepared = registry.get(portal_url)
-            if prepared and prepared.status == "ready":
-                self._portal_url = prepared.portal_url
-                self._provider_name = prepared.provider
-                self._set_candidates(prepared.candidates)
-                return await self.async_step_discover()
-
-            async def _prepare() -> tuple[str, str, list[DatasetCandidate]]:
-                candidates = await self._async_discover_catalog(portal_url)
-                if not candidates:
-                    raise ValueError("no_datasets")
-                return (
-                    self._portal_url or portal_url,
-                    self._provider_name or "",
-                    candidates,
-                )
-
-            self._portal_url = portal_url
-            self._preparation_task = registry.start(portal_url, _prepare)
-            return await self.async_step_prepare()
-        return self.async_show_form(
-            step_id="portal",
-            data_schema=vol.Schema({vol.Required(CONF_PORTAL_URL): str}),
-            errors=errors,
-        )
-
-    async def async_step_dataset(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Add one CKAN or Socrata dataset without catalog enumeration."""
+        """Resolve one source location into direct setup or portal discovery."""
         errors: dict[str, str] = {}
         if user_input is not None:
             try:
@@ -141,6 +98,10 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 reference = await async_resolve_reference(
                     async_get_clientsession(self.hass), reference
                 )
+                if reference.is_portal:
+                    if reference.portal_url is None:
+                        raise ValueError("A portal URL could not be determined")
+                    return await self._async_begin_portal(reference.portal_url)
                 return await self._async_create_from_reference(reference)
             except ReferenceConnectionError:
                 errors["base"] = "cannot_connect"
@@ -154,7 +115,7 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "unknown"
 
         return self.async_show_form(
-            step_id="dataset",
+            step_id="user",
             data_schema=vol.Schema(
                 {
                     vol.Required(CONF_SOURCE_LOCATION): str,
@@ -163,6 +124,45 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             ),
             errors=errors,
         )
+
+    async def _async_begin_portal(self, portal_url: str) -> FlowResult:
+        """Start or resume bounded catalog preparation for a portal root."""
+        registry: PreparationRegistry = self.hass.data[DOMAIN][DATA_PREPARATIONS]
+        prepared = registry.get(portal_url)
+        if prepared and prepared.status == "ready":
+            self._portal_url = prepared.portal_url
+            self._provider_name = prepared.provider
+            self._set_candidates(prepared.candidates)
+            return await self.async_step_discover()
+
+        async def _prepare() -> tuple[str, str, list[DatasetCandidate]]:
+            candidates = await self._async_discover_catalog(portal_url)
+            if not candidates:
+                raise ValueError("no_datasets")
+            return (
+                self._portal_url or portal_url,
+                self._provider_name or "",
+                candidates,
+            )
+
+        self._portal_url = portal_url
+        self._preparation_task = registry.start(portal_url, _prepare)
+        return await self.async_step_prepare()
+
+    async def async_step_portal(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Backward-compatible alias for older in-progress flows."""
+        if user_input is None:
+            return await self.async_step_user()
+        source = user_input.get(CONF_PORTAL_URL, "")
+        return await self.async_step_user({CONF_SOURCE_LOCATION: source})
+
+    async def async_step_dataset(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Backward-compatible alias for older in-progress flows."""
+        return await self.async_step_user(user_input)
 
     async def _async_create_from_reference(
         self, reference: OpenDataReference
@@ -225,7 +225,7 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             self._provider_name = prepared.provider
             self._set_candidates(prepared.candidates)
             return self.async_show_progress_done(next_step_id="discover")
-        return self.async_show_progress_done(next_step_id="portal")
+        return self.async_show_progress_done(next_step_id="user")
 
     def _set_candidates(self, candidates: Any) -> None:
         self._candidates = {
