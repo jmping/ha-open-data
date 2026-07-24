@@ -1,0 +1,17 @@
+{
+  "case_id": "mixed-stream-freshness",
+  "source": {
+    "provider_families": ["provider-independent"],
+    "shape": "multiple locations or metrics share one dataset while updating at different times"
+  },
+  "failure": "A current sibling stream caused a retired or delayed stream to appear current through dataset-wide freshness.",
+  "expected": {
+    "identity": "stream IDs remain stable when a stream becomes stale or temporarily disappears",
+    "freshness": "evaluate each semantic observation independently",
+    "state": "mask only values that are demonstrably stale and retain history and metadata"
+  },
+  "regression_tests": [
+    "tests/test_freshness.py",
+    "tests/test_snapshot_merge.py"
+  ]
+}

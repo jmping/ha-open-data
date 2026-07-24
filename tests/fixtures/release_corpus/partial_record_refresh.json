@@ -1,0 +1,17 @@
+{
+  "case_id": "partial-record-refresh-preserves-state",
+  "source": {
+    "provider_families": ["provider-independent"],
+    "shape": "multiple selected records are refreshed independently"
+  },
+  "failure": "One request failure removed that record from the new snapshot while successful sibling records updated.",
+  "expected": {
+    "identity": "record and stream IDs do not change across failure and recovery",
+    "refresh": "carry forward the last successful state only for requests that failed",
+    "absence": "do not carry forward a record after a successful empty response",
+    "complete_failure": "raise UpdateFailed when every selected-record request fails"
+  },
+  "regression_tests": [
+    "tests/test_snapshot_merge.py"
+  ]
+}
