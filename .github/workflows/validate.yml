@@ -158,7 +158,7 @@ jobs:
       - name: Run lifecycle and registry tests
         run: |
           set -o pipefail
-          PYTHONPATH=. pytest -q tests_ha --tb=short 2>&1 | tee lifecycle-pytest-output.txt
+          PYTHONPATH=. pytest -q tests_ha --tb=short -o asyncio_mode=auto 2>&1 | tee lifecycle-pytest-output.txt
       - name: Upload lifecycle output
         if: always()
         uses: actions/upload-artifact@v4
