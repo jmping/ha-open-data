@@ -1,11 +1,10 @@
 """Regression tests for record-selection registry reconciliation."""
 
+import asyncio
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 import sys
 from types import ModuleType, SimpleNamespace
-
-import pytest
 
 
 _ROOT = Path(__file__).parents[1] / "custom_components" / "open_data"
@@ -85,8 +84,7 @@ def test_record_id_extraction_preserves_colons() -> None:
     ) == "county:station-1"
 
 
-@pytest.mark.asyncio
-async def test_prunes_only_deselected_record_entities_and_orphan_device(monkeypatch) -> None:
+def test_prunes_only_deselected_record_entities_and_orphan_device(monkeypatch) -> None:
     base = "ckan:https://example.test:dataset:resource"
     devices = FakeDeviceRegistry(
         [
@@ -108,8 +106,8 @@ async def test_prunes_only_deselected_record_entities_and_orphan_device(monkeypa
     monkeypatch.setattr(reconciliation.dr, "async_get", lambda hass: devices, raising=False)
     monkeypatch.setattr(reconciliation.er, "async_get", lambda hass: entities, raising=False)
 
-    removed_entities, removed_devices = (
-        await reconciliation.async_prune_deselected_record_devices(
+    removed_entities, removed_devices = asyncio.run(
+        reconciliation.async_prune_deselected_record_devices(
             object(),
             entry_id="entry-1",
             base_identifier=base,
@@ -132,8 +130,7 @@ async def test_prunes_only_deselected_record_entities_and_orphan_device(monkeypa
     assert entities.entities["sensor.keep"].name == "User customized name"
 
 
-@pytest.mark.asyncio
-async def test_deselecting_all_removes_all_record_devices(monkeypatch) -> None:
+def test_deselecting_all_removes_all_record_devices(monkeypatch) -> None:
     base = "socrata:https://example.test:abcd-1234:default"
     devices = FakeDeviceRegistry(
         [
@@ -147,11 +144,13 @@ async def test_deselecting_all_removes_all_record_devices(monkeypatch) -> None:
     monkeypatch.setattr(reconciliation.dr, "async_get", lambda hass: devices, raising=False)
     monkeypatch.setattr(reconciliation.er, "async_get", lambda hass: entities, raising=False)
 
-    result = await reconciliation.async_prune_deselected_record_devices(
-        object(),
-        entry_id="entry-1",
-        base_identifier=base,
-        selected_records=(),
+    result = asyncio.run(
+        reconciliation.async_prune_deselected_record_devices(
+            object(),
+            entry_id="entry-1",
+            base_identifier=base,
+            selected_records=(),
+        )
     )
 
     assert result == (2, 2)
