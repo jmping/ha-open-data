@@ -11,6 +11,10 @@ package.__path__ = [str(_ROOT)]
 sys.modules.setdefault("custom_components", ModuleType("custom_components"))
 sys.modules["custom_components.open_data"] = package
 
+const = ModuleType("custom_components.open_data.const")
+const.CONF_FIELD_ROLES = "field_roles"
+sys.modules["custom_components.open_data.const"] = const
+
 
 def _load(name: str):
     spec = spec_from_file_location(
@@ -24,7 +28,6 @@ def _load(name: str):
 
 
 _load("adaptive_sampling")
-_load("const")
 roles = _load("field_roles")
 reanalysis = _load("reanalysis")
 runtime = _load("reanalysis_runtime")
