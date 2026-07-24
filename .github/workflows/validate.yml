@@ -10,6 +10,7 @@ on:
     paths:
       - "custom_components/**"
       - "tests/**"
+      - "tests_ha/**"
       - "scripts/**"
       - "hacs.json"
       - "LICENSE"
@@ -19,6 +20,7 @@ on:
     paths:
       - "custom_components/**"
       - "tests/**"
+      - "tests_ha/**"
       - "scripts/**"
       - "hacs.json"
       - "LICENSE"
@@ -39,11 +41,11 @@ jobs:
       - name: Install validation tools
         run: python -m pip install --disable-pip-version-check -q aiohttp pytest ruff==0.11.13 pyyaml
       - name: Compile integration
-        run: python -m compileall -q custom_components tests scripts
+        run: python -m compileall -q custom_components tests tests_ha scripts
       - name: Run regression tests
         run: |
           set -o pipefail
-          pytest -q --tb=short 2>&1 | tee pytest-output.txt
+          pytest -q tests --tb=short 2>&1 | tee pytest-output.txt
       - name: Upload regression output
         if: always()
         uses: actions/upload-artifact@v4
@@ -53,7 +55,7 @@ jobs:
       - name: Lint integration and tests
         run: |
           set -o pipefail
-          ruff check custom_components tests scripts 2>&1 | tee ruff-output.txt
+          ruff check custom_components tests tests_ha scripts 2>&1 | tee ruff-output.txt
       - name: Upload lint output
         if: always()
         uses: actions/upload-artifact@v4
@@ -143,6 +145,18 @@ jobs:
               __import__(module)
               print(f"imported {module}")
           PY
+
+  home-assistant-lifecycle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14.2"
+      - name: Install Home Assistant lifecycle test fixtures
+        run: python -m pip install --disable-pip-version-check -q pytest-homeassistant-custom-component
+      - name: Run lifecycle and registry tests
+        run: pytest -q tests_ha --tb=short
 
   live-gtfs-corpus:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
