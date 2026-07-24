@@ -11,6 +11,10 @@ package.__path__ = [str(_ROOT)]
 sys.modules.setdefault("custom_components", ModuleType("custom_components"))
 sys.modules["custom_components.open_data"] = package
 
+const = ModuleType("custom_components.open_data.const")
+const.CONF_FIELD_ROLES = "field_roles"
+sys.modules["custom_components.open_data.const"] = const
+
 
 def _load(name: str):
     spec = spec_from_file_location(
@@ -24,7 +28,7 @@ def _load(name: str):
 
 
 _load("adaptive_sampling")
-_load("field_roles")
+roles = _load("field_roles")
 reanalysis = _load("reanalysis")
 runtime = _load("reanalysis_runtime")
 
@@ -63,3 +67,40 @@ def test_coordinate_mode_requires_unambiguous_pairs() -> None:
 
 def test_sample_cap_is_bounded() -> None:
     assert 1 <= runtime.MAX_REANALYSIS_SAMPLE_ROWS <= 200
+
+
+def test_reviewed_assignments_win_over_conflicting_inference() -> None:
+    result = runtime.reviewed_roles_for_current_schema(
+        field_names=("station", "temperature"),
+        rows=[{"station": "A", "temperature": 20.1}],
+        reviewed_roles={
+            "station": roles.FIELD_ROLE_DESCRIPTIVE,
+            "temperature": roles.FIELD_ROLE_IRRELEVANT,
+        },
+    )
+    assert result["station"] == roles.FIELD_ROLE_DESCRIPTIVE
+    assert result["temperature"] == roles.FIELD_ROLE_IRRELEVANT
+
+
+def test_new_fields_are_inferred_without_reassigning_reviewed_fields() -> None:
+    result = runtime.reviewed_roles_for_current_schema(
+        field_names=("station", "temperature", "pressure_value"),
+        rows=[{"station": "A", "temperature": 20.1, "pressure_value": 1001}],
+        reviewed_roles={
+            "station": roles.FIELD_ROLE_LOCATION,
+            "temperature": roles.FIELD_ROLE_DATA,
+        },
+    )
+    assert result["station"] == roles.FIELD_ROLE_LOCATION
+    assert result["temperature"] == roles.FIELD_ROLE_DATA
+    assert result["pressure_value"] == roles.FIELD_ROLE_DATA
+
+
+def test_removed_or_renamed_fields_are_not_transferred() -> None:
+    result = runtime.reviewed_roles_for_current_schema(
+        field_names=("site_name", "value"),
+        rows=[{"site_name": "A", "value": 1}],
+        reviewed_roles={"station": roles.FIELD_ROLE_LOCATION},
+    )
+    assert "station" not in result
+    assert result["site_name"] != roles.FIELD_ROLE_LOCATION

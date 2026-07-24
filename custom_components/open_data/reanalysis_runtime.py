@@ -8,7 +8,12 @@ from datetime import datetime, timezone
 from typing import Any, Mapping
 
 from .adaptive_sampling import infer_dataset_ordering
-from .field_roles import FIELD_ROLE_DATA, FIELD_ROLE_MEASUREMENT_NAME
+from .const import CONF_FIELD_ROLES
+from .field_roles import (
+    FIELD_ROLE_DATA,
+    FIELD_ROLE_MEASUREMENT_NAME,
+    classify_field_roles,
+)
 from .reanalysis import (
     AnalysisFingerprint,
     ReanalysisState,
@@ -79,6 +84,24 @@ def _coordinate_mode(field_names: set[str]) -> str:
     return "none"
 
 
+def reviewed_roles_for_current_schema(
+    *,
+    field_names: tuple[str, ...],
+    rows: list[Mapping[str, Any]],
+    reviewed_roles: Mapping[str, str],
+) -> dict[str, str]:
+    """Keep reviewed assignments and infer only newly appearing fields."""
+    current = set(field_names)
+    retained = {
+        field: role for field, role in reviewed_roles.items() if field in current
+    }
+    return classify_field_roles(
+        field_names,
+        rows,
+        explicit_roles=retained,
+    ).as_assignments()
+
+
 @dataclass(slots=True)
 class ReanalysisController:
     """Serialize automatic and manual bounded analysis for one config entry."""
@@ -106,7 +129,15 @@ class ReanalysisController:
             dataset.resource_id,
             limit=MAX_REANALYSIS_SAMPLE_ROWS,
         )
-        roles = dict(self.coordinator.field_roles)
+        reviewed = self.entry.options.get(
+            CONF_FIELD_ROLES,
+            self.entry.data.get(CONF_FIELD_ROLES, self.coordinator.field_roles),
+        )
+        roles = reviewed_roles_for_current_schema(
+            field_names=tuple(field.name for field in dataset.fields),
+            rows=list(rows),
+            reviewed_roles=reviewed or {},
+        )
         metric_fields = tuple(
             field for field, role in roles.items() if role == FIELD_ROLE_DATA
         )
