@@ -24,7 +24,6 @@ def _load(name: str):
 
 
 _load("models")
-_load("ontology")
 _load("observation_sampling")
 _load("analyzer")
 inspection = _load("inspection_evidence")
