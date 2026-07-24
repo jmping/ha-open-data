@@ -35,6 +35,7 @@ from .reanalysis_runtime import (
 )
 from .reanalysis_service import async_register_reanalysis_service
 from .record_structure import legacy_record_structure, load_record_structure
+from .registry_reconciliation import async_prune_deselected_record_devices
 from .services import async_register_services
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
@@ -133,6 +134,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: OpenDataConfigEntry) -> 
     )
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = coordinator
+
+    snapshot = coordinator.data
+    if snapshot is not None:
+        dataset = snapshot.dataset
+        resource = dataset.resource_id or "default"
+        base_identifier = (
+            f"{entry.data[CONF_PROVIDER]}:{entry.data[CONF_PORTAL_URL]}:"
+            f"{dataset.dataset_id}:{resource}"
+        )
+        await async_prune_deselected_record_devices(
+            hass,
+            entry_id=entry.entry_id,
+            base_identifier=base_identifier,
+            selected_records=selected_records,
+        )
 
     controller = ReanalysisController(hass, entry, coordinator)
     hass.data[DOMAIN][DATA_REANALYSIS_CONTROLLERS][entry.entry_id] = controller
