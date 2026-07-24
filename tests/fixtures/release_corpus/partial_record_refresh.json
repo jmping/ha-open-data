@@ -12,6 +12,6 @@
     "complete_failure": "raise UpdateFailed when every selected-record request fails"
   },
   "regression_tests": [
-    "tests/test_partial_record_refresh.py"
+    "tests/test_snapshot_merge.py"
   ]
 }
