@@ -87,3 +87,47 @@ def test_legacy_single_key_values_migrate_and_stale_values_are_pruned() -> None:
         result.selected_records[0], configured.unit_key_fields
     ) == {"station": "A"}
     assert result.selected_fields == ("pm2_5",)
+
+
+def test_identity_change_rebuilds_choices_and_drops_old_numeric_values() -> None:
+    configured = records.build_record_structure(unit_key_fields=("location_name",))
+    available = records.build_record_selections(
+        [{"location_name": "North"}, {"location_name": "South"}], configured
+    )
+
+    result = reconciliation.reconcile_options(
+        raw_records=("-56.26", "North"),
+        records_were_configured=True,
+        available_records=available,
+        unit_key_fields=configured.unit_key_fields,
+        raw_fields=("temperature",),
+        fields_were_configured=True,
+        available_fields=("temperature",),
+    )
+
+    assert len(result.selected_records) == 1
+    assert records.decode_unit_key(
+        result.selected_records[0], configured.unit_key_fields
+    ) == {"location_name": "North"}
+
+
+def test_reorganized_records_keep_only_values_in_regenerated_choices() -> None:
+    configured = records.build_record_structure(unit_key_fields=("station",))
+    available = records.build_record_selections(
+        [{"station": "B"}, {"station": "C"}], configured
+    )
+
+    result = reconciliation.reconcile_options(
+        raw_records=("A", "B"),
+        records_were_configured=True,
+        available_records=available,
+        unit_key_fields=configured.unit_key_fields,
+        raw_fields=("pm2_5",),
+        fields_were_configured=True,
+        available_fields=("pm2_5",),
+    )
+
+    assert len(result.selected_records) == 1
+    assert records.decode_unit_key(
+        result.selected_records[0], configured.unit_key_fields
+    ) == {"station": "B"}
