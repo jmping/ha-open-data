@@ -1,0 +1,39 @@
+{
+  "case_id": "mixed-stream-freshness",
+  "source": {
+    "provider": "socrata",
+    "portal_url": "https://data.example.gov",
+    "dataset_id": "abcd-1234",
+    "resource_id": null,
+    "language": "en",
+    "structure": "wide_time_series",
+    "live_validated_at": "2026-07-24"
+  },
+  "failure": {
+    "summary": "A current station caused a retired station to appear current when freshness was calculated only at dataset scope.",
+    "regression_test": "tests/test_freshness.py::test_stale_stream_is_not_available"
+  },
+  "schema": [
+    {"name": "station", "label": "Station", "type": "text"},
+    {"name": "observed_at", "label": "Observed at", "type": "timestamp"},
+    {"name": "temperature", "label": "Temperature", "type": "number"}
+  ],
+  "sample_rows": [
+    {"station": "station-a", "observed_at": "2026-07-24T12:00:00Z", "temperature": 20.0},
+    {"station": "station-b", "observed_at": "2026-07-20T12:00:00Z", "temperature": 18.5}
+  ],
+  "expected": {
+    "field_roles": {"station": "location", "observed_at": "time", "temperature": "data"},
+    "identity_fields": ["station"],
+    "stream_ids": ["station-a:temperature", "station-b:temperature"],
+    "freshness": {
+      "station-a:temperature": "current",
+      "station-b:temperature": "stale"
+    }
+  },
+  "redaction": {
+    "bounded": true,
+    "contains_personal_data": false,
+    "notes": "Synthetic station identifiers and values retain only the failure shape."
+  }
+}
