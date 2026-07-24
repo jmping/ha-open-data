@@ -87,3 +87,55 @@ def test_legacy_single_key_values_migrate_and_stale_values_are_pruned() -> None:
         result.selected_records[0], configured.unit_key_fields
     ) == {"station": "A"}
     assert result.selected_fields == ("pm2_5",)
+
+
+def test_changed_identity_rebuilds_choices_and_drops_old_numeric_values() -> None:
+    old_structure = records.build_record_structure(unit_key_fields=("longitude",))
+    old_selection = records.build_record_selections(
+        [{"longitude": "-56.26"}], old_structure
+    )[0].value
+
+    new_structure = records.build_record_structure(unit_key_fields=("location_name",))
+    available = records.build_record_selections(
+        [
+            {"location_name": "North Beach"},
+            {"location_name": "South Beach"},
+        ],
+        new_structure,
+    )
+
+    result = reconciliation.reconcile_options(
+        raw_records=(old_selection,),
+        records_were_configured=True,
+        available_records=available,
+        unit_key_fields=new_structure.unit_key_fields,
+        raw_fields=("temperature",),
+        fields_were_configured=True,
+        available_fields=("temperature",),
+    )
+
+    assert result.selected_records == ()
+    assert all("-56.26" not in value for value in result.selected_records)
+
+
+def test_changed_display_retains_only_values_present_in_regenerated_choices() -> None:
+    structure = records.build_record_structure(unit_key_fields=("station",))
+    old_available = records.build_record_selections(
+        [{"station": "A"}, {"station": "B"}], structure
+    )
+    selected_a, selected_b = (item.value for item in old_available)
+    new_available = records.build_record_selections(
+        [{"station": "A", "display": "Alpha Station"}], structure
+    )
+
+    result = reconciliation.reconcile_options(
+        raw_records=(selected_a, selected_b),
+        records_were_configured=True,
+        available_records=new_available,
+        unit_key_fields=structure.unit_key_fields,
+        raw_fields=(),
+        fields_were_configured=True,
+        available_fields=(),
+    )
+
+    assert result.selected_records == (selected_a,)
