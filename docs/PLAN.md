@@ -1,241 +1,201 @@
 # Project plan
 
+## Product goal
+
+Open Data for Home Assistant should let a user provide a public portal, catalog, dataset page, API URL, resource URL, or supported feed and receive useful Home Assistant entities without learning provider-specific APIs or hand-writing templates.
+
+The integration is not a city-specific adapter collection. It is a bounded discovery, interpretation, and materialization system built around shared provider contracts, deterministic inference, user review, and stable Home Assistant identities.
+
 ## Working agreement
 
-`ha-socrata` is intentionally and entirely vibe coded: the project is being shaped through iterative human–AI collaboration, empirical testing, and refactoring rather than a fixed up-front specification.
+The project is developed iteratively through human–AI collaboration, empirical testing, and refactoring rather than a fixed up-front specification. That development method does not relax engineering requirements.
 
-That choice is a development method, not an exemption from engineering discipline. Every implementation should still aim for:
+Every implementation should aim for:
 
-- explicit behavior and boundaries;
+- explicit behavior and limits;
 - readable code and useful type annotations;
-- tests for important behavior and regressions;
+- deterministic tests for important behavior and regressions;
 - restrained dependencies;
 - observable failures rather than silent corruption;
-- small, reversible changes;
-- documentation that distinguishes current behavior from aspiration.
+- small, reversible slices;
+- documentation that distinguishes current behavior from planned work;
+- verification of CI before each sequential merge.
 
-## Problem statement
+## Current architecture
 
-Socrata portals expose rich public datasets, but Home Assistant users currently need to understand portal-specific URLs, SODA query syntax, source fields, timestamps, units, and template sensors. This creates fragile one-off configurations and makes cross-city reuse difficult.
+### Source-reference routing
 
-The integration should provide a generic transport and discovery layer, then add semantic adapters that turn selected datasets into high-quality Home Assistant entities.
+One source-location input accepts portals and individual datasets.
+
+- Portal roots start bounded catalog discovery.
+- Dataset pages, API URLs, resources, and identifiers import one dataset.
+- Reference parsing and provider verification determine intent.
+
+### Provider layer
+
+Provider adapters expose normalized capabilities such as catalog search, schema retrieval, latest rows, bounded samples, selected history, ordering, statistics, and downloadable resources.
+
+Current provider families include CKAN, Socrata, ArcGIS, and Opendatasoft, with bounded file-resource and GTFS inspection paths where applicable.
+
+### Dataset interpretation
+
+Bounded schema and observation evidence is used to infer:
+
+- stable identity and display fields;
+- timestamps and update frequency;
+- coordinates and location context;
+- hierarchy and functional dependencies;
+- wide metrics;
+- long/tidy measurement-name and value fields;
+- changing nominal context;
+- event and administrative fields;
+- confidence and review requirements.
+
+User-reviewed field assignments are authoritative. Re-analysis retains reviewed assignments for surviving fields and infers roles only for new or unassigned fields.
+
+### Home Assistant runtime
+
+The coordinator owns network refreshes and normalized snapshots. Entity platforms do not issue their own provider requests.
+
+The runtime supports:
+
+- stable dataset- or record-scoped devices;
+- scalar and semantic observation sensors;
+- bounded history and Recorder statistics;
+- latest-observation and freshness diagnostics;
+- selected-record filtering;
+- registry reconciliation when records or streams are deselected;
+- automatic and manual bounded re-analysis.
 
 ## Design principles
 
 ### Preserve provenance
 
-Every normalized observation should retain its source portal, dataset identifier, source timestamp, station or location when present, retrieval timestamp, and mapping identity.
+Normalized observations should retain source portal, provider, dataset and resource identifiers, source timestamps, record identity, retrieval time, mapping identity, and relevant dimensions.
 
 ### Prefer semantics over raw columns
 
-A raw column is not automatically a useful Home Assistant sensor. Adapters should map source fields to concepts such as temperature, precipitation, PM2.5, AQI, wind speed, or normalized solar output.
+A column is not automatically a useful sensor. Numeric measurements, changing nominal summaries, identifiers, quality flags, units, and administrative fields require different treatment.
 
-### Keep the client small
+Changing nominal fields such as `largest_pollutant` should normally remain context in wide datasets. They must not create a separate mostly empty entity for every observed label. Long-format sensor definitions require bounded cardinality, repeated observations, usable numeric values, and user review before runtime materialization.
 
-The Socrata HTTP surface needed here is compact. The initial client will use Home Assistant's shared `aiohttp` session instead of introducing a separate or unmaintained SDK.
+### Stay bounded
 
-### Validate early
+Catalog pages, sample rows, observation windows, archive members, bytes, requests, and runtime must have explicit ceilings. Public portals and Home Assistant Recorder must not be subjected to uncontrolled crawling or backfill.
 
-The config flow must test the portal and dataset before creating an entry. Invalid URLs, inaccessible datasets, malformed responses, and unsupported schemas should produce actionable errors.
+### Preserve user decisions
 
-### Poll responsibly
+Inference can propose mappings and flag conflicts. It must not silently overwrite reviewed categories, selections, or stable unique IDs.
 
-The integration should respect source update cadence, use a `DataUpdateCoordinator`, avoid duplicate requests across entities, and use conservative defaults.
+### Validate by behavior, not city
 
-### Expose freshness
+Cities and regions are examples in a common matrix. Runtime code and issue organization should focus on provider families, URL-routing behavior, languages, labels, observation shapes, and feed structures.
 
-Stale source data must not look current. Entities should expose source timestamps and become unavailable or diagnostically stale according to explicit adapter policy.
+### Keep live dependencies out of normal CI
 
-## Architectural layers
+Routine CI uses deterministic offline fixtures. Scheduled or manual live checks may validate public URLs and publish artifacts, but third-party downtime should not fail unrelated pull requests.
 
-### 1. Socrata client
+## Validation program
 
-Responsibilities:
+The validation backlog is organized into six classes.
 
-- normalize portal URLs;
-- request dataset metadata;
-- execute SODA queries;
-- retrieve latest rows;
-- classify transport, HTTP, decoding, and schema failures;
-- avoid Home Assistant entity concerns.
+### 1. Portal crawling and canonicalization
 
-Initial interface:
+Track redirects, linked hosts, regional endpoints, subpath deployments, query-bearing URLs, pagination, provider detection, and authoritative-source ranking.
 
-```python
-client = SocrataClient(session, portal_url)
-metadata = await client.async_get_dataset_metadata(dataset_id)
-rows = await client.async_query(dataset_id, limit=1, order="timestamp DESC")
-```
+Tracking issue: [#53](https://github.com/jmping/ha-open-data/issues/53)
 
-### 2. Coordinator
+### 2. Cross-city canonical labels
 
-Responsibilities:
+Build repeated evidence for identity, display, timestamp, location, context, hierarchy, metric, status, unit, and administrative labels across domains and providers.
 
-- own refresh cadence;
-- execute one query per config entry;
-- translate client failures into Home Assistant update failures;
-- retain the latest row and retrieval metadata.
+Tracking issue: [#54](https://github.com/jmping/ha-open-data/issues/54)
 
-### 3. Dataset adapters
+### 3. Non-English portal compatibility
 
-Responsibilities:
+Validate Unicode-safe URLs and identifiers, localized navigation, non-Latin scripts, language-prefixed paths, localized provider variants, and explicit authentication failures.
 
-- identify compatible datasets;
-- define field mappings and timestamp selection;
-- parse values and units;
-- produce normalized observations;
-- define entity descriptions and stale-data policy.
+Tracking issue: [#55](https://github.com/jmping/ha-open-data/issues/55)
 
-Adapters should be registered independently of the transport client. Ann Arbor adapters are the first concrete implementations, not special cases inside `api.py`.
+### 4. Multilingual label mappings
 
-### 4. Home Assistant platforms
+Promote deterministic aliases only from real-schema or authoritative evidence. Track ambiguity, provenance, locale-specific abbreviations, units, and related source fields.
 
-Responsibilities:
+Tracking issue: [#56](https://github.com/jmping/ha-open-data/issues/56)
 
-- expose normalized observations as entities;
-- use appropriate device classes, native units, and state classes;
-- provide stable unique IDs;
-- attach provenance and diagnostic attributes;
-- avoid issuing their own HTTP requests.
+### 5. Feed and source structures
 
-## Delivery sequence
+Validate queryable catalogs, downloadable resources, direct feeds, GTFS, geospatial services, service-described APIs, statistical systems, and authenticated public APIs through generic contracts.
 
-## Milestone 0 — repository foundation
+Tracking issue: [#57](https://github.com/jmping/ha-open-data/issues/57)
 
-Deliverables:
+### 6. Validation corpus and coverage matrix
 
-- project README and this plan;
-- minimal custom-integration package;
-- manifest, config flow, translations, and coordinator;
-- basic development metadata;
-- a visible statement that the project is entirely vibe coded.
+Maintain bounded offline fixtures, provenance, expected routes and roles, live-validation dates, coverage reports, stale examples, and canonical feed identities.
 
-Exit criterion:
+Tracking issue: [#58](https://github.com/jmping/ha-open-data/issues/58)
 
-- Home Assistant can load the integration module without structural errors.
+See [VALIDATION_STRATEGY.md](VALIDATION_STRATEGY.md) and [schema-corpus.md](schema-corpus.md).
 
-## Milestone 1 — generic vertical slice
+## Near-term delivery sequence
 
-Configuration fields:
+### A. Finish observation-review integration
 
-- portal URL;
-- Socrata dataset identifier;
-- optional timestamp field;
-- optional polling interval later, after sensible defaults are established.
+- feed observation-model evidence into structural analysis;
+- expose observation shape, field behavior, and role recommendations;
+- add descriptive hierarchy to review output and selector labels;
+- use bounded candidate-selection defaults;
+- preserve prior user choices during every re-analysis.
 
-Behavior:
+### B. Improve bounded provider sampling
 
-- config flow validates metadata access;
-- coordinator requests the latest row;
-- one diagnostic sensor reports whether a row was retrieved;
-- attributes expose the raw row, dataset ID, portal, and retrieval time.
+- use conservative newest/oldest server-side windows where supported;
+- retain common in-memory stratification across time and entities;
+- report retrieval strategy and fallback behavior;
+- avoid per-entity request fan-out until latency and rate-limit behavior are validated.
 
-Exit criterion:
+### C. Expand behavior-based validation
 
-- a real public dataset can be configured without YAML and refreshed reliably.
+- add platform-family crawler fixtures;
+- broaden cross-city label evidence;
+- strengthen non-English provider and label coverage;
+- classify generic direct-feed and statistical structures;
+- generate actionable coverage reports from the corpus.
 
-## Milestone 2 — test harness and CI
+## Deferred subsystems
 
-Tests:
+### Reviewed observation graph materialization
 
-- URL normalization;
-- successful metadata and query responses;
-- HTTP and malformed JSON failures;
-- config-flow success, duplicate prevention, and connection failure;
-- coordinator refresh success and failure;
-- sensor availability and attributes.
+Runtime creation of long-format metric streams and reviewed parent-child graphs requires entity-count previews, bounded cardinality, stable unique IDs, migration and rollback behavior, and safe registry reconciliation.
 
-Tooling:
+Tracking issue: [#51](https://github.com/jmping/ha-open-data/issues/51)
 
-- Ruff or equivalent linting and formatting;
-- pytest with Home Assistant test support;
-- GitHub Actions for static checks and tests.
+### Resumable historical backfill
 
-Exit criterion:
+Large history imports require accepted import plans, paginated provider contracts, plan hashes, external checkpoints, cancellation, idempotency, source rate limiting, and Recorder protection.
 
-- pull requests receive deterministic automated feedback.
+Tracking issue: [#52](https://github.com/jmping/ha-open-data/issues/52)
 
-## Milestone 3 — Ann Arbor adapters
-
-Investigate and document the authoritative Ann Arbor datasets and field schemas for:
-
-- weather;
-- air quality;
-- rainfall.
-
-For each adapter:
-
-1. capture metadata and representative rows;
-2. select stable identifiers and timestamps;
-3. document units and missing-value behavior;
-4. implement compatibility detection;
-5. create typed entities;
-6. add fixtures and tests;
-7. expose station and source attributes.
-
-Exit criterion:
-
-- Ann Arbor users receive native environmental entities without hand-authored field mappings.
-
-## Milestone 4 — catalog discovery
-
-The config flow should search the portal catalog and rank likely datasets using metadata such as title, description, tags, columns, data types, and update frequency.
-
-Discovery is advisory. Users should see why a dataset was suggested and be able to reject or override mappings.
-
-Exit criterion:
-
-- a user can start from a portal URL rather than a known dataset identifier.
-
-## Milestone 5 — community mapping model
-
-Define a contribution format for portal or dataset adapters. The format should be reviewable, testable, and capable of handling schema variation without arbitrary executable configuration.
-
-Possible forms:
-
-- Python adapters for complex behavior;
-- declarative mappings for straightforward datasets;
-- a registry that matches portal plus dataset ID or metadata fingerprints.
-
-Exit criterion:
-
-- support for a new city's stable dataset can be contributed without editing the generic client.
-
-## Near-term implementation decisions
-
-- Domain: `socrata`
-- Integration type: `service`
-- Configuration: UI config flow only
-- Networking: Home Assistant shared async HTTP session
-- Polling: coordinator-owned, initially 15 minutes
-- Authentication: anonymous public datasets first; application tokens considered later
-- Storage: config entries for durable configuration; no local dataset cache in the first slice
-- Entities: sensor platform first
-
-## Open questions
-
-- How should generic rows be represented before a semantic adapter exists?
-- Should one config entry represent a portal, a dataset, or a portal plus selected datasets?
-- How should adapters specify freshness thresholds relative to irregular source update schedules?
-- Which Socrata metadata APIs are sufficiently consistent across portal generations?
-- How should geospatial station selection work when a dataset contains multiple locations?
-- Can catalog and schema matching be made deterministic enough to avoid surprising entities?
-- What diagnostics are useful without leaking tokens if authenticated access is later added?
+The detailed constraints are recorded in [ISSUE6_FUTURE_PLAN.md](ISSUE6_FUTURE_PLAN.md).
 
 ## Decision log
 
-### 2026-07-20 — build a thin native async client
+### 2026-07-20 — use native asynchronous provider clients
 
-The project will not center itself on `sodapy`. The required query surface is small, and a native async client integrates cleanly with Home Assistant's HTTP lifecycle.
+Provider HTTP surfaces are implemented with Home Assistant's shared asynchronous session rather than centering the project on provider-specific synchronous SDKs.
 
-### 2026-07-20 — Ann Arbor is a reference deployment
+### 2026-07-20 — Ann Arbor is a reference deployment, not a special case
 
-Ann Arbor datasets will drive the first adapters and real-world testing. City-specific mappings must remain outside the generic Socrata transport layer.
+Ann Arbor provided early real-world testing. City-specific behavior must remain outside generic transport and inference layers.
 
-### 2026-07-20 — environmental observability is the product frame
+### 2026-07-21 — use a provider-independent observation model
 
-The project is intended to support correlation between external public telemetry and building telemetry, including air quality, rainfall, weather, water, and energy contexts.
+Bounded historical observations are first-class interpretation evidence for wide, long, multi-dimensional, event, and unknown datasets.
 
-### 2026-07-20 — entirely vibe coded, explicitly documented
+### 2026-07-23 — preserve reviewed category assignments
 
-The repository will openly describe the project's human–AI, iterative development method. Generated code is still subject to review, testing, and refactoring before being treated as reliable.
+User-reviewed field roles remain authoritative during schema changes and re-analysis. New inference is limited to new or unassigned fields.
+
+### 2026-07-24 — organize validation by behavior rather than city batches
+
+City-specific validation issues were superseded by shared crawling, label, language, feed-structure, and corpus workstreams. New city URLs should normally become fixtures in the common matrix rather than new architectural boundaries.
