@@ -1,0 +1,21 @@
+{
+  "case_id": "portal-api-redirects",
+  "source": {
+    "provider_families": ["ckan", "socrata"],
+    "provenance_urls": [
+      "https://data.a2gov.org",
+      "https://ckan.a2gov.org",
+      "https://data.michigan.gov"
+    ],
+    "shape": "provider API redirects between tenant, backend, canonical, or regional hosts"
+  },
+  "failure": "Provider verification rejected safe API redirects before catalog discovery completed.",
+  "expected": {
+    "discovery": "follow a bounded redirect chain after validating every destination as public HTTP(S)",
+    "query_handling": "send original query parameters only on the first request",
+    "security": "reject private, loopback, link-local, credential-bearing, or non-HTTP(S) destinations"
+  },
+  "regression_tests": [
+    "tests/test_provider_api_redirects.py"
+  ]
+}
