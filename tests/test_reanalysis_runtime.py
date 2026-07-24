@@ -84,8 +84,8 @@ def test_reviewed_assignments_win_over_conflicting_inference() -> None:
 
 def test_new_fields_are_inferred_without_reassigning_reviewed_fields() -> None:
     result = runtime.reviewed_roles_for_current_schema(
-        field_names=("station", "temperature", "humidity"),
-        rows=[{"station": "A", "temperature": 20.1, "humidity": 50}],
+        field_names=("station", "temperature", "pressure_value"),
+        rows=[{"station": "A", "temperature": 20.1, "pressure_value": 1001}],
         reviewed_roles={
             "station": roles.FIELD_ROLE_LOCATION,
             "temperature": roles.FIELD_ROLE_DATA,
@@ -93,7 +93,7 @@ def test_new_fields_are_inferred_without_reassigning_reviewed_fields() -> None:
     )
     assert result["station"] == roles.FIELD_ROLE_LOCATION
     assert result["temperature"] == roles.FIELD_ROLE_DATA
-    assert result["humidity"] == roles.FIELD_ROLE_DATA
+    assert result["pressure_value"] == roles.FIELD_ROLE_DATA
 
 
 def test_removed_or_renamed_fields_are_not_transferred() -> None:
