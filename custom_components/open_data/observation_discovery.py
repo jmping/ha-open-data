@@ -7,6 +7,12 @@ from typing import Any, Mapping
 
 from .models import SemanticObservation
 
+_FRESHNESS_ATTRIBUTE_MAP = {
+    "_open_data_freshness_status": "freshness_status",
+    "_open_data_observation_age_seconds": "observation_age_seconds",
+    "_open_data_observation_stale_after_seconds": "observation_stale_after_seconds",
+}
+
 
 @dataclass(slots=True)
 class ObservationStreamTracker:
@@ -47,7 +53,20 @@ def observation_metadata_attributes(
     if observation.unit is not None:
         attributes["source_unit"] = observation.unit
     if observation.dimensions:
-        attributes["dimensions"] = {
-            field: value for field, value in observation.dimensions
-        }
+        dimensions: dict[str, str] = {}
+        for field, value in observation.dimensions:
+            attribute = _FRESHNESS_ATTRIBUTE_MAP.get(field)
+            if attribute is None:
+                dimensions[field] = value
+                continue
+            if attribute == "freshness_status":
+                attributes[attribute] = value
+                attributes["observation_stale"] = value == "stale"
+            else:
+                try:
+                    attributes[attribute] = float(value)
+                except (TypeError, ValueError):
+                    attributes[attribute] = value
+        if dimensions:
+            attributes["dimensions"] = dimensions
     return attributes
