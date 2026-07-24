@@ -19,7 +19,12 @@ from .base import (
 )
 from .ckan import CkanProvider
 from .opendatasoft import OpendatasoftProvider
+from .redirecting_json import install_redirecting_json_client
 from .socrata import SocrataProvider
+
+# Provider APIs increasingly canonicalize between tenant, regional, and backend
+# hosts. Follow those redirects only through the shared bounded, SSRF-safe client.
+install_redirecting_json_client()
 
 
 class DirectReferenceCkanProvider(CkanProvider):
