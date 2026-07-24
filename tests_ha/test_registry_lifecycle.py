@@ -1,10 +1,13 @@
 """Exercise entity and device registry cleanup in real Home Assistant."""
 
+import pytest
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.open_data.const import DOMAIN
 from custom_components.open_data.sensor import _async_prune_stale_entities
+
+pytestmark = pytest.mark.asyncio
 
 
 async def test_prune_removes_only_deselected_entities_and_orphan_devices(hass) -> None:
