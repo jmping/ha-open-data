@@ -14,6 +14,7 @@ from .field_roles import (
     FIELD_ROLE_MEASUREMENT_NAME,
     classify_field_roles,
 )
+from .observation_sampling import stratify_observation_rows
 from .reanalysis import (
     AnalysisFingerprint,
     ReanalysisState,
@@ -26,6 +27,7 @@ CONF_REANALYSIS_STATE = "reanalysis_state"
 DATA_REANALYSIS_CONTROLLERS = "reanalysis_controllers"
 DATA_SUPPRESS_RELOAD = "suppress_reanalysis_reload"
 MAX_REANALYSIS_SAMPLE_ROWS = 200
+MAX_REANALYSIS_CANDIDATE_ROWS = 800
 
 
 def _fingerprint_from_dict(value: Mapping[str, Any] | None) -> AnalysisFingerprint | None:
@@ -110,6 +112,7 @@ class ReanalysisController:
     entry: Any
     coordinator: Any
     _lock: asyncio.Lock | None = None
+    _sampling_evidence: dict[str, Any] | None = None
 
     @property
     def lock(self) -> asyncio.Lock:
@@ -118,24 +121,37 @@ class ReanalysisController:
         return self._lock
 
     async def async_build_fingerprint(self) -> AnalysisFingerprint:
-        """Collect a capped provider sample and build current evidence."""
+        """Collect a capped stratified provider sample and build current evidence."""
         dataset = self.coordinator.dataset
         if dataset is None:
             dataset = await self.coordinator.provider.async_get_dataset(
                 self.coordinator.dataset_id, self.coordinator.resource_id
             )
-        rows = await self.coordinator.provider.async_sample_rows(
+        candidate_rows = await self.coordinator.provider.async_sample_rows(
             dataset.dataset_id,
             dataset.resource_id,
+            limit=MAX_REANALYSIS_CANDIDATE_ROWS,
+        )
+        identity_fields = (
+            (self.coordinator.identity_field,)
+            if self.coordinator.identity_field is not None
+            else ()
+        )
+        sample = stratify_observation_rows(
+            candidate_rows,
+            timestamp_field=self.coordinator.timestamp_field,
+            identity_fields=identity_fields,
             limit=MAX_REANALYSIS_SAMPLE_ROWS,
         )
+        rows = list(sample.rows)
+        self._sampling_evidence = sample.evidence.as_dict()
         reviewed = self.entry.options.get(
             CONF_FIELD_ROLES,
             self.entry.data.get(CONF_FIELD_ROLES, self.coordinator.field_roles),
         )
         roles = reviewed_roles_for_current_schema(
             field_names=tuple(field.name for field in dataset.fields),
-            rows=list(rows),
+            rows=rows,
             reviewed_roles=reviewed or {},
         )
         metric_fields = tuple(
@@ -175,6 +191,7 @@ class ReanalysisController:
                         "ran": False,
                         "reason": decision.reason,
                         "next_allowed_at": decision.next_allowed_at,
+                        "sampling_evidence": self._sampling_evidence,
                         "state": dump_reanalysis_state(previous),
                     }
                 review = decision.reason not in {"initial_analysis", "manual_request"}
@@ -201,6 +218,7 @@ class ReanalysisController:
                 "ran": True,
                 "reason": current.reason,
                 "review_recommended": current.review_recommended,
+                "sampling_evidence": self._sampling_evidence,
                 "state": dump_reanalysis_state(current),
             }
 
