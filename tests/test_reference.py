@@ -122,7 +122,7 @@ def test_invalid_portal_hint_is_actionable_error() -> None:
         raise AssertionError("Expected an invalid portal-hint error")
 
 
-def test_recognized_portal_path_is_preserved() -> None:
+def test_recognized_portal_path_wins_over_socrata_id_shape() -> None:
     parsed = parse_reference("https://example.gov/open-data/search")
     assert parsed.provider is None
     assert parsed.portal_url == "https://example.gov/open-data/search"
@@ -137,9 +137,9 @@ def test_query_bearing_portal_location_is_preserved() -> None:
     assert parsed.is_portal is True
 
 
-def test_arbitrary_url_path_remains_unsupported_static_reference() -> None:
+def test_unknown_http_location_is_deferred_to_portal_inspection() -> None:
     parsed = parse_reference("https://example.gov/not-a-supported-dataset")
     assert parsed.provider is None
-    assert parsed.portal_url == "https://example.gov"
+    assert parsed.portal_url == "https://example.gov/not-a-supported-dataset"
     assert parsed.dataset_id is None
-    assert parsed.is_portal is False
+    assert parsed.is_portal is True

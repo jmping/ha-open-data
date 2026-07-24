@@ -114,6 +114,9 @@ def parse_reference(value: str, portal_url: str | None = None) -> OpenDataRefere
             return OpenDataReference(PROVIDER_CKAN, portal, None, resource_id, False)
         return OpenDataReference(PROVIDER_CKAN, portal, is_portal=True)
 
+    if segments[:3] == ["api", "catalog", "v1"]:
+        return OpenDataReference(PROVIDER_SOCRATA, portal, is_portal=True)
+
     for marker in ("resource", "views", "d"):
         if marker in segments:
             index = segments.index(marker)
@@ -122,23 +125,24 @@ def parse_reference(value: str, portal_url: str | None = None) -> OpenDataRefere
                 if _SOCRATA_ID.fullmatch(dataset_id):
                     return OpenDataReference(PROVIDER_SOCRATA, portal, dataset_id)
 
+    # Portal navigation terms take precedence over the generic Socrata ID shape.
+    # Names such as "open-data" happen to match xxxx-xxxx but identify a portal
+    # path, not a dataset. The portal inspector will verify the source later.
+    if normalized_segments & _PORTAL_PATH_HINTS:
+        return OpenDataReference(None, location, is_portal=True)
+
     for segment in reversed(segments):
         dataset_id = segment.split(".", 1)[0].lower()
         if _SOCRATA_ID.fullmatch(dataset_id):
             return OpenDataReference(PROVIDER_SOCRATA, portal, dataset_id)
 
-    if segments[:3] == ["api", "catalog", "v1"]:
-        return OpenDataReference(PROVIDER_SOCRATA, portal, is_portal=True)
-
     if not segments:
         return OpenDataReference(None, portal, is_portal=True)
 
-    # Preserve recognized landing/catalog paths for the richer portal inspector,
-    # but keep arbitrary URL paths classified as unsupported static references.
-    if normalized_segments & _PORTAL_PATH_HINTS:
-        return OpenDataReference(None, location, is_portal=True)
-
-    return OpenDataReference(None, portal, is_portal=False)
+    # Prefer a bounded portal crawl for otherwise valid HTTP(S) locations. This
+    # keeps entry permissive while leaving the inspector responsible for proving
+    # whether the supplied location is actually a supported portal.
+    return OpenDataReference(None, location, is_portal=True)
 
 
 async def async_resolve_reference(session, reference: OpenDataReference) -> OpenDataReference:
