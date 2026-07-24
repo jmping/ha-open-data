@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.open_data import (
@@ -20,6 +21,8 @@ from custom_components.open_data.const import (
     DOMAIN,
 )
 from custom_components.open_data.models import OpenDataDataset, OpenDataSnapshot
+
+pytestmark = pytest.mark.asyncio
 
 
 class _FakeCoordinator:
@@ -106,7 +109,10 @@ async def test_setup_reload_and_unload_preserve_entry_ownership(hass) -> None:
         assert entry.runtime_data is coordinator
         assert coordinator.first_refresh_calls == 1
         assert len(coordinator.listeners) == 1
-        assert hass.data[DOMAIN][DATA_REANALYSIS_CONTROLLERS][entry.entry_id] is _FakeController.instances[0]
+        assert (
+            hass.data[DOMAIN][DATA_REANALYSIS_CONTROLLERS][entry.entry_id]
+            is _FakeController.instances[0]
+        )
         forward.assert_awaited_once()
         prune.assert_awaited_once()
 
