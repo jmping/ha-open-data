@@ -10,6 +10,12 @@ from ..const import (
     PROVIDER_OPENDATASOFT,
     PROVIDER_SOCRATA,
 )
+from .redirecting_json import install_redirecting_json_client
+
+# Provider APIs increasingly canonicalize between tenant, regional, and backend
+# hosts. Follow those redirects only through the shared bounded, SSRF-safe client.
+install_redirecting_json_client()
+
 from .arcgis_hub import ArcGisHubProvider
 from .base import (
     OpenDataConnectionError,
