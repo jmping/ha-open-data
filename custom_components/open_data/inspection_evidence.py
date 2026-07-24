@@ -7,6 +7,7 @@ from typing import Any, Mapping, Sequence
 
 from .analyzer import analyze_dataset, dataset_explorer_summary
 from .models import OpenDataDataset
+from .observation_model import build_observation_model_review
 from .observation_sampling import (
     infer_functional_dependencies,
     stratify_observation_rows,
@@ -45,8 +46,16 @@ def build_dataset_inspection_evidence(
         rows,
         fields=relationship_fields,
     )
+    observation_model = build_observation_model_review(
+        dataset,
+        rows,
+        identity_field=preliminary.identity_field,
+        timestamp_field=preliminary.timestamp_field,
+        metric_fields=preliminary.metric_fields,
+    )
     analysis["sampling_evidence"] = sample.evidence.as_dict()
     analysis["historical_relationships"] = [
         asdict(relationship) for relationship in relationships
     ]
+    analysis["observation_model"] = observation_model.as_dict()
     return analysis
