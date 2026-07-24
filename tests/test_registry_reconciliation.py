@@ -1,11 +1,44 @@
 """Regression tests for record-selection registry reconciliation."""
 
-from types import SimpleNamespace
+from importlib.util import module_from_spec, spec_from_file_location
+from pathlib import Path
+import sys
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
-from custom_components.open_data import registry_reconciliation as reconciliation
-from custom_components.open_data.const import DOMAIN
+
+_ROOT = Path(__file__).parents[1] / "custom_components" / "open_data"
+DOMAIN = "open_data"
+
+package = ModuleType("custom_components.open_data")
+package.__path__ = [str(_ROOT)]
+sys.modules["custom_components.open_data"] = package
+
+const = ModuleType("custom_components.open_data.const")
+const.DOMAIN = DOMAIN
+sys.modules["custom_components.open_data.const"] = const
+
+core = ModuleType("homeassistant.core")
+core.HomeAssistant = object
+sys.modules["homeassistant.core"] = core
+
+helpers = sys.modules.setdefault("homeassistant.helpers", ModuleType("homeassistant.helpers"))
+device_registry = ModuleType("homeassistant.helpers.device_registry")
+entity_registry = ModuleType("homeassistant.helpers.entity_registry")
+helpers.device_registry = device_registry
+helpers.entity_registry = entity_registry
+sys.modules["homeassistant.helpers.device_registry"] = device_registry
+sys.modules["homeassistant.helpers.entity_registry"] = entity_registry
+
+spec = spec_from_file_location(
+    "custom_components.open_data.registry_reconciliation",
+    _ROOT / "registry_reconciliation.py",
+)
+assert spec is not None and spec.loader is not None
+reconciliation = module_from_spec(spec)
+sys.modules[spec.name] = reconciliation
+spec.loader.exec_module(reconciliation)
 
 
 class FakeEntityRegistry:
@@ -72,8 +105,8 @@ async def test_prunes_only_deselected_record_entities_and_orphan_device(monkeypa
             _entity("sensor.other", "other-entry-device", "entry-2"),
         ]
     )
-    monkeypatch.setattr(reconciliation.dr, "async_get", lambda hass: devices)
-    monkeypatch.setattr(reconciliation.er, "async_get", lambda hass: entities)
+    monkeypatch.setattr(reconciliation.dr, "async_get", lambda hass: devices, raising=False)
+    monkeypatch.setattr(reconciliation.er, "async_get", lambda hass: entities, raising=False)
 
     removed_entities, removed_devices = (
         await reconciliation.async_prune_deselected_record_devices(
@@ -111,8 +144,8 @@ async def test_deselecting_all_removes_all_record_devices(monkeypatch) -> None:
     entities = FakeEntityRegistry(
         [_entity("sensor.one", "one"), _entity("sensor.two", "two")]
     )
-    monkeypatch.setattr(reconciliation.dr, "async_get", lambda hass: devices)
-    monkeypatch.setattr(reconciliation.er, "async_get", lambda hass: entities)
+    monkeypatch.setattr(reconciliation.dr, "async_get", lambda hass: devices, raising=False)
+    monkeypatch.setattr(reconciliation.er, "async_get", lambda hass: entities, raising=False)
 
     result = await reconciliation.async_prune_deselected_record_devices(
         object(),
