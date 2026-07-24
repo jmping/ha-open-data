@@ -12,6 +12,6 @@
   },
   "regression_tests": [
     "tests/test_freshness.py",
-    "tests/test_sensor_freshness_integration.py"
+    "tests/test_snapshot_merge.py"
   ]
 }
