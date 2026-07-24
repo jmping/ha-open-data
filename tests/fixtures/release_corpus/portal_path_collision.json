@@ -1,0 +1,28 @@
+{
+  "case_id": "portal-path-socrata-id-collision",
+  "source": {
+    "provider": "unknown",
+    "portal_url": "https://example.gov/open-data/search",
+    "dataset_id": null,
+    "resource_id": null,
+    "language": "en",
+    "structure": "portal_landing_page",
+    "live_validated_at": "2026-07-24"
+  },
+  "failure": {
+    "summary": "A portal navigation segment shaped like xxxx-xxxx was misclassified as a Socrata dataset ID.",
+    "regression_test": "tests/test_reference.py::test_recognized_portal_path_is_preserved"
+  },
+  "schema": [],
+  "sample_rows": [],
+  "expected": {
+    "classification": "portal_candidate",
+    "provider": null,
+    "preserved_location": "https://example.gov/open-data/search"
+  },
+  "redaction": {
+    "bounded": true,
+    "contains_personal_data": false,
+    "notes": "Synthetic host preserving the live URL shape only."
+  }
+}
