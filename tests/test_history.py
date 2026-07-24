@@ -1,6 +1,6 @@
 """Tests for initial graph history and freshness metadata."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 import sys
@@ -70,6 +70,53 @@ def test_five_minute_statistics_populate_the_default_more_info_graph() -> None:
         datetime(2026, 7, 21, 10, 20, tzinfo=timezone.utc),
     ]
     assert rows[0]["mean"] == 21.0
+
+
+def _observation(stream_id: str, minutes: int, count: int = 30):
+    start = datetime(2026, 7, 1, tzinfo=timezone.utc)
+    return models.SemanticObservation(
+        stream_id=stream_id,
+        unit_id=stream_id,
+        metric="value",
+        source_field="value",
+        value=1,
+        history=tuple(
+            models.ObservationPoint(
+                (start + timedelta(minutes=minutes * index)).isoformat(), index
+            )
+            for index in range(count)
+        ),
+    )
+
+
+def test_frequency_uses_latest_30_timestamps_and_requested_denominator() -> None:
+    estimate = history.estimate_observation_frequency_seconds(
+        {"site-a": _observation("site-a", 10)}
+    )
+    assert estimate == 29 * 10 * 60 / 30
+
+
+def test_frequency_uses_median_across_sites() -> None:
+    estimate = history.estimate_observation_frequency_seconds(
+        {
+            "site-a": _observation("site-a", 5),
+            "site-b": _observation("site-b", 10),
+            "site-c": _observation("site-c", 60),
+        }
+    )
+    assert estimate == 29 * 10 * 60 / 30
+
+
+def test_frequency_ignores_sparse_and_invalid_streams() -> None:
+    sparse = models.SemanticObservation(
+        stream_id="sparse",
+        unit_id="sparse",
+        metric="value",
+        source_field="value",
+        value=1,
+        history=(models.ObservationPoint("not-a-time", 1),),
+    )
+    assert history.estimate_observation_frequency_seconds({"sparse": sparse}) is None
 
 
 def test_dataset_freshness_prefers_newest_resource_or_catalog_update() -> None:
