@@ -11,14 +11,8 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-# Install the stable analysis boundary before config_flow/options_flow import the
-# analyzer symbol. This preserves the rich runtime API while ensuring initial
-# config-entry data contains only JSON-serializable record identifiers.
 from . import analyzer as _analyzer
 from .analysis_api import build_selectable_records as _stable_build_selectable_records
-
-_analyzer.build_selectable_records = _stable_build_selectable_records
-
 from .const import (
     CONF_DATASET_ID,
     CONF_DISPLAY_FIELD,
@@ -49,6 +43,10 @@ from .reanalysis_service import async_register_reanalysis_service
 from .record_structure import legacy_record_structure, load_record_structure
 from .registry_reconciliation import async_prune_deselected_record_devices
 from .services import async_register_services
+
+# Config flow and options flow import this symbol only after package
+# initialization. Install the validated boundary before those imports occur.
+_analyzer.build_selectable_records = _stable_build_selectable_records
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 _DATA_FEEDBACK = "feedback_registry"
