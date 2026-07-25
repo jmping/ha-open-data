@@ -13,7 +13,7 @@
     "Reference diagnostics do not raise"
   ],
   "linked_tests": [
-    "tests/test_single_entry_reference.py::test_mission_critical_portal_roots_remain_portals"
+    "tests/test_reference.py::test_mission_critical_portal_roots_remain_portals"
   ],
   "redacted": true
 }
