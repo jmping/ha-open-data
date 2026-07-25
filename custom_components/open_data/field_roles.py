@@ -1,10 +1,20 @@
-"""Provider-independent field role classification for Home Assistant entities."""
+"""Provider-independent field-role classification for Home Assistant entities."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 import re
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Mapping, overload
+
+try:
+    from .analyzer import DatasetStructure
+    from .models import OpenDataDataset
+except ImportError:  # Standalone loading used by the fast unit-test corpus.
+    class DatasetStructure:  # type: ignore[no-redef]
+        """Sentinel used when this module is loaded outside its package."""
+
+    class OpenDataDataset:  # type: ignore[no-redef]
+        """Sentinel used when this module is loaded outside its package."""
 
 
 FIELD_ROLE_LOCATION = "location"
@@ -26,7 +36,6 @@ FIELD_ROLES = (
 ASSIGNABLE_FIELD_ROLES = tuple(
     role for role in FIELD_ROLES if role != FIELD_ROLE_UNASSIGNED
 )
-
 
 _TIME_COMPONENTS = {
     "year", "month", "day", "hour", "minute", "second", "quarter", "week",
@@ -122,35 +131,22 @@ def assignments_from_categories(
     field_names: Iterable[str],
     fields_by_role: Mapping[str, Iterable[str]],
 ) -> dict[str, str]:
-    """Build roles from optional category selections.
-
-    Fields omitted from every category are deliberately inactive. This lets a
-    user classify only the variables that matter without reviewing every
-    column in a wide dataset.
-
-    A field selected in more than one category is reassigned to the last
-    submitted category. Home Assistant renders the categories in deterministic
-    order, so selecting a field in a new category no longer requires manually
-    clearing its previous checkbox before saving.
-    """
+    """Build roles from optional category selections."""
     fields = tuple(dict.fromkeys(field_names))
     known_fields = set(fields)
     assignments = dict.fromkeys(fields, FIELD_ROLE_UNASSIGNED)
-
     invalid_roles = set(fields_by_role) - set(ASSIGNABLE_FIELD_ROLES)
     if invalid_roles:
         raise ValueError(f"Invalid field-role categories: {sorted(invalid_roles)!r}")
-
     for role, selected_fields in fields_by_role.items():
         for field in selected_fields:
             if field not in known_fields:
                 raise ValueError(f"Unknown field in role assignment: {field!r}")
             assignments[field] = role
-
     return assignments
 
 
-def classify_field_roles(
+def _classify_field_names(
     field_names: Iterable[str],
     rows: Iterable[Mapping[str, Any]],
     *,
@@ -160,13 +156,7 @@ def classify_field_roles(
     ignored_fields: Iterable[str] = (),
     explicit_roles: Mapping[str, str] | None = None,
 ) -> FieldRoles:
-    """Classify fields conservatively and leave uncertain fields unassigned.
-
-    Explicit ontology/configuration metrics win. Otherwise numeric values and
-    measurement vocabulary are used together. Time components and structural
-    identifiers never become sensors merely because they contain numbers.
-    Fields without strong evidence remain inactive until the user assigns them.
-    """
+    """Classify a normalized field collection conservatively."""
     fields = tuple(dict.fromkeys(field_names))
     ignored = set(ignored_fields)
     structural = set(structural_fields)
@@ -209,9 +199,9 @@ def classify_field_roles(
         if role == FIELD_ROLE_UNASSIGNED:
             unassigned.append(field)
             continue
+
         norm = _norm(field)
-        is_time = field in explicit_time or norm in _TIME_COMPONENTS
-        if is_time:
+        if field in explicit_time or norm in _TIME_COMPONENTS:
             time_fields.append(field)
             continue
         if field in configured:
@@ -227,7 +217,6 @@ def classify_field_roles(
         )
         measurement_name = any(term in norm for term in _MEASUREMENT_TERMS)
         context_name = any(term in norm for term in _CONTEXT_TERMS)
-
         if measurement_name and numeric_ratio >= 0.2 and not context_name:
             metrics.append(field)
         elif numeric_ratio >= 0.8 and not context_name:
@@ -245,6 +234,86 @@ def classify_field_roles(
         tuple(measurement_names),
         tuple(irrelevant),
         tuple(unassigned),
+    )
+
+
+def classify_dataset_fields(
+    dataset: OpenDataDataset,
+    structure: DatasetStructure,
+    rows: Iterable[Mapping[str, Any]] = (),
+) -> dict[str, str]:
+    """Return serializable field assignments for one analyzed dataset."""
+    structural_fields = tuple(
+        dict.fromkeys(
+            (
+                *structure.identity_fields,
+                *structure.display_fields,
+                *structure.location_fields,
+                *structure.hierarchy_fields,
+            )
+        )
+    )
+    return _classify_field_names(
+        (field.name for field in dataset.fields),
+        rows,
+        configured_metrics=structure.metric_fields,
+        structural_fields=structural_fields,
+        timestamp_fields=structure.timestamp_fields,
+        ignored_fields=structure.ignored_fields,
+    ).as_assignments()
+
+
+@overload
+def classify_field_roles(
+    field_names: Iterable[str],
+    rows: Iterable[Mapping[str, Any]],
+    *,
+    configured_metrics: Iterable[str] = (),
+    structural_fields: Iterable[str] = (),
+    timestamp_fields: Iterable[str] = (),
+    ignored_fields: Iterable[str] = (),
+    explicit_roles: Mapping[str, str] | None = None,
+) -> FieldRoles: ...
+
+
+@overload
+def classify_field_roles(
+    field_names: OpenDataDataset,
+    rows: DatasetStructure,
+    *,
+    configured_metrics: Iterable[str] = (),
+    structural_fields: Iterable[str] = (),
+    timestamp_fields: Iterable[str] = (),
+    ignored_fields: Iterable[str] = (),
+    explicit_roles: Mapping[str, str] | None = None,
+) -> dict[str, str]: ...
+
+
+def classify_field_roles(
+    field_names: Iterable[str] | OpenDataDataset,
+    rows: Iterable[Mapping[str, Any]] | DatasetStructure,
+    *,
+    configured_metrics: Iterable[str] = (),
+    structural_fields: Iterable[str] = (),
+    timestamp_fields: Iterable[str] = (),
+    ignored_fields: Iterable[str] = (),
+    explicit_roles: Mapping[str, str] | None = None,
+) -> FieldRoles | dict[str, str]:
+    """Classify through either the low-level or typed dataset boundary."""
+    if isinstance(field_names, OpenDataDataset):
+        if not isinstance(rows, DatasetStructure):
+            raise TypeError("Dataset classification requires a DatasetStructure")
+        return classify_dataset_fields(field_names, rows)
+    if isinstance(rows, DatasetStructure):
+        raise TypeError("Field-name classification requires sampled row mappings")
+    return _classify_field_names(
+        field_names,
+        rows,
+        configured_metrics=configured_metrics,
+        structural_fields=structural_fields,
+        timestamp_fields=timestamp_fields,
+        ignored_fields=ignored_fields,
+        explicit_roles=explicit_roles,
     )
 
 
