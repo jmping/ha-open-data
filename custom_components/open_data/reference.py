@@ -13,6 +13,11 @@ _CKAN_UUID = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
     re.IGNORECASE,
 )
+_HOSTNAME = re.compile(
+    r"^(?=.{1,253}(?:/|$))(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+"
+    r"[a-z]{2,63}(?::\d{1,5})?(?:/.*)?$",
+    re.IGNORECASE,
+)
 _PORTAL_PATH_HINTS = {
     "browse",
     "catalog",
@@ -74,6 +79,11 @@ def parse_reference(value: str, portal_url: str | None = None) -> OpenDataRefere
     raw = value.strip()
     if not raw:
         raise ValueError("A portal or dataset location is required")
+
+    # The unified entry field accepts a normal hostname without forcing users to
+    # type a scheme. HTTPS is the safe default; explicit HTTP remains supported.
+    if "://" not in raw and _HOSTNAME.fullmatch(raw):
+        raw = f"https://{raw}"
 
     if "://" not in raw:
         return _parse_bare_reference(raw, portal_url)
@@ -227,7 +237,10 @@ def _parse_bare_reference(value: str, portal_url: str | None) -> OpenDataReferen
 
 
 def _normalize_portal_hint(value: str) -> str:
-    parsed = urlparse(value.strip())
+    raw = value.strip()
+    if "://" not in raw and _HOSTNAME.fullmatch(raw):
+        raw = f"https://{raw}"
+    parsed = urlparse(raw)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise ValueError("Portal hint must be an HTTP or HTTPS URL")
     return urlunparse((parsed.scheme, parsed.netloc, "", "", "", "")).rstrip("/")
