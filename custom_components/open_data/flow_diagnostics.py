@@ -5,9 +5,8 @@ from __future__ import annotations
 import logging
 import platform
 from collections.abc import Mapping
+from importlib import import_module
 from typing import Any
-
-from homeassistant.const import __version__ as HA_VERSION
 
 from .const import DOMAIN
 
@@ -23,11 +22,22 @@ _REDACTED_KEYS = {
 }
 
 
+def _home_assistant_version() -> str:
+    """Return the Home Assistant version without requiring HA in fast tests."""
+    try:
+        const = import_module("homeassistant.const")
+    except ModuleNotFoundError:
+        return "unavailable"
+    return str(getattr(const, "__version__", "unknown"))
+
+
 def _safe_value(value: Any) -> Any:
     """Return a bounded, log-safe representation."""
     if isinstance(value, Mapping):
         return {
-            str(key): "<redacted>" if str(key).lower() in _REDACTED_KEYS else _safe_value(item)
+            str(key): "<redacted>"
+            if str(key).lower() in _REDACTED_KEYS
+            else _safe_value(item)
             for key, item in value.items()
         }
     if isinstance(value, (list, tuple, set, frozenset)):
@@ -71,7 +81,7 @@ def log_flow_exception(
         "===========================================",
         DOMAIN,
         integration_version,
-        HA_VERSION,
+        _home_assistant_version(),
         platform.python_version(),
         step,
         type(exc).__name__,
