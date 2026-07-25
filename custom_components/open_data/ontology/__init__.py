@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from functools import lru_cache
-from importlib.resources import files
 import json
 import unicodedata
 from typing import Any
 
 from ..models import OpenDataDataset, OpenDataField
 from .international_aliases import METRIC_ALIASES, PROFILE_TERMS
+from .profiles_data import ONTOLOGY_PAYLOAD
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,13 +56,7 @@ class ProfileMatch:
 
 
 def normalize_identifier(value: str) -> str:
-    """Normalize Unicode field names and aliases for deterministic comparison.
-
-    NFKC preserves meaningful non-Latin scripts while folding compatibility forms
-    such as full-width Latin characters. Punctuation and whitespace become a
-    single underscore, so non-Latin and accented aliases participate in the same
-    exact-match ontology as English identifiers.
-    """
+    """Normalize Unicode field names and aliases for deterministic comparison."""
     normalized = unicodedata.normalize("NFKC", value).casefold()
     parts: list[str] = []
     pending_separator = False
@@ -78,11 +71,9 @@ def normalize_identifier(value: str) -> str:
     return "".join(parts).strip("_")
 
 
-@lru_cache(maxsize=1)
-def _load_ontology() -> tuple[dict[str, MetricDefinition], tuple[ProfileDefinition, ...]]:
-    """Load and validate the bundled ontology and supplemental language packs."""
-    ontology_path = files(__package__).joinpath("profiles.json")
-    payload = json.loads(ontology_path.read_text(encoding="utf-8"))
+def _build_ontology() -> tuple[dict[str, MetricDefinition], tuple[ProfileDefinition, ...]]:
+    """Validate the bundled ontology payload without event-loop file I/O."""
+    payload = json.loads(ONTOLOGY_PAYLOAD)
     if payload.get("version") != 1:
         raise ValueError("Unsupported open-data ontology version")
 
@@ -122,14 +113,17 @@ def _load_ontology() -> tuple[dict[str, MetricDefinition], tuple[ProfileDefiniti
     return metrics, profiles
 
 
+_ONTOLOGY = _build_ontology()
+
+
 def metric_definitions() -> dict[str, MetricDefinition]:
     """Return the canonical metric registry."""
-    return dict(_load_ontology()[0])
+    return dict(_ONTOLOGY[0])
 
 
 def profile_definitions() -> tuple[ProfileDefinition, ...]:
     """Return all bundled profile definitions."""
-    return _load_ontology()[1]
+    return _ONTOLOGY[1]
 
 
 def _field_text(field: OpenDataField) -> tuple[str, ...]:
@@ -141,13 +135,8 @@ def _field_text(field: OpenDataField) -> tuple[str, ...]:
 
 
 def map_fields(fields: tuple[OpenDataField, ...]) -> tuple[FieldMapping, ...]:
-    """Map source fields to canonical metrics using exact normalized aliases.
-
-    Multiple source columns may legitimately represent the same canonical role
-    (for example a station code and station name), so canonical metrics are not
-    globally claimed by the first matching field.
-    """
-    metrics, _profiles = _load_ontology()
+    """Map source fields to canonical metrics using exact normalized aliases."""
+    metrics, _profiles = _ONTOLOGY
     mappings: list[FieldMapping] = []
 
     for field in fields:
@@ -197,7 +186,7 @@ def _dataset_metadata_text(dataset: OpenDataDataset) -> str:
 
 def match_dataset_profile(dataset: OpenDataDataset) -> ProfileMatch | None:
     """Return the highest-confidence deterministic profile match."""
-    _metrics, profiles = _load_ontology()
+    _metrics, profiles = _ONTOLOGY
     mappings = map_fields(dataset.fields)
     mapped = {mapping.canonical_metric for mapping in mappings}
     metadata = _dataset_metadata_text(dataset)
