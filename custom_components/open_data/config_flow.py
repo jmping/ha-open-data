@@ -120,6 +120,23 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             **self._diagnostic_context(**extra),
         )
 
+    async def _async_get_preparation_registry(self) -> PreparationRegistry:
+        """Return a loaded preparation registry, even before integration setup."""
+        domain_data = self.hass.data.setdefault(DOMAIN, {})
+        existing = domain_data.get(DATA_PREPARATIONS)
+        if isinstance(existing, PreparationRegistry):
+            return existing
+
+        registry = PreparationRegistry(self.hass)
+        await registry.async_load()
+        domain_data[DATA_PREPARATIONS] = registry
+        log_flow_breadcrumb(
+            "prepare_registry",
+            "initialized preparation registry from config flow",
+            **self._diagnostic_context(),
+        )
+        return registry
+
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
@@ -203,7 +220,7 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             "beginning portal preparation",
             **self._diagnostic_context(requested_portal_url=portal_url),
         )
-        registry: PreparationRegistry = self.hass.data[DOMAIN][DATA_PREPARATIONS]
+        registry = await self._async_get_preparation_registry()
         prepared = registry.get(portal_url)
         if prepared and prepared.status == "ready":
             self._portal_url = prepared.portal_url
@@ -326,7 +343,7 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     progress_action="prepare_catalog",
                     progress_task=self._preparation_task,
                 )
-            registry: PreparationRegistry = self.hass.data[DOMAIN][DATA_PREPARATIONS]
+            registry = await self._async_get_preparation_registry()
             prepared = registry.get(self._portal_url or "")
             if prepared and prepared.status == "ready":
                 self._portal_url = prepared.portal_url
@@ -527,11 +544,18 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             CONF_METRIC_FIELDS: list(structure.metric_fields),
             CONF_IDENTITY_FIELDS: list(structure.identity_fields),
             CONF_DISPLAY_FIELDS: list(structure.display_fields),
-            CONF_LOCATION_FIELDS: list(structure.location_fields),
             CONF_TIMESTAMP_FIELDS: list(structure.timestamp_fields),
-            CONF_FIELD_MAPPINGS: dict(structure.field_mappings),
+            CONF_LOCATION_FIELDS: list(structure.location_fields),
             CONF_FIELD_ROLES: classify_field_roles(dataset, structure),
+            CONF_SELECTED_RECORDS: build_selectable_records(
+                dataset,
+                sample_rows,
+                structure.identity_fields,
+                structure.display_fields,
+                limit=_AUTO_RECORD_LIMIT,
+            ),
             CONF_PROFILE_ID: candidate.profile_id,
+            CONF_FIELD_MAPPINGS: candidate.field_mappings,
         }
         if dataset.resource_id:
             data[CONF_RESOURCE_ID] = dataset.resource_id
@@ -541,9 +565,6 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data[CONF_DISPLAY_FIELD] = structure.display_fields[0]
         if structure.timestamp_fields:
             data[CONF_TIMESTAMP_FIELD] = structure.timestamp_fields[0]
-        records = build_selectable_records(structure, sample_rows)
-        if records and len(records) <= _AUTO_RECORD_LIMIT:
-            data[CONF_SELECTED_RECORDS] = [record.key for record in records]
         return {
             "unique_id": unique_id,
             CONF_TITLE: dataset.title,
@@ -552,10 +573,9 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     @staticmethod
     def _candidate_label(candidate: DatasetCandidate) -> str:
-        flags: list[str] = []
-        if candidate.dataset.resource_id:
-            flags.append("resource")
-        if candidate.dataset.fields:
-            flags.append(f"{len(candidate.dataset.fields)} fields")
-        suffix = f" ({', '.join(flags)})" if flags else ""
-        return f"{candidate.dataset.title}{suffix}"
+        title = candidate.dataset.title or candidate.dataset.dataset_id
+        profile = f" · {candidate.profile_id}" if candidate.profile_id else ""
+        freshness = (
+            f" · {candidate.freshness_label}" if candidate.freshness_label else ""
+        )
+        return f"{title}{profile}{freshness}"
