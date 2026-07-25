@@ -1,19 +1,21 @@
 {
   "case_id": "mission-critical-portal-roots",
-  "source_shape": "portal_root",
-  "failure_mode": "Portal roots stopped before discovery after the unified single-entry refactor.",
-  "inputs": [
-    "https://data.a2gov.org",
-    "https://ckan.a2gov.org",
-    "https://data.michigan.gov"
-  ],
-  "expected_invariants": [
-    "Each root is classified as a portal",
-    "No root is interpreted as a direct dataset",
-    "Reference diagnostics do not raise"
-  ],
-  "linked_tests": [
-    "tests/test_reference.py::test_mission_critical_portal_roots_remain_portals"
-  ],
-  "redacted": true
+  "source": {
+    "provider_families": ["ckan", "socrata"],
+    "provenance_urls": [
+      "https://data.a2gov.org",
+      "https://ckan.a2gov.org",
+      "https://data.michigan.gov"
+    ],
+    "shape": "portal roots submitted through the unified source entry"
+  },
+  "failure": "Portal roots stopped before discovery because reference diagnostics accessed a missing classification property.",
+  "expected": {
+    "classification": "classify each root as a portal rather than a direct dataset",
+    "diagnostics": "reference classification must be total and must not raise",
+    "routing": "continue from source parsing into portal discovery"
+  },
+  "regression_tests": [
+    "tests/test_reference.py"
+  ]
 }
