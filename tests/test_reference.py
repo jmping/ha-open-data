@@ -39,6 +39,7 @@ reference_module = module_from_spec(_reference_spec)
 sys.modules[_reference_spec.name] = reference_module
 _reference_spec.loader.exec_module(reference_module)
 parse_reference = reference_module.parse_reference
+OpenDataReference = reference_module.OpenDataReference
 
 
 def test_parse_ckan_dataset_page() -> None:
@@ -113,13 +114,10 @@ def test_bare_id_without_portal_is_actionable_error() -> None:
         raise AssertionError("Expected a portal-hint error")
 
 
-def test_invalid_portal_hint_is_actionable_error() -> None:
-    try:
-        parse_reference("air-quality", "data.example.gov")
-    except ValueError as err:
-        assert "HTTP or HTTPS" in str(err)
-    else:
-        raise AssertionError("Expected an invalid portal-hint error")
+def test_schemeless_portal_hint_defaults_to_https() -> None:
+    parsed = parse_reference("air-quality", "data.example.gov")
+    assert parsed.portal_url == "https://data.example.gov"
+    assert parsed.dataset_id == "air-quality"
 
 
 def test_recognized_portal_path_wins_over_socrata_id_shape() -> None:
@@ -143,3 +141,42 @@ def test_unknown_http_location_is_deferred_to_portal_inspection() -> None:
     assert parsed.portal_url == "https://example.gov/not-a-supported-dataset"
     assert parsed.dataset_id is None
     assert parsed.is_portal is True
+
+
+def test_mission_critical_portal_roots_remain_portals() -> None:
+    for url in (
+        "https://data.a2gov.org",
+        "https://ckan.a2gov.org",
+        "https://data.michigan.gov",
+    ):
+        parsed = parse_reference(url)
+        assert parsed.is_portal is True
+        assert parsed.kind == "portal"
+        assert parsed.dataset_id is None
+        assert parsed.portal_url == url
+
+
+def test_portal_root_input_variants_are_equivalent() -> None:
+    references = tuple(
+        parse_reference(value)
+        for value in (
+            "data.a2gov.org",
+            "https://data.a2gov.org",
+            "https://data.a2gov.org/",
+        )
+    )
+    assert all(reference.is_portal for reference in references)
+    assert all(reference.kind == "portal" for reference in references)
+    assert {reference.portal_url for reference in references} == {
+        "https://data.a2gov.org"
+    }
+
+
+def test_reference_kind_is_total_for_diagnostics() -> None:
+    assert OpenDataReference(None, "https://example.test", is_portal=True).kind == "portal"
+    assert OpenDataReference("ckan", "https://example.test", "dataset-id").kind == "dataset"
+    assert (
+        OpenDataReference("ckan", "https://example.test", resource_id="resource-id").kind
+        == "resource"
+    )
+    assert OpenDataReference(None, None).kind == "unknown"
