@@ -57,6 +57,17 @@ class OpenDataReference:
     resource_id: str | None = None
     is_portal: bool = False
 
+    @property
+    def kind(self) -> str:
+        """Return a stable diagnostic classification for this reference."""
+        if self.is_portal:
+            return "portal"
+        if self.resource_id and not self.dataset_id:
+            return "resource"
+        if self.dataset_id:
+            return "dataset"
+        return "unknown"
+
 
 def parse_reference(value: str, portal_url: str | None = None) -> OpenDataReference:
     """Parse a CKAN or Socrata portal, dataset page, API URL, or bare ID."""
