@@ -2,7 +2,7 @@
 
 import asyncio
 from contextlib import suppress
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from homeassistant import config_entries
 from homeassistant.data_entry_flow import FlowResultType
@@ -11,14 +11,21 @@ from custom_components.open_data.const import DOMAIN
 from custom_components.open_data.preparation import DATA_PREPARATIONS
 
 
+class _FakePreparationRegistry:
+    """Faithful test double for the registry's sync/async surface."""
+
+    def __init__(self, prepare_task) -> None:
+        self.async_load = AsyncMock()
+        self.get = Mock(return_value=None)
+        self.start = Mock(return_value=prepare_task)
+
+
 async def test_portal_flow_initializes_registry_before_integration_setup(hass) -> None:
     """Submitting a portal must not require hass.data[DOMAIN] to exist."""
     hass.data.pop(DOMAIN, None)
 
     prepare_task = hass.async_create_task(_never_finishes())
-    registry = AsyncMock()
-    registry.get.return_value = None
-    registry.start.return_value = prepare_task
+    registry = _FakePreparationRegistry(prepare_task)
 
     async def _resolve(_session, reference):
         return reference
