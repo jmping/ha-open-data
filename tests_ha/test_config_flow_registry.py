@@ -104,7 +104,7 @@ async def test_prepared_ann_arbor_portal_reaches_dataset_picker(hass) -> None:
     selector = next(iter(schema.values()))
     options = selector.config["options"]
     assert options[0]["value"] == "weather-stations"
-    assert options[0]["label"] == "Weather Stations"
+    assert options[0]["label"] == "Weather Stations · weather"
 
 
 async def _never_finishes() -> None:
