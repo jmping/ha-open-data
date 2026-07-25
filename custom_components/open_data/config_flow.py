@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+from importlib.resources import files
 from typing import Any
 
 import voluptuous as vol
@@ -42,6 +44,7 @@ from .const import (
 )
 from .discovery import DatasetCandidate, rank_datasets, score_dataset
 from .field_roles import classify_field_roles
+from .flow_diagnostics import log_flow_breadcrumb, log_flow_exception
 from .models import OpenDataDataset
 from .options_flow import OpenDataOptionsFlow
 from .portal_inspector import async_discover_catalog, async_inspect_portal
@@ -67,6 +70,19 @@ CONF_SOURCE_LOCATION = "source_location"
 CONF_TITLE = "title"
 
 
+def _integration_version() -> str:
+    """Return the installed integration version without importing package metadata."""
+    try:
+        manifest = json.loads(
+            files("custom_components.open_data")
+            .joinpath("manifest.json")
+            .read_text(encoding="utf-8")
+        )
+    except (OSError, TypeError, ValueError):
+        return "unknown"
+    return str(manifest.get("version", "unknown"))
+
+
 class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle portal discovery and direct dataset setup."""
 
@@ -84,19 +100,64 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> config_entries.OptionsFlow:
         return OpenDataOptionsFlow(config_entry)
 
+    def _diagnostic_context(self, **extra: Any) -> dict[str, Any]:
+        return {
+            "flow_id": getattr(self, "flow_id", None),
+            "portal_url": self._portal_url,
+            "provider": self._provider_name,
+            "candidate_count": len(self._candidates),
+            **extra,
+        }
+
+    def _log_unexpected(self, step: str, exc: BaseException, **extra: Any) -> None:
+        log_flow_exception(
+            step,
+            exc,
+            integration_version=_integration_version(),
+            **self._diagnostic_context(**extra),
+        )
+
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Resolve one source location into direct setup or portal discovery."""
         errors: dict[str, str] = {}
         if user_input is not None:
+            log_flow_breadcrumb(
+                "user",
+                "received source location",
+                **self._diagnostic_context(user_input=user_input),
+            )
             try:
                 portal_hint = user_input.get(CONF_PORTAL_URL, "").strip() or None
                 reference = parse_reference(
                     user_input[CONF_SOURCE_LOCATION], portal_hint
                 )
+                log_flow_breadcrumb(
+                    "user",
+                    "parsed source reference",
+                    **self._diagnostic_context(
+                        source_location=user_input.get(CONF_SOURCE_LOCATION),
+                        reference_kind=reference.kind,
+                        reference_provider=reference.provider,
+                        reference_portal_url=reference.portal_url,
+                        reference_dataset_id=reference.dataset_id,
+                        reference_resource_id=reference.resource_id,
+                    ),
+                )
                 reference = await async_resolve_reference(
                     async_get_clientsession(self.hass), reference
+                )
+                log_flow_breadcrumb(
+                    "user",
+                    "resolved source reference",
+                    **self._diagnostic_context(
+                        resolved_kind=reference.kind,
+                        resolved_provider=reference.provider,
+                        resolved_portal_url=reference.portal_url,
+                        resolved_dataset_id=reference.dataset_id,
+                        resolved_resource_id=reference.resource_id,
+                    ),
                 )
                 if reference.is_portal:
                     if reference.portal_url is None:
@@ -111,7 +172,8 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "unsafe_source"
             except (OpenDataResponseError, ValueError):
                 errors["base"] = "invalid_reference"
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
+                self._log_unexpected("user", exc, user_input=user_input)
                 errors["base"] = "unknown"
 
         return self.async_show_form(
@@ -127,23 +189,41 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def _async_begin_portal(self, portal_url: str) -> FlowResult:
         """Start or resume bounded catalog preparation for a portal root."""
+        log_flow_breadcrumb(
+            "prepare",
+            "beginning portal preparation",
+            **self._diagnostic_context(requested_portal_url=portal_url),
+        )
         registry: PreparationRegistry = self.hass.data[DOMAIN][DATA_PREPARATIONS]
         prepared = registry.get(portal_url)
         if prepared and prepared.status == "ready":
             self._portal_url = prepared.portal_url
             self._provider_name = prepared.provider
             self._set_candidates(prepared.candidates)
+            log_flow_breadcrumb(
+                "prepare",
+                "reused prepared catalog",
+                **self._diagnostic_context(),
+            )
             return await self.async_step_discover()
 
         async def _prepare() -> tuple[str, str, list[DatasetCandidate]]:
-            candidates = await self._async_discover_catalog(portal_url)
-            if not candidates:
-                raise ValueError("no_datasets")
-            return (
-                self._portal_url or portal_url,
-                self._provider_name or "",
-                candidates,
-            )
+            try:
+                candidates = await self._async_discover_catalog(portal_url)
+                if not candidates:
+                    raise ValueError("no_datasets")
+                return (
+                    self._portal_url or portal_url,
+                    self._provider_name or "",
+                    candidates,
+                )
+            except Exception as exc:  # noqa: BLE001
+                self._log_unexpected(
+                    "prepare_catalog",
+                    exc,
+                    requested_portal_url=portal_url,
+                )
+                raise
 
         self._portal_url = portal_url
         self._preparation_task = registry.start(portal_url, _prepare)
@@ -153,16 +233,24 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Backward-compatible alias for older in-progress flows."""
-        if user_input is None:
-            return await self.async_step_user()
-        source = user_input.get(CONF_PORTAL_URL, "")
-        return await self.async_step_user({CONF_SOURCE_LOCATION: source})
+        try:
+            if user_input is None:
+                return await self.async_step_user()
+            source = user_input.get(CONF_PORTAL_URL, "")
+            return await self.async_step_user({CONF_SOURCE_LOCATION: source})
+        except Exception as exc:  # noqa: BLE001
+            self._log_unexpected("portal", exc, user_input=user_input)
+            raise
 
     async def async_step_dataset(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Backward-compatible alias for older in-progress flows."""
-        return await self.async_step_user(user_input)
+        try:
+            return await self.async_step_user(user_input)
+        except Exception as exc:  # noqa: BLE001
+            self._log_unexpected("dataset", exc, user_input=user_input)
+            raise
 
     async def _async_create_from_reference(
         self, reference: OpenDataReference
@@ -173,6 +261,16 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if reference.portal_url is None:
             raise ValueError("A portal URL could not be determined")
 
+        log_flow_breadcrumb(
+            "direct_reference",
+            "verifying direct dataset reference",
+            **self._diagnostic_context(
+                reference_provider=reference.provider,
+                reference_portal_url=reference.portal_url,
+                reference_dataset_id=reference.dataset_id,
+                reference_resource_id=reference.resource_id,
+            ),
+        )
         provider = create_provider(
             reference.provider,
             async_get_clientsession(self.hass),
@@ -212,20 +310,32 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Wait for background portal preparation without creating an entry."""
-        if self._preparation_task is not None and not self._preparation_task.done():
-            return self.async_show_progress(
-                step_id="prepare",
-                progress_action="prepare_catalog",
-                progress_task=self._preparation_task,
-            )
-        registry: PreparationRegistry = self.hass.data[DOMAIN][DATA_PREPARATIONS]
-        prepared = registry.get(self._portal_url or "")
-        if prepared and prepared.status == "ready":
-            self._portal_url = prepared.portal_url
-            self._provider_name = prepared.provider
-            self._set_candidates(prepared.candidates)
-            return self.async_show_progress_done(next_step_id="discover")
-        return self.async_show_progress_done(next_step_id="user")
+        try:
+            if self._preparation_task is not None and not self._preparation_task.done():
+                return self.async_show_progress(
+                    step_id="prepare",
+                    progress_action="prepare_catalog",
+                    progress_task=self._preparation_task,
+                )
+            registry: PreparationRegistry = self.hass.data[DOMAIN][DATA_PREPARATIONS]
+            prepared = registry.get(self._portal_url or "")
+            if prepared and prepared.status == "ready":
+                self._portal_url = prepared.portal_url
+                self._provider_name = prepared.provider
+                self._set_candidates(prepared.candidates)
+                log_flow_breadcrumb(
+                    "prepare",
+                    "catalog preparation completed",
+                    **self._diagnostic_context(),
+                )
+                return self.async_show_progress_done(next_step_id="discover")
+            if prepared and prepared.status == "failed":
+                exc = prepared.error or RuntimeError("portal preparation failed")
+                self._log_unexpected("prepare", exc)
+            return self.async_show_progress_done(next_step_id="user")
+        except Exception as exc:  # noqa: BLE001
+            self._log_unexpected("prepare", exc, user_input=user_input)
+            raise
 
     def _set_candidates(self, candidates: Any) -> None:
         self._candidates = {
@@ -238,6 +348,11 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> FlowResult:
         errors: dict[str, str] = {}
         if user_input is not None:
+            log_flow_breadcrumb(
+                "discover",
+                "received dataset selection",
+                **self._diagnostic_context(user_input=user_input),
+            )
             selected_ids = user_input[CONF_DATASET_IDS]
             if isinstance(selected_ids, str):
                 selected_ids = [selected_ids]
@@ -258,16 +373,27 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     errors["base"] = "cannot_connect"
                 except (OpenDataResponseError, OpenDataSecurityError, ValueError):
                     errors["base"] = "invalid_dataset"
-                except Exception:  # noqa: BLE001
+                except Exception as exc:  # noqa: BLE001
+                    self._log_unexpected(
+                        "discover",
+                        exc,
+                        selected_dataset_ids=selected_ids,
+                    )
                     errors["base"] = "unknown"
                 else:
                     first = entries[0]
                     for extra in entries[1:]:
-                        self.hass.async_create_task(
+                        task = self.hass.async_create_task(
                             self.hass.config_entries.flow.async_init(
                                 DOMAIN,
                                 context={"source": config_entries.SOURCE_IMPORT},
                                 data=extra,
+                            )
+                        )
+                        task.add_done_callback(
+                            lambda completed: self._log_background_import_failure(
+                                completed,
+                                extra,
                             )
                         )
                     await self.async_set_unique_id(first["unique_id"])
@@ -300,20 +426,56 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             },
         )
 
+    def _log_background_import_failure(self, task: Any, entry: dict[str, Any]) -> None:
+        try:
+            task.result()
+        except Exception as exc:  # noqa: BLE001
+            self._log_unexpected(
+                "background_import",
+                exc,
+                unique_id=entry.get("unique_id"),
+                title=entry.get(CONF_TITLE),
+            )
+
     async def async_step_import(self, import_data: dict[str, Any]) -> FlowResult:
-        await self.async_set_unique_id(import_data["unique_id"])
-        self._abort_if_unique_id_configured()
-        return self.async_create_entry(
-            title=import_data[CONF_TITLE], data=import_data["data"]
-        )
+        try:
+            await self.async_set_unique_id(import_data["unique_id"])
+            self._abort_if_unique_id_configured()
+            return self.async_create_entry(
+                title=import_data[CONF_TITLE], data=import_data["data"]
+            )
+        except Exception as exc:  # noqa: BLE001
+            self._log_unexpected("import", exc, import_data=import_data)
+            raise
 
     async def _async_discover_catalog(self, portal_url: str) -> list[DatasetCandidate]:
+        log_flow_breadcrumb(
+            "discover_catalog",
+            "inspecting portal",
+            **self._diagnostic_context(requested_portal_url=portal_url),
+        )
         inspected = await async_inspect_portal(
             async_get_clientsession(self.hass), portal_url
         )
         self._portal_url = inspected.description.portal_url
         self._provider_name = inspected.description.provider
-        datasets, _errors = await async_discover_catalog(inspected, limit=_CATALOG_LIMIT)
+        log_flow_breadcrumb(
+            "discover_catalog",
+            "portal inspection complete",
+            **self._diagnostic_context(),
+        )
+        datasets, discovery_errors = await async_discover_catalog(
+            inspected, limit=_CATALOG_LIMIT
+        )
+        log_flow_breadcrumb(
+            "discover_catalog",
+            "catalog enumeration complete",
+            **self._diagnostic_context(
+                dataset_count=len(datasets),
+                discovery_error_count=len(discovery_errors),
+                discovery_errors=discovery_errors,
+            ),
+        )
         return rank_datasets(datasets)[:_DISCOVERY_LIMIT]
 
     async def _async_prepare_dataset_entry(
@@ -321,6 +483,14 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> dict[str, Any]:
         if self._provider_name is None or self._portal_url is None:
             raise ValueError("Discovery flow is missing provider state")
+        log_flow_breadcrumb(
+            "prepare_dataset",
+            "preparing dataset entry",
+            **self._diagnostic_context(
+                dataset_id=discovered.dataset_id,
+                resource_id=discovered.resource_id,
+            ),
+        )
         provider = create_provider(
             self._provider_name,
             async_get_clientsession(self.hass),
@@ -398,6 +568,17 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             records = build_selectable_records(rows, structure)
             data[CONF_SELECTED_RECORDS] = [record.value for record in records]
 
+        log_flow_breadcrumb(
+            "prepare_dataset",
+            "dataset entry prepared",
+            **self._diagnostic_context(
+                dataset_id=dataset.dataset_id,
+                resource_id=dataset.resource_id,
+                field_count=len(dataset.fields),
+                sample_row_count=len(sample_rows),
+                selected_record_count=len(data.get(CONF_SELECTED_RECORDS, [])),
+            ),
+        )
         return {"unique_id": unique_id, CONF_TITLE: dataset.title, "data": data}
 
     @staticmethod
