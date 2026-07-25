@@ -44,8 +44,7 @@ from .services import async_register_services
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 _DATA_FEEDBACK = "feedback_registry"
-_BUILD_LABEL = "Diagnostic Build 68"
-_INTEGRATION_VERSION = "0.1.3"
+_INTEGRATION_VERSION = "0.1.4"
 _LOGGER = logging.getLogger(__name__)
 
 type OpenDataConfigEntry = ConfigEntry[OpenDataCoordinator]
@@ -53,9 +52,8 @@ type OpenDataConfigEntry = ConfigEntry[OpenDataCoordinator]
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """Set up the Open Data integration and its global service API."""
-    _LOGGER.warning(
-        "Open Data Importer %s loaded | version=%s | ha_version=%s | python=%s | module=%s",
-        _BUILD_LABEL,
+    _LOGGER.info(
+        "Open Data loaded | version=%s | ha_version=%s | python=%s | module=%s",
         _INTEGRATION_VERSION,
         getattr(hass, "version", "unknown"),
         platform.python_version(),
@@ -65,9 +63,11 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     feedback = FeedbackRegistry(hass)
     await feedback.async_load()
     domain_data[_DATA_FEEDBACK] = feedback
-    preparations = PreparationRegistry(hass)
-    await preparations.async_load()
-    domain_data[DATA_PREPARATIONS] = preparations
+    preparations = domain_data.get(DATA_PREPARATIONS)
+    if preparations is None:
+        preparations = PreparationRegistry(hass)
+        await preparations.async_load()
+        domain_data[DATA_PREPARATIONS] = preparations
     domain_data.setdefault(DATA_REANALYSIS_CONTROLLERS, {})
     domain_data.setdefault(DATA_SUPPRESS_RELOAD, set())
     await async_register_services(hass, feedback)
@@ -182,7 +182,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: OpenDataConfigEntry) -> 
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: OpenDataConfigEntry) -> bool:
-    """Unload an Open Data config entry."""
+    """Unload Open Data config entry."""
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unloaded:
         hass.data.get(DOMAIN, {}).get(DATA_REANALYSIS_CONTROLLERS, {}).pop(
