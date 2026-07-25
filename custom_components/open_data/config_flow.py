@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-from importlib.resources import files
 import logging
 from pathlib import Path
 from typing import Any
@@ -69,21 +67,8 @@ _AUTO_RECORD_LIMIT = 100
 CONF_DATASET_IDS = "dataset_ids"
 CONF_SOURCE_LOCATION = "source_location"
 CONF_TITLE = "title"
-_BUILD_LABEL = "Diagnostic Build 68"
+_INTEGRATION_VERSION = "0.1.4"
 _LOGGER = logging.getLogger(__name__)
-
-
-def _integration_version() -> str:
-    """Return the installed integration version without importing package metadata."""
-    try:
-        manifest = json.loads(
-            files("custom_components.open_data")
-            .joinpath("manifest.json")
-            .read_text(encoding="utf-8")
-        )
-    except (OSError, TypeError, ValueError):
-        return "unknown"
-    return str(manifest.get("version", "unknown"))
 
 
 class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -116,7 +101,7 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         log_flow_exception(
             step,
             exc,
-            integration_version=_integration_version(),
+            integration_version=_INTEGRATION_VERSION,
             **self._diagnostic_context(**extra),
         )
 
@@ -141,10 +126,9 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Resolve one source location into direct setup or portal discovery."""
-        _LOGGER.warning(
-            "Open Data config flow entered | build=%s | version=%s | module=%s",
-            _BUILD_LABEL,
-            _integration_version(),
+        _LOGGER.info(
+            "Open Data config flow entered | version=%s | module=%s",
+            _INTEGRATION_VERSION,
             Path(__file__).resolve(),
         )
         errors: dict[str, str] = {}
@@ -573,9 +557,13 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     @staticmethod
     def _candidate_label(candidate: DatasetCandidate) -> str:
+        """Build a stable picker label from optional candidate metadata."""
         title = candidate.dataset.title or candidate.dataset.dataset_id
-        profile = f" · {candidate.profile_id}" if candidate.profile_id else ""
-        freshness = (
-            f" · {candidate.freshness_label}" if candidate.freshness_label else ""
-        )
-        return f"{title}{profile}{freshness}"
+        suffixes: list[str] = []
+        profile_id = getattr(candidate, "profile_id", None)
+        if profile_id:
+            suffixes.append(str(profile_id))
+        freshness_label = getattr(candidate, "freshness_label", None)
+        if freshness_label:
+            suffixes.append(str(freshness_label))
+        return " · ".join((title, *suffixes))
