@@ -6,8 +6,16 @@ from dataclasses import dataclass
 import re
 from typing import Any, Iterable, Mapping, overload
 
-from .analyzer import DatasetStructure
-from .models import OpenDataDataset
+try:
+    from .analyzer import DatasetStructure
+    from .models import OpenDataDataset
+except ImportError:  # Standalone loading used by the fast unit-test corpus.
+    class DatasetStructure:  # type: ignore[no-redef]
+        """Sentinel used when this module is loaded outside its package."""
+
+    class OpenDataDataset:  # type: ignore[no-redef]
+        """Sentinel used when this module is loaded outside its package."""
+
 
 FIELD_ROLE_LOCATION = "location"
 FIELD_ROLE_TIME = "time"
@@ -234,12 +242,7 @@ def classify_dataset_fields(
     structure: DatasetStructure,
     rows: Iterable[Mapping[str, Any]] = (),
 ) -> dict[str, str]:
-    """Return serializable field assignments for one analyzed dataset.
-
-    This is the canonical config-entry boundary. It owns extraction of field names
-    and all structure-derived hints, so callers cannot accidentally pass a dataset
-    where an iterable of field names is expected.
-    """
+    """Return serializable field assignments for one analyzed dataset."""
     structural_fields = tuple(
         dict.fromkeys(
             (
@@ -296,12 +299,7 @@ def classify_field_roles(
     ignored_fields: Iterable[str] = (),
     explicit_roles: Mapping[str, str] | None = None,
 ) -> FieldRoles | dict[str, str]:
-    """Classify fields through either the low-level or typed dataset boundary.
-
-    The dataset overload exists for config-entry preparation and returns a plain
-    mapping suitable for Home Assistant storage. Existing low-level callers retain
-    the explainable ``FieldRoles`` result.
-    """
+    """Classify through either the low-level or typed dataset boundary."""
     if isinstance(field_names, OpenDataDataset):
         if not isinstance(rows, DatasetStructure):
             raise TypeError("Dataset classification requires a DatasetStructure")
