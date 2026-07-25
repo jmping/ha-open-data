@@ -13,8 +13,8 @@
     "Diagnostic classification cannot raise an exception"
   ],
   "linked_tests": [
-    "tests/test_single_entry_reference.py::test_portal_root_input_variants_are_equivalent",
-    "tests/test_single_entry_reference.py::test_reference_kind_is_total_for_diagnostics"
+    "tests/test_reference.py::test_portal_root_input_variants_are_equivalent",
+    "tests/test_reference.py::test_reference_kind_is_total_for_diagnostics"
   ],
   "redacted": true
 }
