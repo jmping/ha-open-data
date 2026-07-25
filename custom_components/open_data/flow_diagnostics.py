@@ -8,9 +8,8 @@ from collections.abc import Mapping
 from importlib import import_module
 from typing import Any
 
-from .const import DOMAIN
-
-LOGGER = logging.getLogger(__package__)
+DOMAIN = "open_data"
+LOGGER = logging.getLogger("custom_components.open_data")
 
 _REDACTED_KEYS = {
     "access_token",
