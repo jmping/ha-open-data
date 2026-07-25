@@ -124,7 +124,7 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Return a loaded preparation registry, even before integration setup."""
         domain_data = self.hass.data.setdefault(DOMAIN, {})
         existing = domain_data.get(DATA_PREPARATIONS)
-        if isinstance(existing, PreparationRegistry):
+        if existing is not None:
             return existing
 
         registry = PreparationRegistry(self.hass)
