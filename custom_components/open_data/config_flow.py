@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 from importlib.resources import files
+import logging
+from pathlib import Path
 from typing import Any
 
 import voluptuous as vol
@@ -68,6 +70,8 @@ _AUTO_RECORD_LIMIT = 100
 CONF_DATASET_IDS = "dataset_ids"
 CONF_SOURCE_LOCATION = "source_location"
 CONF_TITLE = "title"
+_BUILD_LABEL = "Diagnostic Build 68"
+_LOGGER = logging.getLogger(__name__)
 
 
 def _integration_version() -> str:
@@ -121,6 +125,12 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Resolve one source location into direct setup or portal discovery."""
+        _LOGGER.warning(
+            "Open Data config flow entered | build=%s | version=%s | module=%s",
+            _BUILD_LABEL,
+            _integration_version(),
+            Path(__file__).resolve(),
+        )
         errors: dict[str, str] = {}
         if user_input is not None:
             log_flow_breadcrumb(
@@ -518,72 +528,35 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             CONF_METRIC_FIELDS: list(structure.metric_fields),
             CONF_IDENTITY_FIELDS: list(structure.identity_fields),
             CONF_DISPLAY_FIELDS: list(structure.display_fields),
-            CONF_TIMESTAMP_FIELDS: list(structure.timestamp_fields),
             CONF_LOCATION_FIELDS: list(structure.location_fields),
-            CONF_HIERARCHY_FIELDS: list(structure.hierarchy_fields),
+            CONF_TIMESTAMP_FIELDS: list(structure.timestamp_fields),
+            CONF_FIELD_MAPPINGS: dict(structure.field_mappings),
+            CONF_FIELD_ROLES: classify_field_roles(dataset, structure),
+            CONF_PROFILE_ID: candidate.profile_id,
         }
-        structural_fields = {
-            structure.identity_field,
-            structure.display_field,
-            *structure.location_fields,
-        }
-        structural_fields.discard(None)
-        data[CONF_FIELD_ROLES] = classify_field_roles(
-            (field.name for field in dataset.fields),
-            sample_rows,
-            configured_metrics=structure.metric_fields,
-            structural_fields=structural_fields,
-            timestamp_fields=structure.timestamp_fields,
-            ignored_fields=structure.ignored_fields,
-        ).as_assignments()
         if dataset.resource_id:
             data[CONF_RESOURCE_ID] = dataset.resource_id
-        if structure.identity_field:
-            data[CONF_IDENTITY_FIELD] = structure.identity_field
-        if structure.display_field:
-            data[CONF_DISPLAY_FIELD] = structure.display_field
-        if structure.timestamp_field:
-            data[CONF_TIMESTAMP_FIELD] = structure.timestamp_field
-        if candidate.profile_id:
-            data[CONF_PROFILE_ID] = candidate.profile_id
-            data[CONF_FIELD_MAPPINGS] = [
-                {
-                    "source_field": mapping.source_field,
-                    "canonical_metric": mapping.canonical_metric,
-                    "mapping_method": mapping.mapping_method,
-                    "confidence": mapping.confidence,
-                }
-                for mapping in candidate.field_mappings
-            ]
-
-        if structure.identity_field:
-            rows = await provider.async_distinct_rows(
-                dataset.dataset_id,
-                dataset.resource_id,
-                structure.identity_field,
-                structure.display_field,
-                structure.hierarchy_fields,
-                limit=_AUTO_RECORD_LIMIT,
-            )
-            records = build_selectable_records(rows, structure)
-            data[CONF_SELECTED_RECORDS] = [record.value for record in records]
-
-        log_flow_breadcrumb(
-            "prepare_dataset",
-            "dataset entry prepared",
-            **self._diagnostic_context(
-                dataset_id=dataset.dataset_id,
-                resource_id=dataset.resource_id,
-                field_count=len(dataset.fields),
-                sample_row_count=len(sample_rows),
-                selected_record_count=len(data.get(CONF_SELECTED_RECORDS, [])),
-            ),
-        )
-        return {"unique_id": unique_id, CONF_TITLE: dataset.title, "data": data}
+        if structure.identity_fields:
+            data[CONF_IDENTITY_FIELD] = structure.identity_fields[0]
+        if structure.display_fields:
+            data[CONF_DISPLAY_FIELD] = structure.display_fields[0]
+        if structure.timestamp_fields:
+            data[CONF_TIMESTAMP_FIELD] = structure.timestamp_fields[0]
+        records = build_selectable_records(structure, sample_rows)
+        if records and len(records) <= _AUTO_RECORD_LIMIT:
+            data[CONF_SELECTED_RECORDS] = [record.key for record in records]
+        return {
+            "unique_id": unique_id,
+            CONF_TITLE: dataset.title,
+            "data": data,
+        }
 
     @staticmethod
     def _candidate_label(candidate: DatasetCandidate) -> str:
-        reasons = ", ".join(candidate.reasons[:3])
-        suffix = f" — {reasons}" if reasons else ""
-        title = candidate.dataset.title[:100]
-        return f"{candidate.score:03d} · {title}{suffix}"[:150]
+        flags: list[str] = []
+        if candidate.dataset.resource_id:
+            flags.append("resource")
+        if candidate.dataset.fields:
+            flags.append(f"{len(candidate.dataset.fields)} fields")
+        suffix = f" ({', '.join(flags)})" if flags else ""
+        return f"{candidate.dataset.title}{suffix}"
