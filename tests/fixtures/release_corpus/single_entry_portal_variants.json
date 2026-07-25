@@ -1,20 +1,21 @@
 {
   "case_id": "single-entry-portal-input-variants",
-  "source_shape": "portal_root",
-  "failure_mode": "Unified source entry rejected or crashed on equivalent portal URL forms before discovery.",
-  "inputs": [
-    "data.a2gov.org",
-    "https://data.a2gov.org",
-    "https://data.a2gov.org/"
-  ],
-  "expected_invariants": [
-    "All inputs normalize to https://data.a2gov.org",
-    "All inputs are classified as portal references",
-    "Diagnostic classification cannot raise an exception"
-  ],
-  "linked_tests": [
-    "tests/test_reference.py::test_portal_root_input_variants_are_equivalent",
-    "tests/test_reference.py::test_reference_kind_is_total_for_diagnostics"
-  ],
-  "redacted": true
+  "source": {
+    "provider_families": ["ckan"],
+    "provenance_urls": [
+      "data.a2gov.org",
+      "https://data.a2gov.org",
+      "https://data.a2gov.org/"
+    ],
+    "shape": "equivalent schemeless, HTTPS, and trailing-slash portal roots"
+  },
+  "failure": "The unified source entry treated equivalent portal spellings differently or rejected a schemeless hostname.",
+  "expected": {
+    "normalization": "normalize all three forms to https://data.a2gov.org",
+    "classification": "classify all three forms as portal references",
+    "scheme_default": "default a valid schemeless hostname to HTTPS"
+  },
+  "regression_tests": [
+    "tests/test_reference.py"
+  ]
 }
