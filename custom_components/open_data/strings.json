@@ -1,24 +1,24 @@
 {
-  "title": "Open Data Diagnostic Build 68",
+  "title": "Open Data",
   "config": {
     "step": {
       "user": {
-        "title": "Open Data Importer — Diagnostic Build 68",
-        "description": "Diagnostic Build 68 is loaded. Paste a portal, catalog, dataset page, resource/API URL, or dataset ID. Dataset links import only that dataset; portal roots start bounded catalog discovery. If you do not see this message, Home Assistant is not running the current integration build.",
+        "title": "Open Data Importer",
+        "description": "Paste a portal, catalog, dataset page, resource/API URL, or dataset ID. Dataset links import only that dataset; portal roots start bounded catalog discovery.",
         "data": {
           "source_location": "Portal or dataset URL / ID",
           "portal_url": "Portal URL for a bare ID (optional)"
         }
       },
       "portal": {
-        "title": "Discover public datasets — Build 68",
+        "title": "Discover public datasets",
         "description": "Enter an institution's public data portal URL. Open Data will prepare and cache the site structure. Large catalogs and file resources can take several minutes; you can leave this screen and return later.",
         "data": {
           "portal_url": "Portal URL"
         }
       },
       "dataset": {
-        "title": "Add a dataset directly — Build 68",
+        "title": "Add a dataset directly",
         "description": "Paste a CKAN or Socrata dataset page, resource/API URL, or dataset ID. A portal URL is required when entering an ID by itself.",
         "data": {
           "source_location": "Dataset URL or ID",
@@ -26,14 +26,14 @@
         }
       },
       "discover": {
-        "title": "Choose discovered datasets — Build 68",
+        "title": "Choose discovered datasets",
         "description": "Site preparation is complete. Found {count} ranked datasets on {portal} using {provider}. Selecting a large file may take another minute while its fields and update frequency are prepared and cached.",
         "data": {
           "dataset_ids": "Datasets"
         }
       },
       "prepare": {
-        "title": "Prepare site catalog — Build 68",
+        "title": "Prepare site catalog",
         "description": "Preparing the site catalog in the background. You may close this dialog and return later; no entities or regular downloads begin until you select and configure a dataset."
       }
     },
@@ -46,7 +46,7 @@
       "unsafe_source": "The supplied source was blocked by Open Data's network safety checks.",
       "invalid_dataset": "The portal or selected dataset is invalid.",
       "no_datasets": "No suitable queryable datasets were discovered on this portal.",
-      "unknown": "Unexpected error in Diagnostic Build 68. Check the Home Assistant logs."
+      "unknown": "Unexpected error. Check the Home Assistant logs."
     },
     "abort": {
       "already_configured": "This open data resource is already configured."
