@@ -1,5 +1,7 @@
 """Home Assistant config-flow regressions for pre-setup registry state."""
 
+import asyncio
+from contextlib import suppress
 from unittest.mock import AsyncMock, patch
 
 from homeassistant import config_entries
@@ -18,39 +20,40 @@ async def test_portal_flow_initializes_registry_before_integration_setup(hass) -
     registry.get.return_value = None
     registry.start.return_value = prepare_task
 
-    with (
-        patch(
-            "custom_components.open_data.config_flow.PreparationRegistry",
-            return_value=registry,
-        ),
-        patch(
-            "custom_components.open_data.config_flow.async_resolve_reference",
-            side_effect=lambda _session, reference: _return(reference),
-        ),
-    ):
-        result = await hass.config_entries.flow.async_init(
-            DOMAIN,
-            context={"source": config_entries.SOURCE_USER},
-            data={
-                "source_location": "https://ckan.a2gov.org",
-                "portal_url": "",
-            },
-        )
+    async def _resolve(_session, reference):
+        return reference
 
-    assert result["type"] is FlowResultType.SHOW_PROGRESS
-    assert DOMAIN in hass.data
-    assert hass.data[DOMAIN][DATA_PREPARATIONS] is registry
-    registry.async_load.assert_awaited_once()
-    registry.start.assert_called_once()
-    prepare_task.cancel()
+    try:
+        with (
+            patch(
+                "custom_components.open_data.config_flow.PreparationRegistry",
+                return_value=registry,
+            ),
+            patch(
+                "custom_components.open_data.config_flow.async_resolve_reference",
+                side_effect=_resolve,
+            ),
+        ):
+            result = await hass.config_entries.flow.async_init(
+                DOMAIN,
+                context={"source": config_entries.SOURCE_USER},
+                data={
+                    "source_location": "https://ckan.a2gov.org",
+                    "portal_url": "",
+                },
+            )
+
+        assert result["type"] is FlowResultType.SHOW_PROGRESS
+        assert DOMAIN in hass.data
+        assert hass.data[DOMAIN][DATA_PREPARATIONS] is registry
+        registry.async_load.assert_awaited_once()
+        registry.start.assert_called_once()
+    finally:
+        prepare_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await prepare_task
 
 
 async def _never_finishes() -> None:
     """Keep the mocked preparation task pending long enough to show progress."""
-    import asyncio
-
     await asyncio.Event().wait()
-
-
-async def _return(value):
-    return value
