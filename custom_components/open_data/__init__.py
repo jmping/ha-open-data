@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import logging
+from pathlib import Path
+import platform
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
@@ -40,12 +44,23 @@ from .services import async_register_services
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 _DATA_FEEDBACK = "feedback_registry"
+_BUILD_LABEL = "Diagnostic Build 68"
+_INTEGRATION_VERSION = "0.1.3"
+_LOGGER = logging.getLogger(__name__)
 
 type OpenDataConfigEntry = ConfigEntry[OpenDataCoordinator]
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """Set up the Open Data integration and its global service API."""
+    _LOGGER.warning(
+        "Open Data Importer %s loaded | version=%s | ha_version=%s | python=%s | module=%s",
+        _BUILD_LABEL,
+        _INTEGRATION_VERSION,
+        getattr(hass, "version", "unknown"),
+        platform.python_version(),
+        Path(__file__).resolve(),
+    )
     domain_data = hass.data.setdefault(DOMAIN, {})
     feedback = FeedbackRegistry(hass)
     await feedback.async_load()
