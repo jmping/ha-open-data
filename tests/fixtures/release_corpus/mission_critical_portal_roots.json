@@ -1,0 +1,21 @@
+{
+  "case_id": "mission-critical-portal-roots",
+  "source": {
+    "provider_families": ["ckan", "socrata"],
+    "provenance_urls": [
+      "https://data.a2gov.org",
+      "https://ckan.a2gov.org",
+      "https://data.michigan.gov"
+    ],
+    "shape": "portal roots submitted through the unified source entry"
+  },
+  "failure": "Portal roots stopped before discovery because reference diagnostics accessed a missing classification property.",
+  "expected": {
+    "classification": "classify each root as a portal rather than a direct dataset",
+    "diagnostics": "reference classification must be total and must not raise",
+    "routing": "continue from source parsing into portal discovery"
+  },
+  "regression_tests": [
+    "tests/test_reference.py"
+  ]
+}
