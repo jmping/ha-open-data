@@ -10,6 +10,7 @@ from .analyzer import (
     SelectableRecord,
     build_selectable_records as _build_selectable_records,
 )
+from .entity_identity import looks_like_observation_id
 from .models import OpenDataDataset
 
 
@@ -43,10 +44,9 @@ def build_selectable_records(
 ) -> list[SelectableRecord] | list[str]:
     """Build records through one validated, bounded API.
 
-    Runtime/options callers pass sampled rows plus a ``DatasetStructure`` and
-    receive rich ``SelectableRecord`` objects. Config-entry preparation passes
-    an ``OpenDataDataset`` plus sampled rows and receives only stable string
-    identifiers, which are safe to persist in Home Assistant storage.
+    Initial configuration intentionally suppresses row/sample identifiers and
+    high-cardinality identities. Those represent observations, not stable Home
+    Assistant entities, and must be narrowed through a location/site hierarchy.
     """
     if limit is not None and limit < 0:
         raise ValueError("limit must be non-negative")
@@ -58,6 +58,8 @@ def build_selectable_records(
             raise TypeError("dataset record selection requires a list of row mappings")
         identity = next((field for field in identity_fields if field), None)
         display = next((field for field in display_fields if field), None)
+        if looks_like_observation_id(identity):
+            return []
         structure = DatasetStructure(
             kind="records",
             profile_id=None,
@@ -73,8 +75,10 @@ def build_selectable_records(
             identity_fields=tuple(identity_fields),
             display_fields=tuple(display_fields),
         )
-        records = _bounded(_build_selectable_records(second, structure), limit)
-        return [record.value for record in records]
+        records = _build_selectable_records(second, structure)
+        if second and len(records) / len(second) >= 0.9 and len(records) >= 20:
+            return []
+        return [record.value for record in _bounded(records, limit)]
 
     if not isinstance(second, DatasetStructure):
         raise TypeError("row record selection requires a DatasetStructure")
@@ -87,3 +91,11 @@ def _bounded(records: Iterable[SelectableRecord], limit: int | None) -> list[Sel
     """Return a deterministic bounded list without changing record semantics."""
     result = list(records)
     return result if limit is None else result[:limit]
+
+
+from . import semantic_observations as _semantic_observations  # noqa: E402
+from .temporal_runtime import (  # noqa: E402
+    normalize_observations as _temporal_normalize_observations,
+)
+
+_semantic_observations.normalize_observations = _temporal_normalize_observations
