@@ -127,6 +127,57 @@ jobs:
               raise SystemExit(f"services.yaml missing services: {missing_services}")
           PY
 
+  hacs-package-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14.2"
+      - name: Validate HACS repository layout
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          root = Path("custom_components/open_data")
+          required = {
+              "__init__.py",
+              "manifest.json",
+              "config_flow.py",
+              "sensor.py",
+              "strings.json",
+              "services.yaml",
+          }
+          missing = sorted(name for name in required if not (root / name).is_file())
+          if missing:
+              raise SystemExit(f"HACS package missing integration files: {missing}")
+
+          hacs = json.loads(Path("hacs.json").read_text(encoding="utf-8"))
+          if hacs.get("name") != "Open Data" or hacs.get("render_readme") is not True:
+              raise SystemExit("hacs.json must expose Open Data and render the README")
+
+          forbidden = {"tests", "test", ".pytest_cache", "__pycache__"}
+          present = sorted(path.name for path in root.iterdir() if path.name in forbidden)
+          if present:
+              raise SystemExit(f"development-only paths found in HACS package: {present}")
+          PY
+      - name: Install release Home Assistant
+        run: python -m pip install --disable-pip-version-check -q homeassistant==2026.9.0
+      - name: Import packaged integration
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          manifest = json.loads(
+              Path("custom_components/open_data/manifest.json").read_text(encoding="utf-8")
+          )
+          __import__("custom_components.open_data")
+          __import__("custom_components.open_data.config_flow")
+          print(f"HACS package import OK for Open Data {manifest['version']}")
+          PY
+
   home-assistant-compatibility:
     runs-on: ubuntu-latest
     steps:
@@ -188,10 +239,7 @@ jobs:
           path: gtfs-feed-results.json
 
   live-city-corpus:
-    if: >-
-      github.event_name == 'schedule' ||
-      github.event_name == 'workflow_dispatch' ||
-      github.head_ref == 'agent/stability-cycle-two'
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
