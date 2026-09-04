@@ -1,9 +1,29 @@
 """Regression coverage for localized split calendar fields."""
 
 from datetime import datetime
+from importlib.util import module_from_spec, spec_from_file_location
+from pathlib import Path
+import sys
+from types import ModuleType
 from zoneinfo import ZoneInfo
 
-from custom_components.open_data.temporal import TemporalContext, infer_temporal_plan, parse_row_timestamp
+
+_ROOT = Path(__file__).parents[1] / "custom_components" / "open_data"
+package = ModuleType("custom_components.open_data")
+package.__path__ = [str(_ROOT)]
+sys.modules.setdefault("custom_components", ModuleType("custom_components"))
+sys.modules["custom_components.open_data"] = package
+
+spec = spec_from_file_location(
+    "custom_components.open_data.temporal", _ROOT / "temporal.py"
+)
+assert spec is not None and spec.loader is not None
+temporal = module_from_spec(spec)
+sys.modules[spec.name] = temporal
+spec.loader.exec_module(temporal)
+TemporalContext = temporal.TemporalContext
+infer_temporal_plan = temporal.infer_temporal_plan
+parse_row_timestamp = temporal.parse_row_timestamp
 
 
 def _context(zone: str = "Europe/Madrid") -> TemporalContext:
@@ -43,4 +63,6 @@ def test_french_calendar_components_build_timestamp() -> None:
     plan = infer_temporal_plan(tuple(rows[0]), rows, context)
     assert plan is not None
     assert plan.strategy == "calendar_components"
-    assert parse_row_timestamp(rows[-1], plan, context).hour == 11
+    parsed = parse_row_timestamp(rows[-1], plan, context)
+    assert parsed is not None
+    assert parsed.hour == 11
