@@ -129,7 +129,30 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             try:
                 portal_hint = user_input.get(CONF_PORTAL_URL, "").strip() or None
                 reference = parse_reference(user_input[CONF_SOURCE_LOCATION], portal_hint)
+                log_flow_breadcrumb(
+                    "user",
+                    "parsed source reference",
+                    **self._diagnostic_context(
+                        source_location=user_input.get(CONF_SOURCE_LOCATION),
+                        reference_kind=reference.kind,
+                        reference_provider=reference.provider,
+                        reference_portal_url=reference.portal_url,
+                        reference_dataset_id=reference.dataset_id,
+                        reference_resource_id=reference.resource_id,
+                    ),
+                )
                 reference = await async_resolve_reference(async_get_clientsession(self.hass), reference)
+                log_flow_breadcrumb(
+                    "user",
+                    "resolved source reference",
+                    **self._diagnostic_context(
+                        resolved_kind=reference.kind,
+                        resolved_provider=reference.provider,
+                        resolved_portal_url=reference.portal_url,
+                        resolved_dataset_id=reference.dataset_id,
+                        resolved_resource_id=reference.resource_id,
+                    ),
+                )
                 if reference.is_portal:
                     if reference.portal_url is None:
                         raise ValueError("A portal URL could not be determined")
