@@ -3,12 +3,15 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+from homeassistant.util import dt as dt_util
+
 from custom_components.open_data.temporal import (
     TemporalContext,
     infer_temporal_plan,
     normalize_row_timestamps,
     parse_row_timestamp,
 )
+from custom_components.open_data.temporal_runtime import _configured_timezone_name
 
 
 def test_combines_calendar_components() -> None:
@@ -59,3 +62,8 @@ def test_combines_date_and_time_strings() -> None:
     assert plan.strategy == "date_and_time"
     assert canonical is not None
     assert normalized[0][canonical].startswith("2026-07-24T22:45:00")
+
+
+def test_runtime_uses_home_assistant_timezone(monkeypatch) -> None:
+    monkeypatch.setattr(dt_util, "DEFAULT_TIME_ZONE", ZoneInfo("America/Los_Angeles"))
+    assert _configured_timezone_name() == "America/Los_Angeles"
