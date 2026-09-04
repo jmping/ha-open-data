@@ -39,7 +39,7 @@ def test_stale_measure_is_warned_and_excluded_by_default() -> None:
                 "timestamp": timestamp,
                 "temperature": 70 + minute,
                 "wind_speed": 5 + minute,
-                "obsolete_metric": 100 if minute == 0 else None,
+                "obsolete_metric": None,
             }
         )
     rows.insert(
