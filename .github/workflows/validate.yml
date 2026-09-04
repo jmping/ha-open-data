@@ -185,3 +185,28 @@ jobs:
         with:
           name: gtfs-feed-results
           path: gtfs-feed-results.json
+
+  live-city-corpus:
+    if: >-
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      github.head_ref == 'agent/five-city-live-audit'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14.2"
+      - name: Install live audit runtime
+        run: python -m pip install --disable-pip-version-check -q homeassistant==2026.9.0 aiohttp
+      - name: Audit representative city portals
+        run: |
+          PYTHONPATH=. python scripts/validate_city_portals.py \
+            --datasets-per-city 3 \
+            --output city-portal-results.json
+      - name: Upload city portal report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: city-portal-results
+          path: city-portal-results.json
