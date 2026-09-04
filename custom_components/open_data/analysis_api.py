@@ -91,11 +91,3 @@ def _bounded(records: Iterable[SelectableRecord], limit: int | None) -> list[Sel
     """Return a deterministic bounded list without changing record semantics."""
     result = list(records)
     return result if limit is None else result[:limit]
-
-
-from . import semantic_observations as _semantic_observations  # noqa: E402
-from .temporal_runtime import (  # noqa: E402
-    normalize_observations as _temporal_normalize_observations,
-)
-
-_semantic_observations.normalize_observations = _temporal_normalize_observations

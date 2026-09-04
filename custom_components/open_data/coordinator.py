@@ -19,8 +19,8 @@ from .record_structure import (
     build_record_selections,
     decode_unit_key,
 )
-from .semantic_observations import normalize_observations
 from .snapshot_merge import carry_forward_failed_records
+from .temporal_runtime import normalize_observations
 
 _MAX_CONCURRENT_RECORD_REQUESTS = 6
 
@@ -55,9 +55,6 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
         self.timestamp_field = timestamp_field
         self.identity_field = identity_field
         self.display_field = display_field
-        # Observation IDs identify historical rows, not persistent Home Assistant
-        # entities. Even old configurations that saved those values must fall back
-        # to a single latest-dataset snapshot instead of creating one entity per row.
         self.selected_records = (
             () if looks_like_observation_id(identity_field) else selected_records
         )
@@ -86,177 +83,119 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
             key_fields[0],
             None,
             requested_fields,
-            limit=max(100, len(self.selected_records) * 4),
+            limit=max(200, len(self.selected_records) * 4),
         )
-        if self.record_structure.unit_key_fields:
-            for selection in build_record_selections(rows, self.record_structure):
-                if selection.value in self.selected_records:
-                    self.record_labels[selection.value] = selection.label
-            return
-
+        selections = build_record_selections(rows, self.record_structure)
         selected = set(self.selected_records)
-        labels: dict[str, list[str]] = {}
-        contexts: dict[str, tuple[str, ...]] = {}
-        for row in rows:
-            value = row.get(self.identity_field)
-            if value is None or str(value) not in selected:
-                continue
-            record_id = str(value)
-            raw_label = row.get(self.display_field) if self.display_field else None
-            label = str(raw_label) if raw_label not in (None, "") else record_id
-            labels.setdefault(label, []).append(record_id)
-            contexts[record_id] = tuple(
-                str(row[field])
-                for field in self.hierarchy_fields
-                if row.get(field) not in (None, "")
-            )
-            self.record_labels[record_id] = label
-
-        # Labels such as "Precinct 1" are often only unique within their parent
-        # geography. Add available hierarchy context only where it is needed.
-        for label, record_ids in labels.items():
-            if len(record_ids) < 2:
-                continue
-            for record_id in record_ids:
-                context = contexts.get(record_id, ())
-                if context:
-                    self.record_labels[record_id] = f"{label} — {' / '.join(context)}"
-                else:
-                    self.record_labels[record_id] = f"{label} — {record_id}"
-
-    async def _async_latest_record(
-        self, record_id: str, semaphore: asyncio.Semaphore
-    ) -> tuple[str, list[dict]]:
-        """Fetch one latest observation without overwhelming a portal."""
-        async with semaphore:
-            key_fields = self.record_structure.unit_key_fields
-            filters = (
-                decode_unit_key(record_id, key_fields)
-                if key_fields
-                else {self.identity_field: record_id}
-            )
-            if not filters:
-                raise ValueError("Selected record does not match its configured unit key")
-            rows = await self.provider.async_observation_rows(
-                self.dataset_id,
-                self.resource_id,
-                self.timestamp_field,
-                filters=filters,
-            )
-        return record_id, rows
+        self.record_labels = {
+            item.value: item.label for item in selections if item.value in selected
+        }
 
     async def _async_update_data(self) -> OpenDataSnapshot:
         try:
-            if self.dataset is None:
-                self.dataset = await self.provider.async_get_dataset(
-                    self.dataset_id, self.resource_id
-                )
-                self.resource_id = self.dataset.resource_id or self.resource_id
+            dataset = await self.provider.async_get_dataset(
+                self.dataset_id, self.resource_id
+            )
+            self.dataset = dataset
+            if self.selected_records:
                 await self._async_load_record_labels()
-
-            checked_at = datetime.now(timezone.utc)
-            if (
-                self.identity_field or self.record_structure.unit_key_fields
-            ) and self.selected_records:
-                semaphore = asyncio.Semaphore(_MAX_CONCURRENT_RECORD_REQUESTS)
-                results = await asyncio.gather(
-                    *(
-                        self._async_latest_record(record_id, semaphore)
-                        for record_id in self.selected_records
-                    ),
-                    return_exceptions=True,
+                records = await self._async_fetch_selected_records(dataset)
+                values = self._latest_values_from_records(records)
+                observations = self._normalize_record_observations(records)
+            else:
+                rows = await self.provider.async_observation_rows(
+                    dataset.dataset_id,
+                    dataset.resource_id,
+                    self.timestamp_field,
+                    limit=250,
                 )
-                records: dict[str, dict] = {}
-                observations = {}
-                failed_record_ids: list[str] = []
-                first_error: Exception | None = None
-                for record_id, result in zip(self.selected_records, results, strict=True):
-                    if isinstance(result, Exception):
-                        failed_record_ids.append(record_id)
-                        first_error = first_error or result
-                        self.logger.warning(
-                            "Unable to refresh open-data record %s: %s",
-                            record_id,
-                            result,
-                        )
-                        continue
-                    returned_id, rows = result
-                    if rows:
-                        records[returned_id] = rows[0]
-                        observations.update(
-                            normalize_observations(
-                                rows,
-                                field_roles=self.field_roles,
-                                structure=self.record_structure,
-                                selected_fields=self.selected_fields,
-                                unit_id=returned_id,
-                            )
-                        )
-                if len(failed_record_ids) == len(results) and results:
-                    raise UpdateFailed(str(first_error))
-
-                records, observations = carry_forward_failed_records(
-                    self.data,
-                    records,
-                    observations,
-                    failed_record_ids,
+                if not rows:
+                    latest = await self.provider.async_latest_row(
+                        dataset.dataset_id,
+                        dataset.resource_id,
+                        self.timestamp_field,
+                    )
+                    rows = [latest] if latest else []
+                records = {}
+                values = rows[0] if rows else {}
+                observations = normalize_observations(
+                    rows,
+                    field_roles=self.field_roles,
+                    structure=self.record_structure,
+                    selected_fields=self.selected_fields,
                 )
-                latest, source_updated, frequency = snapshot_freshness(
-                    self.dataset, observations
-                )
-                observations = apply_observation_freshness(
-                    observations,
-                    frequency,
-                    checked_at=checked_at,
-                )
-                labels = {
-                    record_id: self.record_labels.get(record_id, record_id)
-                    for record_id in records
-                }
-                first = next(iter(records.values()), {})
-                return OpenDataSnapshot(
-                    dataset=self.dataset,
-                    values=first,
-                    records=records,
-                    record_labels=labels,
-                    observations=observations,
-                    fetched_at=checked_at.isoformat(),
-                    latest_observation_at=latest,
-                    source_updated_at=source_updated,
-                    update_frequency_seconds=frequency,
-                )
-
-            rows = await self.provider.async_observation_rows(
-                self.dataset_id,
-                self.resource_id,
-                self.timestamp_field,
-                filters=None,
-            )
-            values = rows[0] if rows else {}
-            observations = normalize_observations(
-                rows,
-                field_roles=self.field_roles,
-                structure=self.record_structure,
-                selected_fields=self.selected_fields,
-            )
-            latest, source_updated, frequency = snapshot_freshness(
-                self.dataset, observations
-            )
             observations = apply_observation_freshness(
                 observations,
-                frequency,
-                checked_at=checked_at,
+                now=datetime.now(timezone.utc),
+                update_interval=self.update_interval,
             )
-            return OpenDataSnapshot(
-                dataset=self.dataset,
+            snapshot = OpenDataSnapshot(
+                dataset=dataset,
                 values=values,
+                records=records,
                 observations=observations,
-                fetched_at=checked_at.isoformat(),
-                latest_observation_at=latest,
-                source_updated_at=source_updated,
-                update_frequency_seconds=frequency,
+                freshness=snapshot_freshness(observations),
             )
-        except UpdateFailed:
-            raise
-        except (OpenDataError, ValueError) as err:
+            return carry_forward_failed_records(self.data, snapshot)
+        except OpenDataError as err:
             raise UpdateFailed(str(err)) from err
+
+    async def _async_fetch_selected_records(
+        self, dataset: OpenDataDataset
+    ) -> dict[str, dict]:
+        semaphore = asyncio.Semaphore(_MAX_CONCURRENT_RECORD_REQUESTS)
+
+        async def _fetch(record_id: str) -> tuple[str, dict | None]:
+            async with semaphore:
+                filters = self._filters_for_record(record_id)
+                row = await self.provider.async_latest_row(
+                    dataset.dataset_id,
+                    dataset.resource_id,
+                    self.timestamp_field,
+                    filters,
+                )
+                return record_id, row
+
+        results = await asyncio.gather(
+            *(_fetch(record_id) for record_id in self.selected_records),
+            return_exceptions=True,
+        )
+        records: dict[str, dict] = {}
+        for result in results:
+            if isinstance(result, Exception):
+                continue
+            record_id, row = result
+            if row:
+                records[record_id] = row
+        return records
+
+    def _filters_for_record(self, record_id: str) -> dict[str, str]:
+        key_fields = self.record_structure.unit_key_fields
+        if not key_fields and self.identity_field:
+            key_fields = (self.identity_field,)
+        if not key_fields:
+            return {}
+        values = decode_unit_key(record_id)
+        if len(values) != len(key_fields):
+            return {key_fields[0]: record_id}
+        return dict(zip(key_fields, values, strict=True))
+
+    @staticmethod
+    def _latest_values_from_records(records: dict[str, dict]) -> dict:
+        return next(iter(records.values()), {})
+
+    def _normalize_record_observations(
+        self, records: dict[str, dict]
+    ) -> dict:
+        observations = {}
+        for record_id, row in records.items():
+            observations.update(
+                normalize_observations(
+                    [row],
+                    field_roles=self.field_roles,
+                    structure=self.record_structure,
+                    selected_fields=self.selected_fields,
+                    unit_id=record_id,
+                )
+            )
+        return observations

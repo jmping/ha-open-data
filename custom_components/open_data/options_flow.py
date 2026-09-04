@@ -9,14 +9,10 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import config_validation as cv
-from homeassistant.helpers.selector import (
-    SelectOptionDict,
-    SelectSelector,
-    SelectSelectorConfig,
-    SelectSelectorMode,
-)
+from homeassistant.helpers.selector import SelectOptionDict, SelectSelector, SelectSelectorConfig, SelectSelectorMode
 
-from .analyzer import DatasetStructure, build_selectable_records
+from .analysis_api import build_selectable_records
+from .analyzer import DatasetStructure
 from .const import (
     CONF_DATASET_KIND,
     CONF_DISPLAY_FIELD,
@@ -25,6 +21,7 @@ from .const import (
     CONF_HIERARCHY_SETS,
     CONF_IDENTITY_FIELD,
     CONF_IGNORED_FIELDS,
+    CONF_MEASURE_FRESHNESS,
     CONF_METRIC_FIELDS,
     CONF_PROFILE_ID,
     CONF_RECORD_KEY_FIELDS,
@@ -32,8 +29,10 @@ from .const import (
     CONF_RECORD_STRUCTURE,
     CONF_SELECTED_FIELDS,
     CONF_SELECTED_RECORDS,
+    CONF_TEMPORAL_PLAN,
     CONF_TIMESTAMP_FIELD,
-    CONF_TIMESTAMP_FIELDS,
+    CONF_TIMEZONE,
+    CONF_TIMEZONE_SOURCE,
     CONF_UNIT_KEY_FIELDS,
     CONF_UNIT_LABEL_FIELDS,
 )
@@ -51,13 +50,9 @@ from .field_roles import (
 )
 from .location_ranking import rank_location_rows
 from .options_reconciliation import reconcile_options
-from .record_structure import (
-    build_record_selections,
-    build_record_structure,
-    load_record_structure,
-)
+from .record_structure import build_record_selections, build_record_structure, load_record_structure
 
-_RECORD_LIMIT = 500
+_RECORD_LIMIT = 200
 _FIELD_ROLE_CATEGORY_PREFIX = "field_role_fields__"
 _FIELD_ROLE_OPTIONS = (
     (FIELD_ROLE_LOCATION, "Location"),
@@ -70,7 +65,7 @@ _FIELD_ROLE_OPTIONS = (
 
 
 class OpenDataOptionsFlow(config_entries.OptionsFlow):
-    """Choose structural fields first, then records/locations and metrics."""
+    """Review inferred import choices, with advanced structure controls available."""
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         self._config_entry = config_entry
@@ -90,9 +85,57 @@ class OpenDataOptionsFlow(config_entries.OptionsFlow):
     def _current(self, key: str) -> Any:
         return self._config_entry.options.get(key, self._config_entry.data.get(key))
 
-    async def async_step_init(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    def _freshness_label(self, field: str, label: str) -> str:
+        profile = (self._config_entry.data.get(CONF_MEASURE_FRESHNESS) or {}).get(field) or {}
+        status = profile.get("status")
+        latest = profile.get("latest_observation_at")
+        cadence = profile.get("cadence_seconds")
+        parts = [label]
+        if status:
+            parts.append(str(status))
+        if latest:
+            parts.append(f"latest {latest}")
+        if cadence:
+            seconds = float(cadence)
+            if seconds < 3600:
+                parts.append(f"~{max(1, round(seconds / 60))}m cadence")
+            elif seconds < 86400:
+                parts.append(f"~{max(1, round(seconds / 3600))}h cadence")
+            else:
+                parts.append(f"~{max(1, round(seconds / 86400))}d cadence")
+        elif status == "unknown":
+            parts.append("recency unknown")
+        return " · ".join(parts)
+
+    def _review_placeholders(self, record_count: int = 0) -> dict[str, str]:
+        temporal = self._config_entry.data.get(CONF_TEMPORAL_PLAN) or {}
+        plan = temporal.get("plan") or {}
+        status = temporal.get("status") or "unknown"
+        strategy = plan.get("strategy") or "not resolved"
+        confidence = plan.get("confidence")
+        confidence_label = f"{float(confidence):.0%}" if confidence is not None else "unknown"
+        timezone = self._current(CONF_TIMEZONE) or self._config_entry.data.get(CONF_TIMEZONE) or "unknown"
+        timezone_source = self._config_entry.data.get(CONF_TIMEZONE_SOURCE, "unknown")
+        selected_fields = self._current(CONF_SELECTED_FIELDS)
+        metric_count = len(selected_fields or ())
+        entity_estimate = metric_count * max(record_count, 1)
+        stale = sum(
+            1
+            for value in (self._config_entry.data.get(CONF_MEASURE_FRESHNESS) or {}).values()
+            if isinstance(value, dict) and value.get("status") == "stale"
+        )
+        return {
+            "temporal_status": str(status),
+            "timestamp_strategy": str(strategy),
+            "timestamp_confidence": confidence_label,
+            "timezone": str(timezone),
+            "timezone_source": str(timezone_source),
+            "stale_count": str(stale),
+            "record_count": str(record_count),
+            "entity_estimate": str(entity_estimate),
+        }
+
+    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         """Select structural fields before deriving record choices."""
         errors: dict[str, str] = {}
         if user_input is not None:
@@ -120,11 +163,7 @@ class OpenDataOptionsFlow(config_entries.OptionsFlow):
         all_fields = [field.name for field in dataset.fields if field.name not in ignored]
         current_roles = self._current(CONF_FIELD_ROLES) or {}
         if not current_roles:
-            role_rows = (
-                list(coordinator.data.records.values())
-                if coordinator.data.records
-                else [coordinator.data.values]
-            )
+            role_rows = list(coordinator.data.records.values()) if coordinator.data.records else [coordinator.data.values]
             structural_fields = {
                 self._current(CONF_IDENTITY_FIELD),
                 self._current(CONF_DISPLAY_FIELD),
@@ -134,18 +173,13 @@ class OpenDataOptionsFlow(config_entries.OptionsFlow):
             current_roles = classify_field_roles(
                 all_fields,
                 role_rows,
-                configured_metrics=self._config_entry.data.get(
-                    CONF_METRIC_FIELDS, ()
-                ),
+                configured_metrics=self._config_entry.data.get(CONF_METRIC_FIELDS, ()),
                 structural_fields=structural_fields,
-                timestamp_fields=self._config_entry.data.get(
-                    CONF_TIMESTAMP_FIELDS, ()
-                ),
+                timestamp_fields=self._config_entry.data.get("timestamp_fields", ()),
                 ignored_fields=ignored,
             ).as_assignments()
 
         schema: dict[Any, Any] = {}
-        identity = self._current(CONF_IDENTITY_FIELD)
         for role, _label in _FIELD_ROLE_OPTIONS:
             schema[
                 vol.Optional(
@@ -163,13 +197,11 @@ class OpenDataOptionsFlow(config_entries.OptionsFlow):
             errors=errors,
             description_placeholders={
                 "kind": self._config_entry.data.get(CONF_DATASET_KIND, "table"),
-                "identity": identity or "none",
+                "identity": self._current(CONF_IDENTITY_FIELD) or "none",
             },
         )
 
-    async def async_step_structure(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    async def async_step_structure(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         """Combine reviewed fields into nested unit and observation identities."""
         field_roles = self._structure_options[CONF_FIELD_ROLES]
         active_fields = {
@@ -189,9 +221,7 @@ class OpenDataOptionsFlow(config_entries.OptionsFlow):
                 if submitted.get(key)
             )
             submitted[CONF_HIERARCHY_SETS] = [list(path) for path in hierarchy_sets]
-            submitted[CONF_HIERARCHY_FIELDS] = list(
-                dict.fromkeys(field for path in hierarchy_sets for field in path)
-            )
+            submitted[CONF_HIERARCHY_FIELDS] = list(dict.fromkeys(field for path in hierarchy_sets for field in path))
             submitted[CONF_RECORD_STRUCTURE] = build_record_structure(
                 unit_key_fields=submitted.get(CONF_UNIT_KEY_FIELDS, ()),
                 unit_label_fields=submitted.get(CONF_UNIT_LABEL_FIELDS, ()),
@@ -203,106 +233,50 @@ class OpenDataOptionsFlow(config_entries.OptionsFlow):
             self._structure_options.update(submitted)
             return await self.async_step_records()
 
-        location_fields = [
-            field
-            for field in active_fields
-            if field_roles.get(field) == FIELD_ROLE_LOCATION
-        ]
+        location_fields = [field for field in active_fields if field_roles.get(field) == FIELD_ROLE_LOCATION]
         label_fields = [
             field
             for field in active_fields
-            if field_roles.get(field)
-            in {
-                FIELD_ROLE_LOCATION,
-                FIELD_ROLE_MEASUREMENT_NAME,
-                FIELD_ROLE_DESCRIPTIVE,
-            }
+            if field_roles.get(field) in {FIELD_ROLE_LOCATION, FIELD_ROLE_MEASUREMENT_NAME, FIELD_ROLE_DESCRIPTIVE}
         ]
         unit_fields = list(label_fields)
         record_fields = [
             field
             for field in active_fields
-            if field_roles.get(field)
-            in {
-                FIELD_ROLE_LOCATION,
-                FIELD_ROLE_TIME,
-                FIELD_ROLE_MEASUREMENT_NAME,
-                FIELD_ROLE_DESCRIPTIVE,
-            }
+            if field_roles.get(field) in {FIELD_ROLE_LOCATION, FIELD_ROLE_TIME, FIELD_ROLE_MEASUREMENT_NAME, FIELD_ROLE_DESCRIPTIVE}
         ]
         identity = self._structure_options.get(CONF_IDENTITY_FIELD)
         display = self._structure_options.get(CONF_DISPLAY_FIELD)
-        current_unit_keys = self._current(CONF_UNIT_KEY_FIELDS) or (
-            [identity] if identity in active_fields else location_fields
-        )
-        current_unit_labels = self._current(CONF_UNIT_LABEL_FIELDS) or (
-            [display] if display in active_fields else []
-        )
-        current_unit_keys = [
-            field for field in current_unit_keys if field in unit_fields
-        ]
-        current_unit_labels = [
-            field for field in current_unit_labels if field in label_fields
-        ]
+        current_unit_keys = self._current(CONF_UNIT_KEY_FIELDS) or ([identity] if identity in active_fields else location_fields)
+        current_unit_labels = self._current(CONF_UNIT_LABEL_FIELDS) or ([display] if display in active_fields else [])
+        current_unit_keys = [field for field in current_unit_keys if field in unit_fields]
+        current_unit_labels = [field for field in current_unit_labels if field in label_fields]
         current_record_keys = self._current(CONF_RECORD_KEY_FIELDS) or list(
-            dict.fromkeys(
-                (
-                    *current_unit_keys,
-                    *(
-                        field
-                        for field in record_fields
-                        if field_roles.get(field) == FIELD_ROLE_TIME
-                    ),
-                )
-            )
+            dict.fromkeys((*current_unit_keys, *(field for field in record_fields if field_roles.get(field) == FIELD_ROLE_TIME)))
         )
-        current_record_keys = [
-            field for field in current_record_keys if field in record_fields
-        ]
-        current_record_labels = self._current(CONF_RECORD_LABEL_FIELDS) or list(
-            current_unit_labels
-        )
-        current_record_labels = [
-            field for field in current_record_labels if field in record_fields
-        ]
-        current_hierarchy_sets = self._current(CONF_HIERARCHY_SETS) or (
-            self._current(CONF_HIERARCHY_FIELDS) or (),
-        )
+        current_record_keys = [field for field in current_record_keys if field in record_fields]
+        current_record_labels = self._current(CONF_RECORD_LABEL_FIELDS) or list(current_unit_labels)
+        current_record_labels = [field for field in current_record_labels if field in record_fields]
+        current_hierarchy_sets = self._current(CONF_HIERARCHY_SETS) or (self._current(CONF_HIERARCHY_FIELDS) or (),)
         current_hierarchy_sets = tuple(
             tuple(field for field in path if field in label_fields)
             for path in current_hierarchy_sets
             if isinstance(path, (list, tuple))
         )
         schema: dict[Any, Any] = {}
-        for index, key in enumerate(
-            (
-                CONF_HIERARCHY_FIELDS,
-                f"{CONF_HIERARCHY_FIELDS}__2",
-                f"{CONF_HIERARCHY_FIELDS}__3",
-            )
-        ):
+        for index, key in enumerate((CONF_HIERARCHY_FIELDS, f"{CONF_HIERARCHY_FIELDS}__2", f"{CONF_HIERARCHY_FIELDS}__3")):
             schema[
                 vol.Optional(
                     key,
-                    default=list(current_hierarchy_sets[index])
-                    if index < len(current_hierarchy_sets)
-                    else [],
+                    default=list(current_hierarchy_sets[index]) if index < len(current_hierarchy_sets) else [],
                 )
             ] = self._fields_selector(label_fields)
         schema.update(
             {
-                vol.Optional(
-                    CONF_UNIT_KEY_FIELDS, default=list(current_unit_keys)
-                ): self._fields_selector(unit_fields),
-                vol.Optional(
-                    CONF_UNIT_LABEL_FIELDS, default=list(current_unit_labels)
-                ): self._fields_selector(label_fields),
-                vol.Optional(
-                    CONF_RECORD_KEY_FIELDS, default=list(current_record_keys)
-                ): self._fields_selector(record_fields),
-                vol.Optional(
-                    CONF_RECORD_LABEL_FIELDS, default=list(current_record_labels)
-                ): self._fields_selector(record_fields),
+                vol.Optional(CONF_UNIT_KEY_FIELDS, default=list(current_unit_keys)): self._fields_selector(unit_fields),
+                vol.Optional(CONF_UNIT_LABEL_FIELDS, default=list(current_unit_labels)): self._fields_selector(label_fields),
+                vol.Optional(CONF_RECORD_KEY_FIELDS, default=list(current_record_keys)): self._fields_selector(record_fields),
+                vol.Optional(CONF_RECORD_LABEL_FIELDS, default=list(current_record_labels)): self._fields_selector(record_fields),
             }
         )
         return self.async_show_form(
@@ -314,69 +288,41 @@ class OpenDataOptionsFlow(config_entries.OptionsFlow):
             },
         )
 
-    async def async_step_records(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Build record choices and rank trusted locations locally."""
+    async def async_step_records(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        """Review bounded records and freshness-aware metric choices."""
         if user_input is not None:
-            return self.async_create_entry(
-                title="", data={**self._structure_options, **user_input}
-            )
+            return self.async_create_entry(title="", data={**self._structure_options, **user_input})
 
         coordinator = self._config_entry.runtime_data
         dataset = coordinator.data.dataset
-        field_roles = self._structure_options.get(
-            CONF_FIELD_ROLES, self._current(CONF_FIELD_ROLES) or {}
-        )
+        field_roles = self._structure_options.get(CONF_FIELD_ROLES, self._current(CONF_FIELD_ROLES) or {})
         ignored = {
-            field
-            for field, role in field_roles.items()
-            if role in {FIELD_ROLE_IRRELEVANT, FIELD_ROLE_UNASSIGNED}
+            field for field, role in field_roles.items() if role in {FIELD_ROLE_IRRELEVANT, FIELD_ROLE_UNASSIGNED}
         }
-        metrics = {
-            field for field, role in field_roles.items() if role == FIELD_ROLE_DATA
-        }
+        metrics = {field for field, role in field_roles.items() if role == FIELD_ROLE_DATA}
         choices = {
-            field.name: field.label
+            field.name: self._freshness_label(field.name, field.label)
             for field in dataset.fields
             if field.name in metrics
         }
-        fields_were_configured = (
-            CONF_SELECTED_FIELDS in self._config_entry.options
-            or CONF_SELECTED_FIELDS in self._config_entry.data
-        )
+        fields_were_configured = CONF_SELECTED_FIELDS in self._config_entry.options or CONF_SELECTED_FIELDS in self._config_entry.data
         raw_fields = self._current(CONF_SELECTED_FIELDS)
         schema: dict[Any, Any] = {}
+        record_count = 0
 
-        identity = self._structure_options.get(CONF_IDENTITY_FIELD)
-        display = self._structure_options.get(CONF_DISPLAY_FIELD)
-        timestamp = self._structure_options.get(CONF_TIMESTAMP_FIELD)
+        identity = self._structure_options.get(CONF_IDENTITY_FIELD) or self._current(CONF_IDENTITY_FIELD)
+        display = self._structure_options.get(CONF_DISPLAY_FIELD) or self._current(CONF_DISPLAY_FIELD)
+        timestamp = self._structure_options.get(CONF_TIMESTAMP_FIELD) or self._current(CONF_TIMESTAMP_FIELD)
         hierarchy_fields = tuple(
-            self._structure_options.get(
-                CONF_HIERARCHY_FIELDS,
-                self._config_entry.data.get(CONF_HIERARCHY_FIELDS, ()),
-            )
+            self._structure_options.get(CONF_HIERARCHY_FIELDS, self._config_entry.data.get(CONF_HIERARCHY_FIELDS, ()))
         )
-        persisted_structure = load_record_structure(
-            self._structure_options.get(CONF_RECORD_STRUCTURE)
-        )
+        persisted_structure = load_record_structure(self._structure_options.get(CONF_RECORD_STRUCTURE) or self._current(CONF_RECORD_STRUCTURE))
         unit_key_fields = persisted_structure.unit_key_fields
         unit_label_fields = persisted_structure.unit_label_fields
         query_identity = unit_key_fields[0] if unit_key_fields else identity
         if query_identity:
-            coordinate_fields = coordinate_candidate_fields(
-                field.name for field in dataset.fields
-            )
-            extra_fields = tuple(
-                dict.fromkeys(
-                    (
-                        *unit_key_fields[1:],
-                        *unit_label_fields,
-                        *hierarchy_fields,
-                        *coordinate_fields,
-                    )
-                )
-            )
+            coordinate_fields = coordinate_candidate_fields(field.name for field in dataset.fields)
+            extra_fields = tuple(dict.fromkeys((*unit_key_fields[1:], *unit_label_fields, *hierarchy_fields, *coordinate_fields)))
             rows = await coordinator.provider.async_distinct_rows(
                 dataset.dataset_id,
                 dataset.resource_id,
@@ -389,11 +335,7 @@ class OpenDataOptionsFlow(config_entries.OptionsFlow):
                 rows,
                 home_latitude=self.hass.config.latitude,
                 home_longitude=self.hass.config.longitude,
-                label_fields=tuple(
-                    dict.fromkeys(
-                        (*unit_label_fields, *((display,) if display else ()))
-                    )
-                ),
+                label_fields=tuple(dict.fromkeys((*unit_label_fields, *((display,) if display else ())))),
                 hierarchy_fields=hierarchy_fields,
             )
             legacy_structure = DatasetStructure(
@@ -409,17 +351,11 @@ class OpenDataOptionsFlow(config_entries.OptionsFlow):
                 metric_fields=tuple(metrics),
                 ignored_fields=tuple(ignored),
             )
-            records = (
-                build_record_selections(rows, persisted_structure)
-                if unit_key_fields
-                else build_selectable_records(rows, legacy_structure)
-            )
+            records = build_record_selections(rows, persisted_structure) if unit_key_fields else build_selectable_records(rows, legacy_structure)
             record_choices = {record.value: record.label for record in records}
+            record_count = len(record_choices)
             if record_choices:
-                records_were_configured = (
-                    CONF_SELECTED_RECORDS in self._config_entry.options
-                    or CONF_SELECTED_RECORDS in self._config_entry.data
-                )
+                records_were_configured = CONF_SELECTED_RECORDS in self._config_entry.options or CONF_SELECTED_RECORDS in self._config_entry.data
                 reconciled = reconcile_options(
                     raw_records=self._current(CONF_SELECTED_RECORDS),
                     records_were_configured=records_were_configured,
@@ -430,10 +366,7 @@ class OpenDataOptionsFlow(config_entries.OptionsFlow):
                     available_fields=choices,
                 )
                 schema[
-                    vol.Optional(
-                        CONF_SELECTED_RECORDS,
-                        default=list(reconciled.selected_records),
-                    )
+                    vol.Optional(CONF_SELECTED_RECORDS, default=list(reconciled.selected_records))
                 ] = cv.multi_select(record_choices)
 
         reconciled_fields = reconcile_options(
@@ -445,14 +378,13 @@ class OpenDataOptionsFlow(config_entries.OptionsFlow):
             fields_were_configured=fields_were_configured,
             available_fields=choices,
         ).selected_fields
-        schema[
-            vol.Optional(CONF_SELECTED_FIELDS, default=list(reconciled_fields))
-        ] = cv.multi_select(choices)
+        schema[vol.Optional(CONF_SELECTED_FIELDS, default=list(reconciled_fields))] = cv.multi_select(choices)
         return self.async_show_form(
             step_id="records",
             data_schema=vol.Schema(schema),
             description_placeholders={
                 "kind": self._config_entry.data.get(CONF_DATASET_KIND, "table"),
                 "identity": identity or "none",
+                **self._review_placeholders(record_count),
             },
         )

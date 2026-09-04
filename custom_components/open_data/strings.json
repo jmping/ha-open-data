@@ -27,14 +27,14 @@
       },
       "discover": {
         "title": "Choose discovered datasets",
-        "description": "Site preparation is complete. Found {count} ranked datasets on {portal} using {provider}. Selecting a large file may take another minute while its fields and update frequency are prepared and cached.",
+        "description": "Found {count} ranked datasets on {portal} using {provider}. Dataset preparation will infer fields, observation time, freshness, and stable records before creating Home Assistant entities.",
         "data": {
           "dataset_ids": "Datasets"
         }
       },
       "prepare": {
         "title": "Prepare site catalog",
-        "description": "Preparing the site catalog in the background. You may close this dialog and return later; no entities or regular downloads begin until you select and configure a dataset."
+        "description": "Preparing the site catalog in the background. You may close this dialog and return later; no entities or regular downloads begin until you select a dataset."
       }
     },
     "progress": {
@@ -55,8 +55,8 @@
   "options": {
     "step": {
       "init": {
-        "title": "Choose useful dataset fields",
-        "description": "Dataset structure: {kind}. Automatic suggestions are preselected. Every category is optional and may be empty. Selecting a field in a later category moves it there; fields omitted from every category remain unassigned.",
+        "title": "Advanced field review",
+        "description": "Dataset structure: {kind}. Automatic assignments are preselected. Change these only when the importer misunderstood which columns describe location, time, measurements, or context.",
         "data": {
           "field_role_fields__location": "Location fields",
           "field_role_fields__time": "Time fields",
@@ -67,8 +67,8 @@
         }
       },
       "structure": {
-        "title": "Define units and records",
-        "description": "Combine selected fields into stable units and observations. Hierarchies are optional. Within each hierarchy set, select fields from largest/broadest to smallest/most specific; independent nested systems belong in separate sets. A record name may be used as its key.",
+        "title": "Advanced unit and hierarchy review",
+        "description": "Define stable units and observations only when automatic structure inference needs correction. Hierarchy sets run from broadest to most specific.",
         "data": {
           "hierarchy_fields": "Hierarchy set 1 — broadest to smallest",
           "hierarchy_fields__2": "Hierarchy set 2 — broadest to smallest (optional)",
@@ -80,11 +80,11 @@
         }
       },
       "records": {
-        "title": "Choose records and metrics",
-        "description": "Record choices were rebuilt using {identity} as the identity for this {kind} dataset. Historical observation IDs should not be selected as locations.",
+        "title": "Review imported records and measurements",
+        "description": "Observation time: {temporal_status} using {timestamp_strategy} ({timestamp_confidence} confidence). Timezone: {timezone} ({timezone_source}). {stale_count} measurements are currently classified stale and are excluded by default unless you select them. This bounded review found {record_count} selectable records/locations and estimates about {entity_estimate} measurement entities from the current selection. Large datasets are intentionally capped instead of rendering the full record universe.",
         "data": {
           "selected_records": "Records, stations, or locations",
-          "selected_fields": "Measurements"
+          "selected_fields": "Measurements (freshness shown in label)"
         }
       }
     },
