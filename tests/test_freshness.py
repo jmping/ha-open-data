@@ -103,7 +103,7 @@ def test_history_timestamp_recovers_missing_latest_timestamp() -> None:
     assert state.status == "current"
 
 
-def test_stale_application_omits_stream_from_initial_materialization() -> None:
+def test_stale_application_masks_value_without_changing_identity_or_history() -> None:
     original = _observation(
         "2026-07-24T12:00:00Z",
         value=24,
@@ -113,9 +113,19 @@ def test_stale_application_omits_stream_from_initial_materialization() -> None:
         {original.stream_id: original},
         15 * 60,
         checked_at="2026-07-24T13:15:00Z",
-    )
+    )[original.stream_id]
 
-    assert original.stream_id not in applied
+    assert applied.stream_id == original.stream_id
+    assert applied.unit_id == original.unit_id
+    assert applied.metric == original.metric
+    assert applied.history == original.history
+    assert applied.value is None
+
+    attributes = observation_discovery.observation_metadata_attributes(applied)
+    assert attributes["freshness_status"] == "stale"
+    assert attributes["observation_stale"] is True
+    assert attributes["observation_age_seconds"] == 4500.0
+    assert attributes["observation_stale_after_seconds"] == 4500.0
 
 
 def test_stream_history_overrides_misleading_dataset_cadence() -> None:
@@ -130,8 +140,8 @@ def test_stream_history_overrides_misleading_dataset_cadence() -> None:
         {original.stream_id: original},
         24 * 3600,
         checked_at="2026-07-24T13:15:00Z",
-    )
-    assert original.stream_id not in applied
+    )[original.stream_id]
+    assert applied.value is None
 
 
 def test_fresh_application_retains_identity_history_and_diagnostics() -> None:
