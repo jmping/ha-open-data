@@ -1,15 +1,14 @@
-"""Run a bounded live audit against representative municipal open-data portals.
+"""Run bounded live audits against representative municipal open-data portals.
 
-This is intentionally non-authoritative: third-party availability must not gate
-normal CI. The report captures which stage of the real provider/analyzer pipeline
-succeeds or fails so stable fixtures can be derived from repeatable findings.
+Third-party availability never gates normal CI. Reports capture which stage of the
+real provider/analyzer pipeline succeeds or fails so repeatable findings can become
+stable fixtures and generic fixes.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
-from dataclasses import asdict
 from datetime import datetime
 import json
 from pathlib import Path
@@ -19,23 +18,64 @@ from zoneinfo import ZoneInfo
 import aiohttp
 
 from custom_components.open_data.analyzer import analyze_dataset
+from custom_components.open_data.failure_reporting import build_failure_report
 from custom_components.open_data.field_roles import classify_field_roles
 from custom_components.open_data.measure_freshness import build_measure_freshness_profiles
-from custom_components.open_data.portal_inspector import async_discover_catalog, async_inspect_portal
+from custom_components.open_data.portal_inspector import (
+    async_discover_catalog,
+    async_inspect_portal,
+)
 from custom_components.open_data.temporal_policy import resolve_temporal_plan
 
 
-PORTALS = (
-    ("New York City", "https://data.cityofnewyork.us", "America/New_York"),
-    ("Oklahoma City", "https://data.okc.gov", "America/Chicago"),
-    ("London, Ontario", "https://opendata.london.ca", "America/Toronto"),
-    ("Paris", "https://opendata.paris.fr", "Europe/Paris"),
-    (
-        "Barcelona",
-        "https://opendata-ajuntament.barcelona.cat",
-        "Europe/Madrid",
+BATCHES = {
+    1: (
+        ("New York City", "https://data.cityofnewyork.us", "America/New_York"),
+        ("Oklahoma City", "https://data.okc.gov", "America/Chicago"),
+        ("London, Ontario", "https://opendata.london.ca", "America/Toronto"),
+        ("Paris", "https://opendata.paris.fr", "Europe/Paris"),
+        (
+            "Barcelona",
+            "https://opendata-ajuntament.barcelona.cat",
+            "Europe/Madrid",
+        ),
     ),
-)
+    2: (
+        ("Chicago", "https://data.cityofchicago.org", "America/Chicago"),
+        ("San Francisco", "https://data.sfgov.org", "America/Los_Angeles"),
+        ("Austin", "https://data.austintexas.gov", "America/Chicago"),
+        ("Seattle", "https://data.seattle.gov", "America/Los_Angeles"),
+        ("Calgary", "https://data.calgary.ca", "America/Edmonton"),
+    ),
+    3: (
+        ("Boston", "https://data.boston.gov", "America/New_York"),
+        ("Montréal", "https://donnees.montreal.ca", "America/Toronto"),
+        ("Toulouse", "https://data.toulouse-metropole.fr", "Europe/Paris"),
+        ("Nantes", "https://data.nantesmetropole.fr", "Europe/Paris"),
+        ("Raleigh", "https://data.raleighnc.gov", "America/New_York"),
+    ),
+}
+
+
+def _failure_context(
+    result: dict[str, Any],
+    *,
+    provider: str | None,
+    portal_url: str,
+) -> dict[str, Any]:
+    structure = result.get("structure") or {}
+    return {
+        "provider": provider,
+        "portal_url": portal_url,
+        "dataset_id": result.get("dataset_id"),
+        "resource_id": result.get("resource_id"),
+        "stage": result.get("stage"),
+        "error_type": result.get("error_type"),
+        "error_message": result.get("error"),
+        "timestamp_fields": structure.get("timestamp_fields", []),
+        "metric_fields": structure.get("metric_fields", []),
+        "identity_fields": structure.get("identity_fields", []),
+    }
 
 
 async def _audit_dataset(
@@ -43,6 +83,8 @@ async def _audit_dataset(
     dataset: Any,
     *,
     timezone_name: str,
+    provider_name: str,
+    portal_url: str,
 ) -> dict[str, Any]:
     result: dict[str, Any] = {
         "dataset_id": dataset.dataset_id,
@@ -107,10 +149,17 @@ async def _audit_dataset(
         }
         result["status"] = "pass"
         result["stage"] = "complete"
-    except Exception as err:  # noqa: BLE001 - audit must report every provider failure
+    except Exception as err:  # noqa: BLE001 - audit records every provider failure
         result["status"] = "fail"
         result["error_type"] = type(err).__name__
         result["error"] = str(err)[:500]
+        result["failure_report"] = build_failure_report(
+            _failure_context(
+                result,
+                provider=provider_name,
+                portal_url=portal_url,
+            )
+        )
     return result
 
 
@@ -138,20 +187,30 @@ async def _audit_portal(
         report["catalog_errors"] = catalog_errors
     except Exception as err:  # noqa: BLE001
         report["status"] = "portal_failure"
+        report["stage"] = "portal"
         report["error_type"] = type(err).__name__
         report["error"] = str(err)[:500]
+        report["failure_report"] = build_failure_report(
+            {
+                "portal_url": portal_url,
+                "stage": "portal",
+                "error_type": type(err).__name__,
+                "error_message": str(err)[:500],
+            }
+        )
         return report
 
-    # Try enough catalog candidates to obtain several actual row-level audits while
-    # retaining failures. This catches resources that are discoverable but not
-    # queryable instead of silently skipping them.
     attempts = 0
     passes = 0
     for dataset in catalog:
         if attempts >= max(datasets_per_city * 4, datasets_per_city):
             break
         audited = await _audit_dataset(
-            inspected.provider, dataset, timezone_name=timezone_name
+            inspected.provider,
+            dataset,
+            timezone_name=timezone_name,
+            provider_name=inspected.description.provider,
+            portal_url=inspected.description.portal_url,
         )
         report["datasets"].append(audited)
         attempts += 1
@@ -166,12 +225,12 @@ async def _audit_portal(
     return report
 
 
-async def _main(output: Path, datasets_per_city: int) -> None:
+async def _main(output: Path, datasets_per_city: int, batch: int) -> None:
     timeout = aiohttp.ClientTimeout(total=45)
     headers = {"User-Agent": "HAOpenDataImporter-live-audit/0.2"}
     async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
         results = []
-        for city, portal_url, timezone_name in PORTALS:
+        for city, portal_url, timezone_name in BATCHES[batch]:
             print(f"Auditing {city}: {portal_url}", flush=True)
             result = await _audit_portal(
                 session,
@@ -186,18 +245,32 @@ async def _main(output: Path, datasets_per_city: int) -> None:
                 flush=True,
             )
 
+    passes = sum(item.get("status") == "pass" for item in results)
     payload = {
         "generated_at": datetime.now().astimezone().isoformat(),
         "bounded": True,
+        "batch": batch,
+        "city_count": len(results),
+        "city_passes": passes,
+        "city_failure_rate": round(1 - passes / max(len(results), 1), 3),
         "datasets_per_city_target": datasets_per_city,
         "portals": results,
     }
-    output.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    output.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, default=Path("city-portal-results.json"))
     parser.add_argument("--datasets-per-city", type=int, default=3)
+    parser.add_argument("--batch", type=int, choices=sorted(BATCHES), default=1)
     args = parser.parse_args()
-    asyncio.run(_main(args.output, max(1, min(args.datasets_per_city, 5))))
+    asyncio.run(
+        _main(
+            args.output,
+            max(1, min(args.datasets_per_city, 5)),
+            args.batch,
+        )
+    )
