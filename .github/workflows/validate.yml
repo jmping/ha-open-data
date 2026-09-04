@@ -191,11 +191,11 @@ jobs:
     if: >-
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch' ||
-      github.head_ref == 'agent/five-city-live-audit'
+      github.head_ref == 'agent/stability-cycle-two'
     strategy:
       fail-fast: false
       matrix:
-        batch: [1, 2, 3]
+        batch: [1, 2, 3, 4, 5]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5

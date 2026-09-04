@@ -166,6 +166,14 @@ class OpendatasoftProvider(JsonClient):
             dataset_id, {"limit": str(min(max(limit, 1), 100))}
         )
 
+    @staticmethod
+    def _where_clause(filters: dict[str, str] | None) -> str | None:
+        clauses: list[str] = []
+        for name, value in (filters or {}).items():
+            escaped = str(value).replace('"', '\\"')
+            clauses.append(f'{name}="{escaped}"')
+        return " AND ".join(clauses) if clauses else None
+
     async def async_latest_row(
         self,
         dataset_id: str,
@@ -174,16 +182,31 @@ class OpendatasoftProvider(JsonClient):
         filters: dict[str, str] | None = None,
     ) -> dict[str, Any] | None:
         params = {"limit": "1"}
-        clauses: list[str] = []
         if timestamp_field:
             params["order_by"] = f"{timestamp_field} DESC"
-        for name, value in (filters or {}).items():
-            escaped = str(value).replace('"', '\\"')
-            clauses.append(f'{name}="{escaped}"')
-        if clauses:
-            params["where"] = " AND ".join(clauses)
+        where = self._where_clause(filters)
+        if where:
+            params["where"] = where
         rows = await self._records(dataset_id, params)
         return rows[0] if rows else None
+
+    async def async_observation_rows(
+        self,
+        dataset_id: str,
+        resource_id: str | None,
+        timestamp_field: str | None,
+        filters: dict[str, str] | None = None,
+        *,
+        limit: int = 250,
+    ) -> list[dict[str, Any]]:
+        """Return a bounded newest-first observation window."""
+        params = {"limit": str(min(max(limit, 1), 100))}
+        if timestamp_field:
+            params["order_by"] = f"{timestamp_field} DESC"
+        where = self._where_clause(filters)
+        if where:
+            params["where"] = where
+        return await self._records(dataset_id, params)
 
     async def async_distinct_rows(
         self,
