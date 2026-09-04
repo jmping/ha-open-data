@@ -77,12 +77,7 @@ def observation_freshness(
     *,
     checked_at: object = None,
 ) -> ObservationFreshness:
-    """Evaluate one observation independently of fresher sibling streams.
-
-    A missing timestamp remains an explicit ``unknown`` result. It is not marked
-    stale automatically because many useful static datasets do not publish an
-    observation timestamp at all.
-    """
+    """Evaluate one observation independently of fresher sibling streams."""
     checked = parse_timestamp(checked_at) or datetime.now(timezone.utc)
     observed = _latest_observed_at(observation)
     frequency = (
@@ -130,17 +125,13 @@ def apply_observation_freshness(
     *,
     checked_at: object = None,
 ) -> dict[str, SemanticObservation]:
-    """Return only streams that are not demonstrably stale.
+    """Mask demonstrably stale values while retaining their history and identity.
 
-    A stream's own bounded history is the preferred cadence source; the dataset
-    cadence is only a fallback. This prevents one dead metric from inheriting the
-    apparent recency of active siblings. Untimed observations remain usable with
-    an explicit unknown freshness state.
-
-    Existing Home Assistant entities are not deleted when a stream later becomes
-    stale: the sensor platform intentionally keeps previously discovered stream
-    identities. The suppression primarily prevents stale streams from being
-    materialized during initial setup and yields ``unknown`` while they are stale.
+    A stream's own bounded history is the preferred cadence source; dataset cadence
+    is only a fallback. This lets configuration exclude stale measures by default
+    while still allowing an explicit opt-in for historical use. An opted-in stale
+    stream remains present, imports its history, and reports an unavailable current
+    state instead of presenting an old observation as current.
     """
     result: dict[str, SemanticObservation] = {}
     for stream_id, observation in observations.items():
@@ -151,8 +142,6 @@ def apply_observation_freshness(
         state = observation_freshness(
             observation, effective_frequency, checked_at=checked_at
         )
-        if state.stale is True:
-            continue
         dimensions = tuple(
             item for item in observation.dimensions if item[0] not in _FRESHNESS_DIMENSIONS
         )
@@ -170,5 +159,9 @@ def apply_observation_freshness(
                     str(round(state.age_seconds, 1)),
                 ),
             )
-        result[stream_id] = replace(observation, dimensions=dimensions)
+        result[stream_id] = replace(
+            observation,
+            value=None if state.stale is True else observation.value,
+            dimensions=dimensions,
+        )
     return result
