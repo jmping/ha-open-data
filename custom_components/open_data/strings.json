@@ -79,9 +79,18 @@
           "record_label_fields": "Record label fields"
         }
       },
+      "temporal": {
+        "title": "Timestamp and timezone override",
+        "description": "Use automatic inference unless the source's observation time was misunderstood. A user-selected timestamp field is persisted and reused on every refresh. Enter an IANA timezone such as America/Detroit or Europe/Paris for naive local timestamps.",
+        "data": {
+          "temporal_mode": "Timestamp strategy",
+          "timestamp_field": "Observation timestamp field",
+          "timezone": "IANA timezone"
+        }
+      },
       "records": {
         "title": "Review imported records and measurements",
-        "description": "Observation time: {temporal_status} using {timestamp_strategy} ({timestamp_confidence} confidence). Timezone: {timezone} ({timezone_source}). {stale_count} measurements are currently classified stale and are excluded by default unless you select them. This bounded review found {record_count} selectable records/locations and estimates about {entity_estimate} measurement entities from the current selection. Large datasets are intentionally capped instead of rendering the full record universe.",
+        "description": "Observation time: {temporal_status} using {timestamp_strategy} ({timestamp_confidence} confidence). Timezone: {timezone} ({timezone_source}). {stale_count} measurements are currently classified stale and are excluded by default unless you select them. Record mode: {record_mode}. This review observed {record_count} records/locations and estimates {entity_estimate} measurement entities from the current bounded selection. If the provider returns the full cardinality cap, Open Data does not show that truncated list as if it were complete.",
         "data": {
           "selected_records": "Records, stations, or locations",
           "selected_fields": "Measurements (freshness shown in label)"
@@ -89,7 +98,9 @@
       }
     },
     "error": {
-      "invalid_field_roles": "One or more field assignments were invalid. Review the selected fields and try again."
+      "invalid_field_roles": "One or more field assignments were invalid. Review the selected fields and try again.",
+      "invalid_timezone": "Enter a valid IANA timezone name, for example America/Detroit or Europe/Paris.",
+      "invalid_timestamp_field": "Choose a timestamp field from this dataset."
     }
   },
   "entity": {
