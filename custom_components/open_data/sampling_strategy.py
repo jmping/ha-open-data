@@ -88,7 +88,17 @@ def profile_source_order(
     )
     distinct_entities = len(set(valid_entities))
 
-    if timestamp_coverage >= 0.6 and temporal_monotonicity >= 0.85:
+    # Strong contiguous runs of the same observed unit are direct evidence of
+    # unit-clustered physical order. A unit-clustered table can still appear
+    # mostly monotonic in time because each unit's timestamps run forward before
+    # the next unit begins; do not let that weak global monotonicity hide the runs.
+    if (
+        distinct_entities >= 2
+        and entity_run_ratio >= 0.55
+        and temporal_monotonicity < 0.98
+    ):
+        mode = "unit_clustered"
+    elif timestamp_coverage >= 0.6 and temporal_monotonicity >= 0.85:
         mode = f"time_{temporal_direction}"
     elif distinct_entities >= 2 and entity_run_ratio >= 0.55:
         mode = "unit_clustered"
@@ -114,8 +124,6 @@ def merge_candidate_windows(
     seen: set[str] = set()
     for raw_row in (*physical_rows, *recent_rows):
         row = dict(raw_row)
-        # repr over insertion-ordered mappings is deterministic for provider rows
-        # and avoids requiring every value to be hashable.
         key = repr(tuple(row.items()))
         if key in seen:
             continue
@@ -132,14 +140,7 @@ def build_interpretation_sample(
     identity_fields: Sequence[str] = (),
     limit: int = 100,
 ) -> tuple[ObservationSample, SourceOrderingProfile]:
-    """Build a reproducible sample after determining physical source order.
-
-    ``physical_rows`` retains the provider's natural ordering and therefore tells
-    us whether the response is globally temporal, clustered by observed unit, or
-    mixed. ``recent_rows`` is a separate timestamp-ordered query when available.
-    The merged candidate window is then sampled across entities and temporal
-    extremes by ``stratify_observation_rows``.
-    """
+    """Build a reproducible sample after determining physical source order."""
     ordering = profile_source_order(
         physical_rows,
         timestamp_field=timestamp_field,
