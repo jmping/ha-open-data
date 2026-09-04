@@ -128,6 +128,38 @@ class OpenDataProvider(ABC):
         row = await self.async_latest_row(dataset_id, resource_id)
         return [row] if row else []
 
+    async def async_sample_slices(
+        self,
+        dataset_id: str,
+        resource_id: str | None = None,
+        *,
+        slice_limit: int = 25,
+        slices: int = 3,
+    ) -> list[list[dict[str, Any]]]:
+        """Return separated bounded physical-order windows when possible.
+
+        Providers with true offset/page access should override this. The generic
+        fallback requests one larger bounded natural-order window and separates it
+        into non-overlapping regions. That still reveals repeated ordering blocks
+        inside the provider cap without claiming coverage of the complete source.
+        """
+        width = max(1, min(slice_limit, 50))
+        count = max(1, min(slices, 5))
+        candidate_limit = min(200, width * count * 2)
+        rows = await self.async_sample_rows(
+            dataset_id, resource_id, limit=candidate_limit
+        )
+        if not rows:
+            return []
+        if len(rows) <= width:
+            return [rows]
+        max_start = max(0, len(rows) - width)
+        starts = {
+            round(index * max_start / max(count - 1, 1))
+            for index in range(count)
+        }
+        return [rows[start : start + width] for start in sorted(starts)]
+
     async def async_distinct_rows(
         self,
         dataset_id: str,

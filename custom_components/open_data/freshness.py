@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
+from statistics import median
 from typing import Mapping
 
 from .models import SemanticObservation
@@ -51,18 +52,32 @@ def _latest_observed_at(observation: SemanticObservation | None) -> datetime | N
     return max(valid, default=None)
 
 
+def _stream_frequency_seconds(observation: SemanticObservation) -> float | None:
+    """Estimate one stream's own recent cadence from bounded history."""
+    timestamps = sorted(
+        {
+            parsed
+            for point in observation.history
+            if (parsed := parse_timestamp(point.timestamp)) is not None
+        }
+    )
+    gaps = [
+        (right - left).total_seconds()
+        for left, right in zip(timestamps, timestamps[1:])
+        if right > left
+    ]
+    if not gaps:
+        return None
+    return float(median(gaps[-30:]))
+
+
 def observation_freshness(
     observation: SemanticObservation | None,
     frequency_seconds: float | None,
     *,
     checked_at: object = None,
 ) -> ObservationFreshness:
-    """Evaluate one observation independently of fresher sibling streams.
-
-    A missing timestamp remains an explicit ``unknown`` result. It is not marked
-    stale automatically because many useful static datasets do not publish an
-    observation timestamp at all.
-    """
+    """Evaluate one observation independently of fresher sibling streams."""
     checked = parse_timestamp(checked_at) or datetime.now(timezone.utc)
     observed = _latest_observed_at(observation)
     frequency = (
@@ -110,15 +125,22 @@ def apply_observation_freshness(
     *,
     checked_at: object = None,
 ) -> dict[str, SemanticObservation]:
-    """Mask only demonstrably stale values while preserving stream identity.
+    """Mask demonstrably stale values while retaining their history and identity.
 
-    The stream, source history, unit, metric, and unique-ID inputs remain intact.
-    Untimed observations remain usable but are marked with unknown freshness.
+    A stream's own bounded history is the preferred cadence source; dataset cadence
+    is only a fallback. This lets configuration exclude stale measures by default
+    while still allowing an explicit opt-in for historical use. An opted-in stale
+    stream remains present, imports its history, and reports an unavailable current
+    state instead of presenting an old observation as current.
     """
     result: dict[str, SemanticObservation] = {}
     for stream_id, observation in observations.items():
+        stream_frequency = _stream_frequency_seconds(observation)
+        effective_frequency = (
+            stream_frequency if stream_frequency is not None else frequency_seconds
+        )
         state = observation_freshness(
-            observation, frequency_seconds, checked_at=checked_at
+            observation, effective_frequency, checked_at=checked_at
         )
         dimensions = tuple(
             item for item in observation.dimensions if item[0] not in _FRESHNESS_DIMENSIONS

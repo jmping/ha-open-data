@@ -128,6 +128,45 @@ def test_stale_application_masks_value_without_changing_identity_or_history() ->
     assert attributes["observation_stale_after_seconds"] == 4500.0
 
 
+def test_stream_history_overrides_misleading_dataset_cadence() -> None:
+    original = _observation(
+        "2026-07-24T12:00:00Z",
+        history=(
+            models.ObservationPoint("2026-07-24T11:45:00Z", 22),
+            models.ObservationPoint("2026-07-24T12:00:00Z", 24),
+        ),
+    )
+    applied = freshness.apply_observation_freshness(
+        {original.stream_id: original},
+        24 * 3600,
+        checked_at="2026-07-24T13:15:00Z",
+    )[original.stream_id]
+    assert applied.value is None
+
+
+def test_fresh_application_retains_identity_history_and_diagnostics() -> None:
+    original = _observation(
+        "2026-07-24T12:55:00Z",
+        value=24,
+        history=(models.ObservationPoint("2026-07-24T12:55:00Z", 24),),
+    )
+    applied = freshness.apply_observation_freshness(
+        {original.stream_id: original},
+        15 * 60,
+        checked_at="2026-07-24T13:00:00Z",
+    )[original.stream_id]
+
+    assert applied.stream_id == original.stream_id
+    assert applied.unit_id == original.unit_id
+    assert applied.metric == original.metric
+    assert applied.history == original.history
+    assert applied.value == 24
+
+    attributes = observation_discovery.observation_metadata_attributes(applied)
+    assert attributes["freshness_status"] == "current"
+    assert attributes["observation_stale"] is False
+
+
 def test_future_timestamp_does_not_create_negative_age() -> None:
     state = freshness.observation_freshness(
         _observation("2026-07-24T13:01:00Z"),
