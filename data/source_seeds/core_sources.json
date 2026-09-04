@@ -17,6 +17,30 @@
       "language_hint": "en"
     },
     {
+      "name": "Open Storm Maps",
+      "url": "http://maps.open-storm.org",
+      "provenance": "curated-dashboard-resolver-corpus",
+      "source_type": "dashboard",
+      "region_hint": "Southeast Michigan, US",
+      "language_hint": "en"
+    },
+    {
+      "name": "University of Michigan Health Response Dashboard",
+      "url": "https://healthresponse.umich.edu/dashboard",
+      "provenance": "curated-dashboard-resolver-corpus",
+      "source_type": "dashboard",
+      "region_hint": "Ann Arbor, Michigan, US",
+      "language_hint": "en"
+    },
+    {
+      "name": "Washtenaw County Opioid Data",
+      "url": "https://www.washtenaw.org/opioid-data",
+      "provenance": "curated-dashboard-resolver-corpus",
+      "source_type": "dashboard",
+      "region_hint": "Washtenaw County, Michigan, US",
+      "language_hint": "en"
+    },
+    {
       "name": "SEMCOG",
       "url": "https://www.semcog.org",
       "provenance": "curated-ann-arbor-prototype",
