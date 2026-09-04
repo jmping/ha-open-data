@@ -224,7 +224,9 @@ async def _async_linked_portal_candidates(
         return []
 
     text = html.unescape(body.decode(response.charset or "utf-8", errors="ignore"))
-    escaped_links = [item.replace("\\/", "/") for item in _ESCAPED_URL_PATTERN.findall(text)]
+    escaped_links = [
+        item.replace("\\/", "/") for item in _ESCAPED_URL_PATTERN.findall(text)
+    ]
     raw_links = _LINK_PATTERN.findall(text) + _URL_PATTERN.findall(text) + escaped_links
     candidates: list[str] = []
     source_host = (urlparse(validated).hostname or "").lower()
@@ -259,7 +261,17 @@ async def async_inspect_portal(
 ) -> InspectedPortal:
     """Resolve aliases/pages, detect the provider, and return its canonical root."""
     supplied = normalize_portal_url(portal_url)
-    resolved = await async_resolve_portal_redirects(session, supplied)
+    try:
+        resolved = await async_resolve_portal_redirects(session, supplied)
+    except OpenDataResponseError as err:
+        # Some hosted portal front ends (notably Opendatasoft custom domains)
+        # can redirect between presentation routes while their API remains stable
+        # at the supplied origin. A redirect loop is therefore not itself proof
+        # that the API root is unusable. Keep the supplied URL as an unresolved
+        # landing page and still require normal provider/API verification below.
+        if "too many redirects" not in str(err).casefold():
+            raise
+        resolved = supplied
 
     candidates: list[str] = []
     for source in (resolved, supplied):

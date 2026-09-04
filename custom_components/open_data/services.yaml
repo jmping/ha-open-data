@@ -112,3 +112,42 @@ feedback_preview:
       required: true
       selector:
         object:
+
+failure_report:
+  name: Prepare GitHub failure report
+  description: Build a privacy-safe, reviewable GitHub issue link for an Open Data import failure. Raw dataset rows, credentials, cookies, headers, and tokens are excluded.
+  fields:
+    stage:
+      name: Failure stage
+      description: Where the failure occurred, such as discovery, metadata, sample, analysis, temporal, freshness, or runtime.
+      required: true
+      selector:
+        text:
+    entry_id:
+      name: Config entry ID
+      description: Optional existing Open Data entry used to fill portal, provider, dataset, resource, and inferred schema metadata.
+      selector:
+        config_entry:
+          integration: open_data
+    portal_url:
+      name: Portal URL
+      description: Use for setup-time failures when no config entry exists yet.
+      selector:
+        text:
+    dataset_id:
+      name: Dataset ID
+      selector:
+        text:
+    resource_id:
+      name: Resource ID
+      selector:
+        text:
+    error_type:
+      name: Error type
+      selector:
+        text:
+    error_message:
+      name: Error message
+      description: Keep this concise; raw row values should not be pasted here.
+      selector:
+        text:
