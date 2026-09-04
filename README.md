@@ -3,7 +3,7 @@
 A Home Assistant custom integration that discovers public open-data sources, interprets bounded samples, and turns user-selected records and measurements into Home Assistant entities.
 
 > [!IMPORTANT]
-> Version 0.2.0 is an intentionally shareable preview, not a stable API guarantee. Provider behavior, inferred mappings, temporal plans, and entity models may still change as the validation corpus expands.
+> Version 0.2.0 is the first stable public-preview release. Provider coverage and inferred mappings will continue to expand, but the config-entry, temporal, freshness, and entity-selection behavior is now treated as release-stable within the 0.2 line.
 
 ## What it supports
 
@@ -16,7 +16,7 @@ The integration currently includes provider and discovery paths for:
 - bounded CSV and JSON resources exposed through supported catalogs;
 - bounded GTFS static-feed inspection for validation and future provider work.
 
-Not every portal using one of these technologies is guaranteed to work. Landing pages, redirects, regional discovery endpoints, subpath deployments, localized APIs, authentication requirements, and download-only resources can all affect compatibility. The validation program is therefore organized by shared behavior rather than by city.
+Not every portal using one of these technologies is guaranteed to work. Landing pages, redirects, regional discovery endpoints, subpath deployments, localized APIs, authentication requirements, and download-only resources can all affect compatibility. The validation program is organized by shared behavior rather than by city.
 
 ## How configuration works
 
@@ -26,8 +26,6 @@ The setup flow uses one source-location field.
 - A portal or catalog root starts bounded catalog discovery.
 - A bare identifier may be combined with an optional portal hint.
 
-Reference parsing determines whether the user supplied a portal or a single dataset; there is no separate portal-versus-dataset menu.
-
 During setup and options review, the integration can:
 
 - discover and rank datasets;
@@ -36,14 +34,15 @@ During setup and options review, the integration can:
 - preserve user-reviewed field assignments during later re-analysis;
 - identify wide, long/tidy, event, multi-dimensional, and unknown observation shapes;
 - estimate update frequency when usable timestamp history exists;
+- warn on stale measurements and exclude them by default while leaving them selectable;
 - expose sampling coverage, time span, truncation, and inferred relationships;
-- let users select multiple records, locations, and measurements where supported.
+- let users select multiple records, locations, and measurements where bounded stable identities are available.
 
-Changing nominal summary fields such as `largest_pollutant` are treated conservatively as context in wide datasets. They are not automatically expanded into large numbers of sparse entities. Long-format metric names are currently exposed as review evidence; automatic materialization remains opt-in future work.
+Changing nominal summary fields such as `largest_pollutant` are treated conservatively as context in wide datasets. They are not automatically expanded into large numbers of sparse entities.
 
-### Temporal inference
+### Temporal inference and overrides
 
-Version 0.2 adds an explainable temporal-planning layer for datasets that do not expose one clean timestamp column. It can infer and normalize:
+Version 0.2 includes an explainable temporal-planning layer for datasets that do not expose one clean timestamp column. It can infer and normalize:
 
 - ISO/RFC-style timestamps and common municipal date/time formats;
 - Unix timestamps in seconds or milliseconds;
@@ -51,7 +50,21 @@ Version 0.2 adds an explainable temporal-planning layer for datasets that do not
 - separate year, month, day, hour, minute, and second components;
 - partial month/day values using the current date to choose the nearest plausible year.
 
-Naive source timestamps use Home Assistant's configured timezone as the fallback. Explicit source offsets remain authoritative. Implausibly future values and provider-administrative timestamps are penalized during plan scoring.
+The selected temporal plan is persisted and reused on refresh/restart. Explicit source offsets remain authoritative. Naive local timestamps use the resolved IANA timezone, with Home Assistant's configured timezone as the fallback. The options flow can override the inferred timestamp field and timezone when a source is ambiguous.
+
+If no trustworthy timestamp can be identified, the dataset remains importable with recency marked unknown; freshness-based exclusion is not applied merely because time could not be resolved.
+
+### Freshness and stale measurements
+
+Freshness is evaluated per measurement stream where bounded history exists. The review UI shows latest observation evidence and inferred cadence. Measurements that appear stale relative to their own cadence or sibling streams are excluded by default, but remain visible and can be explicitly selected for historical or intentionally infrequent use.
+
+A selected stale stream does not silently present an old value as current state.
+
+### Large datasets
+
+Record/location discovery is bounded. Small proven-stable record sets can be selected normally. When a provider returns the full record-cardinality cap, Open Data treats the universe as high-cardinality and does not present the truncated list as if it were complete. Historical/sample identifiers are not used as persistent Home Assistant entities.
+
+High-cardinality datasets therefore fall back to dataset-wide behavior unless a bounded stable hierarchy/identity has been configured. Richer searchable/paged hierarchy UX can continue to evolve without exposing misleading partial lists.
 
 ## Home Assistant entities and history
 
@@ -71,7 +84,7 @@ Historical backfill beyond the bounded refresh window is planned as a separate r
 
 ## Installation with HACS
 
-Until this repository is in the default HACS catalog:
+Until this repository is accepted into the default HACS catalog:
 
 1. Open HACS in Home Assistant.
 2. Open the menu and choose **Custom repositories**.
@@ -79,6 +92,8 @@ Until this repository is in the default HACS catalog:
 4. Install **Open Data**.
 5. Restart Home Assistant.
 6. Go to **Settings → Devices & services → Add integration** and select **Open Data**.
+
+HACS releases are versioned from GitHub tags/releases. After installing a newer release in HACS, restart Home Assistant so the updated Python integration is loaded.
 
 For a manual development install, copy `custom_components/open_data` to:
 
@@ -90,28 +105,28 @@ For a manual development install, copy `custom_components/open_data` to:
 
 The integration registers response-capable actions for discovery, inspection, refresh, and support:
 
-- `open_data.inspect_portal`
 - `open_data.scan_portal`
 - `open_data.search_datasets`
 - `open_data.inspect_dataset`
 - `open_data.refresh_entry`
 - `open_data.feedback_preview`
+- `open_data.failure_report`
 
 `inspect_dataset` returns bounded interpretation evidence, including observation shape, proposed field roles, sampling diagnostics, inferred relationships, and guarded long-format previews.
 
-`feedback_preview` creates a metadata-only preview and does not transmit data. Feedback upload remains opt-in and is not enabled until a collector contract exists.
+`failure_report` creates a sanitized, reviewable GitHub issue URL. It does not upload raw dataset rows or require a GitHub token in Home Assistant; the user reviews and submits the issue in their browser.
 
 ## Known limitations
 
-The 0.2 preview deliberately favors bounded, conservative behavior over trying to infer everything automatically.
+The stable 0.2 line deliberately favors bounded, conservative behavior over trying to infer everything automatically.
 
-- High-cardinality record sets are prevented from auto-materializing observation/sample IDs as Home Assistant entities, but the options UI can still present a large bounded choice list. Searchable and progressively hierarchical selection is still needed for PFAS-scale datasets.
-- Temporal plans are inferred at runtime and are explainable in code, but they are not yet persisted as a user-reviewable config artifact.
-- Provider coverage is broad but not universal, especially for authenticated APIs, statistical systems, unusual landing pages, and download-only resources.
-- Automatic materialization of reviewed long-format metric dimensions remains deferred to avoid sparse entity explosions.
+- Provider coverage is broad but not universal, especially for authenticated APIs, statistical systems, unusual landing pages, newer ArcGIS catalog variants, and download-only resources.
+- Richer search/paging for extremely large hierarchies remains iterative; the stable guarantee is that truncated record universes are not shown as complete.
+- Manual temporal override currently targets a single timestamp field plus IANA timezone; richer manual editing of component-based plans can be added later.
+- Automatic materialization of reviewed long-format metric dimensions remains conservative to avoid sparse entity explosions.
 - Large historical backfill is intentionally not automatic and requires a resumable, rate-limited subsystem.
 
-Please file a bug with the portal/dataset URL, Home Assistant version, and the Open Data diagnostic block when an import fails.
+If an import fails, use the `open_data.failure_report` action or file an issue with the portal/dataset URL, Home Assistant version, and Open Data diagnostic block.
 
 ## Validation strategy
 
@@ -138,30 +153,24 @@ The integration is designed around bounded public-data access:
 - corpus samples must not contain credentials, personal information, sensitive records, or complete source datasets;
 - user-reviewed mappings remain authoritative over automatic inference.
 
-The integration stores a random local installation identifier for privacy-safe demand deduplication. Feedback payloads exclude dataset records, credentials, account data, IP addresses, and location history.
+The integration stores a random local installation identifier for privacy-safe demand deduplication. Failure-report payloads exclude dataset records, credentials, account data, IP addresses, and location history.
 
 ## Development roadmap
 
-The near-term roadmap focuses on:
+After the stable 0.2 release, the near-term roadmap is iterative rather than architectural:
 
-- persisting temporal plans and exposing timestamp diagnostics for review;
-- replacing large flat record selectors with searchable/hierarchical selection;
-- improving observation-model review and bounded candidate selection;
-- expanding crawler and provider-family coverage;
-- deriving canonical labels from repeated cross-city evidence;
-- strengthening multilingual and non-Latin-script compatibility;
-- validating generic feed structures without city-specific adapters.
-
-Larger deferred work is tracked separately:
-
-- [Reviewed observation graphs and long-format sensor definitions](https://github.com/jmping/ha-open-data/issues/51)
-- [Resumable bounded historical backfill](https://github.com/jmping/ha-open-data/issues/52)
+- expand the city/language validation corpus;
+- support additional shared portal/backend classes such as newer ArcGIS catalog variants;
+- improve cross-city canonical labels and multilingual aliases from corpus evidence;
+- add richer search/paging for very large inferred hierarchies;
+- improve reviewed long-format sensor materialization;
+- add resumable bounded historical backfill.
 
 See [Project plan](docs/PLAN.md), [Issue 6 future plan](docs/ISSUE6_FUTURE_PLAN.md), and the [changelog](CHANGELOG.md).
 
 ## Validation and contribution rules
 
-Every relevant pull request runs compilation, regression tests, Ruff, repository metadata validation, and Home Assistant lifecycle tests. The compatibility gate is pinned to Home Assistant 2026.9.0 for the 0.2.0 shareable cut. Live third-party checks are isolated from normal CI.
+Every relevant pull request runs compilation, regression tests, Ruff, repository metadata validation, and Home Assistant lifecycle tests. The compatibility gate is pinned to Home Assistant 2026.9.0 for the 0.2.0 release. Scheduled/manual jobs exercise representative live portal and GTFS corpora separately from normal CI.
 
 Useful contributions include:
 
