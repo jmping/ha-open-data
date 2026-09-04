@@ -10,6 +10,7 @@ from ..const import (
     PROVIDER_OPENDATASOFT,
     PROVIDER_SOCRATA,
 )
+from ..provider_roots import provider_roots
 from .arcgis_hub import ArcGisHubProvider
 from .base import (
     OpenDataConnectionError,
@@ -58,22 +59,6 @@ def create_provider(
     raise ValueError(f"Unsupported Open Data provider: {provider}")
 
 
-def _provider_roots(provider_name: str, portal_url: str) -> tuple[str, ...]:
-    """Return tightly bounded alternate API roots for known deployment layouts.
-
-    Some CKAN installations serve their public site at the host root while the
-    CKAN application itself is mounted at ``/data``. Barcelona is a maintained
-    example. Trying exactly that conventional subpath after the supplied root is
-    safe, deterministic, and avoids teaching the generic portal crawler about a
-    city-specific hostname.
-    """
-    normalized = portal_url.rstrip("/")
-    roots = [normalized]
-    if provider_name == PROVIDER_CKAN and not normalized.casefold().endswith("/data"):
-        roots.append(f"{normalized}/data")
-    return tuple(roots)
-
-
 async def async_detect_provider(
     session: ClientSession, portal_url: str
 ) -> tuple[str, OpenDataProvider]:
@@ -85,7 +70,7 @@ async def async_detect_provider(
         PROVIDER_ARCGIS_HUB,
         PROVIDER_OPENDATASOFT,
     ):
-        for candidate_root in _provider_roots(provider_name, portal_url):
+        for candidate_root in provider_roots(provider_name, portal_url):
             provider = create_provider(provider_name, session, candidate_root)
             try:
                 await provider.async_verify_portal()
