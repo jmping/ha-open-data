@@ -74,6 +74,13 @@ BATCHES = {
         ),
         ("Helsinki", "https://hri.fi/data/en_GB", "Europe/Helsinki"),
     ),
+    6: (
+        ("Madrid", "https://datos.madrid.es", "Europe/Madrid"),
+        ("Milan", "https://dati.comune.milano.it", "Europe/Rome"),
+        ("Berlin", "https://daten.berlin.de", "Europe/Berlin"),
+        ("Zurich", "https://data.stadt-zuerich.ch", "Europe/Zurich"),
+        ("Tokyo", "https://portal.data.metro.tokyo.lg.jp", "Asia/Tokyo"),
+    ),
 }
 
 
