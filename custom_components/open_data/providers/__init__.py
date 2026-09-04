@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from aiohttp import ClientSession
 
 from ..const import (
@@ -137,6 +139,26 @@ class DirectReferenceCkanProvider(CkanProvider):
         raise OpenDataResponseError("CKAN sample query did not return records")
 
 
+class CompatibleArcGisHubProvider(ArcGisHubProvider):
+    """ArcGIS Hub adapter supporting current and legacy DCAT feed routes."""
+
+    async def _feed(self) -> dict[str, Any]:
+        errors: list[OpenDataConnectionError | OpenDataResponseError] = []
+        for path in ("/api/feed/dcat-us/1.1", "/api/feed/dcat-us/1.1.json"):
+            try:
+                payload = await self.async_get_json(path)
+            except (OpenDataConnectionError, OpenDataResponseError) as err:
+                errors.append(err)
+                continue
+            if isinstance(payload, dict) and isinstance(payload.get("dataset"), list):
+                return payload
+        if errors:
+            raise OpenDataResponseError(
+                "Host did not return an ArcGIS Hub DCAT feed"
+            ) from errors[-1]
+        raise OpenDataResponseError("Host did not return an ArcGIS Hub DCAT feed")
+
+
 def create_provider(
     provider: str, session: ClientSession, portal_url: str
 ) -> OpenDataProvider:
@@ -146,7 +168,7 @@ def create_provider(
     if provider == PROVIDER_SOCRATA:
         return SocrataProvider(session, portal_url)
     if provider == PROVIDER_ARCGIS_HUB:
-        return ArcGisHubProvider(session, portal_url)
+        return CompatibleArcGisHubProvider(session, portal_url)
     if provider == PROVIDER_OPENDATASOFT:
         return OpendatasoftProvider(session, portal_url)
     raise ValueError(f"Unsupported Open Data provider: {provider}")
