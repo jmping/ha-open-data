@@ -120,6 +120,7 @@ jobs:
               "inspect_dataset",
               "refresh_entry",
               "feedback_preview",
+              "failure_report",
           }
           missing_services = sorted(expected - set(services or {}))
           if missing_services:
@@ -191,6 +192,10 @@ jobs:
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch' ||
       github.head_ref == 'agent/five-city-live-audit'
+    strategy:
+      fail-fast: false
+      matrix:
+        batch: [1, 2, 3]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -202,11 +207,12 @@ jobs:
       - name: Audit representative city portals
         run: |
           PYTHONPATH=. python scripts/validate_city_portals.py \
+            --batch ${{ matrix.batch }} \
             --datasets-per-city 3 \
-            --output city-portal-results.json
+            --output city-portal-results-${{ matrix.batch }}.json
       - name: Upload city portal report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: city-portal-results
-          path: city-portal-results.json
+          name: city-portal-results-${{ matrix.batch }}
+          path: city-portal-results-${{ matrix.batch }}.json
