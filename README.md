@@ -3,7 +3,7 @@
 A Home Assistant custom integration that discovers public open-data sources, interprets bounded samples, and turns user-selected records and measurements into Home Assistant entities.
 
 > [!IMPORTANT]
-> This project is still pre-stable. Provider behavior, inferred mappings, and entity models may change as the validation corpus expands.
+> Version 0.2.0 is an intentionally shareable preview, not a stable API guarantee. Provider behavior, inferred mappings, temporal plans, and entity models may still change as the validation corpus expands.
 
 ## What it supports
 
@@ -40,6 +40,18 @@ During setup and options review, the integration can:
 - let users select multiple records, locations, and measurements where supported.
 
 Changing nominal summary fields such as `largest_pollutant` are treated conservatively as context in wide datasets. They are not automatically expanded into large numbers of sparse entities. Long-format metric names are currently exposed as review evidence; automatic materialization remains opt-in future work.
+
+### Temporal inference
+
+Version 0.2 adds an explainable temporal-planning layer for datasets that do not expose one clean timestamp column. It can infer and normalize:
+
+- ISO/RFC-style timestamps and common municipal date/time formats;
+- Unix timestamps in seconds or milliseconds;
+- separate date and time columns;
+- separate year, month, day, hour, minute, and second components;
+- partial month/day values using the current date to choose the nearest plausible year.
+
+Naive source timestamps use Home Assistant's configured timezone as the fallback. Explicit source offsets remain authoritative. Implausibly future values and provider-administrative timestamps are penalized during plan scoring.
 
 ## Home Assistant entities and history
 
@@ -89,6 +101,18 @@ The integration registers response-capable actions for discovery, inspection, re
 
 `feedback_preview` creates a metadata-only preview and does not transmit data. Feedback upload remains opt-in and is not enabled until a collector contract exists.
 
+## Known limitations
+
+The 0.2 preview deliberately favors bounded, conservative behavior over trying to infer everything automatically.
+
+- High-cardinality record sets are prevented from auto-materializing observation/sample IDs as Home Assistant entities, but the options UI can still present a large bounded choice list. Searchable and progressively hierarchical selection is still needed for PFAS-scale datasets.
+- Temporal plans are inferred at runtime and are explainable in code, but they are not yet persisted as a user-reviewable config artifact.
+- Provider coverage is broad but not universal, especially for authenticated APIs, statistical systems, unusual landing pages, and download-only resources.
+- Automatic materialization of reviewed long-format metric dimensions remains deferred to avoid sparse entity explosions.
+- Large historical backfill is intentionally not automatic and requires a resumable, rate-limited subsystem.
+
+Please file a bug with the portal/dataset URL, Home Assistant version, and the Open Data diagnostic block when an import fails.
+
 ## Validation strategy
 
 Validation is organized into shared engineering classes rather than one issue per city:
@@ -120,6 +144,8 @@ The integration stores a random local installation identifier for privacy-safe d
 
 The near-term roadmap focuses on:
 
+- persisting temporal plans and exposing timestamp diagnostics for review;
+- replacing large flat record selectors with searchable/hierarchical selection;
 - improving observation-model review and bounded candidate selection;
 - expanding crawler and provider-family coverage;
 - deriving canonical labels from repeated cross-city evidence;
@@ -131,11 +157,11 @@ Larger deferred work is tracked separately:
 - [Reviewed observation graphs and long-format sensor definitions](https://github.com/jmping/ha-open-data/issues/51)
 - [Resumable bounded historical backfill](https://github.com/jmping/ha-open-data/issues/52)
 
-See [Project plan](docs/PLAN.md) and [Issue 6 future plan](docs/ISSUE6_FUTURE_PLAN.md).
+See [Project plan](docs/PLAN.md), [Issue 6 future plan](docs/ISSUE6_FUTURE_PLAN.md), and the [changelog](CHANGELOG.md).
 
 ## Validation and contribution rules
 
-Every relevant pull request runs compilation, regression tests, Ruff, and repository metadata validation. Live third-party checks are isolated from normal CI.
+Every relevant pull request runs compilation, regression tests, Ruff, repository metadata validation, and Home Assistant lifecycle tests. The compatibility gate is pinned to Home Assistant 2026.9.0 for the 0.2.0 shareable cut. Live third-party checks are isolated from normal CI.
 
 Useful contributions include:
 
