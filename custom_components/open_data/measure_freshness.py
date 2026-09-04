@@ -36,7 +36,6 @@ class MeasureFreshnessProfile:
         """Return compact human-readable recency evidence for selectors."""
         if self.latest_observation_at is None:
             return "recency unknown"
-        latest = datetime.fromisoformat(self.latest_observation_at)
         age = self.age_seconds or 0.0
         if age < 3600:
             age_label = f"{max(1, round(age / 60))}m ago"
@@ -152,10 +151,6 @@ def build_measure_freshness_profiles(
             else None
         )
 
-        # Relative lag is the strongest signal for partially abandoned datasets:
-        # if sibling measures continue to update but this one has missed at least
-        # five expected waves, do not auto-import it. Absolute lag adds protection
-        # for an otherwise-live feed where every recent sample for one measure is old.
         stale_relative = peer_lag is not None and peer_lag >= threshold
         stale_absolute = (
             age is not None
