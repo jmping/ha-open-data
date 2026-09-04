@@ -14,10 +14,16 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import (
     CONF_DATASET_ID,
+    CONF_IDENTITY_FIELDS,
+    CONF_METRIC_FIELDS,
     CONF_PORTAL_URL,
+    CONF_PROVIDER,
     CONF_RESOURCE_ID,
+    CONF_SOURCE_ORDERING,
+    CONF_TIMESTAMP_FIELDS,
     DOMAIN,
 )
+from .failure_reporting import build_failure_report
 from .feedback import FeedbackRegistry
 from .inspection_evidence import build_dataset_inspection_evidence
 from .portal_inspector import async_discover_catalog, async_inspect_portal
@@ -28,6 +34,7 @@ SERVICE_SEARCH_DATASETS = "search_datasets"
 SERVICE_INSPECT_DATASET = "inspect_dataset"
 SERVICE_REFRESH_ENTRY = "refresh_entry"
 SERVICE_FEEDBACK_PREVIEW = "feedback_preview"
+SERVICE_FAILURE_REPORT = "failure_report"
 
 CONF_LIMIT = "limit"
 CONF_QUERY = "query"
@@ -35,6 +42,9 @@ CONF_ENTRY_ID = "entry_id"
 CONF_PORTAL_ID = "portal_id"
 CONF_METADATA = "metadata"
 CONF_SAMPLE_LIMIT = "sample_limit"
+CONF_STAGE = "stage"
+CONF_ERROR_TYPE = "error_type"
+CONF_ERROR_MESSAGE = "error_message"
 
 _PORTAL_SCHEMA = cv.string
 _LIMIT_SCHEMA = vol.All(vol.Coerce(int), vol.Range(min=1, max=100))
@@ -149,6 +159,38 @@ async def async_register_services(hass: HomeAssistant, feedback: FeedbackRegistr
             "report": report.to_dict() if report is not None else None,
         }
 
+    async def async_failure_report(call: ServiceCall) -> dict[str, Any]:
+        context: dict[str, Any] = {
+            CONF_STAGE: call.data[CONF_STAGE],
+            CONF_ERROR_TYPE: call.data.get(CONF_ERROR_TYPE),
+            CONF_ERROR_MESSAGE: call.data.get(CONF_ERROR_MESSAGE),
+            CONF_PORTAL_URL: call.data.get(CONF_PORTAL_URL),
+            CONF_DATASET_ID: call.data.get(CONF_DATASET_ID),
+            CONF_RESOURCE_ID: call.data.get(CONF_RESOURCE_ID),
+            "home_assistant_version": getattr(hass, "version", "unknown"),
+            "integration_version": "0.2.0",
+        }
+        entry_id = call.data.get(CONF_ENTRY_ID)
+        if entry_id:
+            entry = hass.config_entries.async_get_entry(entry_id)
+            if entry is None or entry.domain != DOMAIN:
+                raise ValueError("Open Data config entry was not found")
+            for key in (
+                CONF_PROVIDER,
+                CONF_PORTAL_URL,
+                CONF_DATASET_ID,
+                CONF_RESOURCE_ID,
+                CONF_TIMESTAMP_FIELDS,
+                CONF_METRIC_FIELDS,
+                CONF_IDENTITY_FIELDS,
+                CONF_SOURCE_ORDERING,
+            ):
+                if key in entry.data:
+                    context[key] = entry.data[key]
+                elif key in entry.options:
+                    context[key] = entry.options[key]
+        return build_failure_report(context)
+
     portal_schema = vol.Schema({vol.Required(CONF_PORTAL_URL): _PORTAL_SCHEMA})
 
     hass.services.async_register(
@@ -216,6 +258,23 @@ async def async_register_services(hass: HomeAssistant, feedback: FeedbackRegistr
         ),
         supports_response=SupportsResponse.ONLY,
     )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_FAILURE_REPORT,
+        async_failure_report,
+        schema=vol.Schema(
+            {
+                vol.Required(CONF_STAGE): cv.string,
+                vol.Optional(CONF_ENTRY_ID): cv.string,
+                vol.Optional(CONF_PORTAL_URL): cv.string,
+                vol.Optional(CONF_DATASET_ID): cv.string,
+                vol.Optional(CONF_RESOURCE_ID): cv.string,
+                vol.Optional(CONF_ERROR_TYPE): cv.string,
+                vol.Optional(CONF_ERROR_MESSAGE): cv.string,
+            }
+        ),
+        supports_response=SupportsResponse.ONLY,
+    )
 
 
 def async_remove_services(hass: HomeAssistant) -> None:
@@ -227,5 +286,6 @@ def async_remove_services(hass: HomeAssistant) -> None:
         SERVICE_INSPECT_DATASET,
         SERVICE_REFRESH_ENTRY,
         SERVICE_FEEDBACK_PREVIEW,
+        SERVICE_FAILURE_REPORT,
     ):
         hass.services.async_remove(DOMAIN, service)
