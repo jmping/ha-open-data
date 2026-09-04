@@ -50,7 +50,7 @@ _analyzer.build_selectable_records = _stable_build_selectable_records
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 _DATA_FEEDBACK = "feedback_registry"
-_INTEGRATION_VERSION = "0.1.4"
+_INTEGRATION_VERSION = "0.2.0"
 _LOGGER = logging.getLogger(__name__)
 
 type OpenDataConfigEntry = ConfigEntry[OpenDataCoordinator]
