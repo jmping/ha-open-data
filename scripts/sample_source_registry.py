@@ -37,6 +37,7 @@ DEFAULT_TOPICS = (
     "volcano",
     "outage",
 )
+_ROTATION_EPOCH = date(2026, 9, 1)
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,14 +123,19 @@ def load_sources(paths: Iterable[Path]) -> list[SeedSource]:
 
 
 def select_daily_sources(sources: list[SeedSource], *, sample_size: int, day: date) -> list[SeedSource]:
+    """Return one deterministic, non-overlapping slice within each full registry cycle."""
     if not sources or sample_size <= 0:
         return []
-    day_key = day.isoformat()
-    ranked = sorted(
+    stable = sorted(
         sources,
-        key=lambda source: hashlib.sha256(f"{day_key}|{source.url}".encode()).digest(),
+        key=lambda source: hashlib.sha256(source.url.encode()).digest(),
     )
-    return ranked[: min(sample_size, len(ranked))]
+    days_since_epoch = max(0, (day - _ROTATION_EPOCH).days)
+    cycle_days = max(1, (len(stable) + sample_size - 1) // sample_size)
+    day_in_cycle = days_since_epoch % cycle_days
+    start = day_in_cycle * sample_size
+    end = min(start + sample_size, len(stable))
+    return stable[start:end]
 
 
 async def _search_topics(provider: Any, topics: tuple[str, ...]) -> dict[str, Any]:
@@ -216,6 +222,7 @@ async def _main(args: argparse.Namespace) -> None:
     payload = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "day": args.day,
+        "rotation_epoch": _ROTATION_EPOCH.isoformat(),
         "seed_source_count": len(sources),
         "sample_size": len(results),
         "recognized_sources": recognized,
