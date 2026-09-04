@@ -15,6 +15,7 @@ on:
       - "hacs.json"
       - "LICENSE"
       - "README.md"
+      - "CHANGELOG.md"
       - ".github/workflows/validate.yml"
   pull_request:
     paths:
@@ -25,6 +26,7 @@ on:
       - "hacs.json"
       - "LICENSE"
       - "README.md"
+      - "CHANGELOG.md"
       - ".github/workflows/validate.yml"
 
 permissions:
@@ -108,6 +110,8 @@ jobs:
           init_source = (root / "__init__.py").read_text(encoding="utf-8")
           if "CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)" not in init_source:
               raise SystemExit("integration must declare a config-entry-only CONFIG_SCHEMA")
+          if f'_INTEGRATION_VERSION = "{manifest["version"]}"' not in init_source:
+              raise SystemExit("runtime and manifest versions must match")
 
           services = yaml.safe_load((root / "services.yaml").read_text(encoding="utf-8"))
           expected = {
@@ -129,8 +133,8 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.14.2"
-      - name: Install current Home Assistant
-        run: python -m pip install --disable-pip-version-check -q homeassistant==2026.7.2
+      - name: Install Home Assistant 2026.9.0
+        run: python -m pip install --disable-pip-version-check -q homeassistant==2026.9.0
       - name: Import integration against Home Assistant
         run: |
           python - <<'PY'
@@ -154,7 +158,7 @@ jobs:
         with:
           python-version: "3.14.2"
       - name: Install Home Assistant lifecycle test fixtures
-        run: python -m pip install --disable-pip-version-check -q "pytest<9" pytest-homeassistant-custom-component
+        run: python -m pip install --disable-pip-version-check -q "pytest<9" homeassistant==2026.9.0 pytest-homeassistant-custom-component
       - name: Run lifecycle and registry tests
         run: |
           set -o pipefail
