@@ -7,24 +7,69 @@ from datetime import date, datetime, time, timedelta, timezone
 import math
 import re
 from typing import Any, Mapping, Sequence
+import unicodedata
 from zoneinfo import ZoneInfo
 
 _COMPONENT_ALIASES = {
-    "year": {"year", "yr", "yyyy"},
-    "month": {"month", "mon", "mm"},
-    "day": {"day", "day_of_month", "dom", "dd"},
-    "hour": {"hour", "hr", "hh"},
-    "minute": {"minute", "min", "mi"},
-    "second": {"second", "sec", "ss"},
-    "date": {"date", "sample_date", "measurement_date", "observation_date", "observed_date", "collection_date"},
-    "time": {"time", "sample_time", "measurement_time", "observation_time", "observed_time", "collection_time"},
-    "timestamp": {"timestamp", "datetime", "date_time", "observed_at", "measured_at", "sampled_at", "collected_at", "observation_time"},
+    "year": {"year", "yr", "yyyy", "any", "ano", "annee", "anno", "jahr"},
+    "month": {"month", "mon", "mm", "mes", "mois", "mese", "monat"},
+    "day": {"day", "day_of_month", "dom", "dd", "dia", "jour", "giorno", "tag"},
+    "hour": {"hour", "hr", "hh", "hora", "heure", "ora", "stunde"},
+    "minute": {"minute", "min", "mi", "minut", "minuto"},
+    "second": {"second", "sec", "ss", "segon", "segundo", "seconde", "secondo", "sekunde"},
+    "date": {
+        "date",
+        "sample_date",
+        "measurement_date",
+        "observation_date",
+        "observed_date",
+        "collection_date",
+        "data",
+        "fecha",
+        "datum",
+    },
+    "time": {
+        "time",
+        "sample_time",
+        "measurement_time",
+        "observation_time",
+        "observed_time",
+        "collection_time",
+        "hora",
+        "heure",
+    },
+    "timestamp": {
+        "timestamp",
+        "datetime",
+        "date_time",
+        "observed_at",
+        "measured_at",
+        "sampled_at",
+        "collected_at",
+        "observation_time",
+        "data_hora",
+        "fecha_hora",
+        "date_heure",
+    },
 }
-_ADMIN_TIME_TERMS = {"updated_at", "modified", "last_modified", "created_at", "dataset_updated", "resource_updated"}
+_ADMIN_TIME_TERMS = {
+    "updated_at",
+    "modified",
+    "last_modified",
+    "created_at",
+    "dataset_updated",
+    "resource_updated",
+}
 
 
 def _norm(value: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "_", value.casefold()).strip("_")
+    """Normalize Latin labels without discarding meaningful non-ASCII input."""
+    folded = "".join(
+        char
+        for char in unicodedata.normalize("NFKD", value.casefold())
+        if not unicodedata.combining(char)
+    )
+    return re.sub(r"[^a-z0-9]+", "_", folded).strip("_")
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,7 +129,14 @@ def _parse_clock(value: Any) -> time | None:
     if value in (None, ""):
         return None
     text = str(value).strip()
-    for fmt in ("%H:%M:%S", "%H:%M", "%I:%M:%S %p", "%I:%M %p", "%H%M", "%H%M%S"):
+    for fmt in (
+        "%H:%M:%S",
+        "%H:%M",
+        "%I:%M:%S %p",
+        "%I:%M %p",
+        "%H%M",
+        "%H%M%S",
+    ):
         try:
             return datetime.strptime(text, fmt).time()
         except ValueError:
@@ -97,8 +149,15 @@ def _parse_date(value: Any, context: TemporalContext) -> date | None:
         return None
     text = str(value).strip()
     for fmt in (
-        "%Y-%m-%d", "%Y/%m/%d", "%m/%d/%Y", "%m/%d/%y", "%d-%b-%Y",
-        "%d %b %Y", "%Y%m%d", "%m-%d-%Y", "%m-%d-%y",
+        "%Y-%m-%d",
+        "%Y/%m/%d",
+        "%m/%d/%Y",
+        "%m/%d/%y",
+        "%d-%b-%Y",
+        "%d %b %Y",
+        "%Y%m%d",
+        "%m-%d-%Y",
+        "%m-%d-%y",
     ):
         try:
             return datetime.strptime(text, fmt).date()
@@ -106,7 +165,9 @@ def _parse_date(value: Any, context: TemporalContext) -> date | None:
             continue
     partial = re.fullmatch(r"\s*(\d{1,2})[/-](\d{1,2})\s*", text)
     if partial:
-        return _nearest_partial_date(int(partial.group(1)), int(partial.group(2)), context)
+        return _nearest_partial_date(
+            int(partial.group(1)), int(partial.group(2)), context
+        )
     return None
 
 
@@ -153,9 +214,15 @@ def parse_flexible_timestamp(value: Any, context: TemporalContext) -> datetime |
     except ValueError:
         pass
     for fmt in (
-        "%m/%d/%Y %H:%M:%S", "%m/%d/%Y %H:%M", "%m/%d/%Y %I:%M:%S %p",
-        "%m/%d/%Y %I:%M %p", "%Y/%m/%d %H:%M:%S", "%Y/%m/%d %H:%M",
-        "%d-%b-%Y %H:%M:%S", "%d-%b-%Y %H:%M", "%Y%m%d%H%M%S",
+        "%m/%d/%Y %H:%M:%S",
+        "%m/%d/%Y %H:%M",
+        "%m/%d/%Y %I:%M:%S %p",
+        "%m/%d/%Y %I:%M %p",
+        "%Y/%m/%d %H:%M:%S",
+        "%Y/%m/%d %H:%M",
+        "%d-%b-%Y %H:%M:%S",
+        "%d-%b-%Y %H:%M",
+        "%Y%m%d%H%M%S",
     ):
         try:
             return _attach_zone(datetime.strptime(text, fmt), context)
@@ -172,18 +239,33 @@ def _field_candidates(fields: Sequence[str], role: str) -> tuple[str, ...]:
     normalized = {field: _norm(field) for field in fields}
     exact = [field for field, name in normalized.items() if name in aliases]
     fuzzy = [
-        field for field, name in normalized.items()
-        if field not in exact and any(name.endswith(f"_{alias}") or name.startswith(f"{alias}_") for alias in aliases)
+        field
+        for field, name in normalized.items()
+        if field not in exact
+        and any(
+            name.endswith(f"_{alias}") or name.startswith(f"{alias}_")
+            for alias in aliases
+        )
     ]
     return tuple((*exact, *fuzzy))
 
 
-def _candidate_score(plan: TemporalPlan, parsed: Sequence[datetime | None], context: TemporalContext) -> TemporalPlan:
+def _candidate_score(
+    plan: TemporalPlan,
+    parsed: Sequence[datetime | None],
+    context: TemporalContext,
+) -> TemporalPlan:
     valid = [item for item in parsed if item is not None]
     success = len(valid) / max(len(parsed), 1)
     distinct = len({item.isoformat() for item in valid})
-    future = sum(item > context.now + timedelta(days=2) for item in valid) / max(len(valid), 1)
-    score = 0.45 * success + (0.15 if distinct > 1 else 0.0) + (0.15 if valid else 0.0)
+    future = sum(item > context.now + timedelta(days=2) for item in valid) / max(
+        len(valid), 1
+    )
+    score = (
+        0.45 * success
+        + (0.15 if distinct > 1 else 0.0)
+        + (0.15 if valid else 0.0)
+    )
     score -= 0.6 * future
     field_names = {_norm(name) for _, name in plan.fields}
     if field_names & _ADMIN_TIME_TERMS:
@@ -196,10 +278,19 @@ def _candidate_score(plan: TemporalPlan, parsed: Sequence[datetime | None], cont
         reasons.append("timestamps vary across observations")
     if future:
         reasons.append(f"{future:.0%} implausibly future values")
-    return TemporalPlan(plan.strategy, plan.fields, plan.timezone_name, round(max(0.0, min(1.0, score)), 3), round(success, 3), tuple(reasons))
+    return TemporalPlan(
+        plan.strategy,
+        plan.fields,
+        plan.timezone_name,
+        round(max(0.0, min(1.0, score)), 3),
+        round(success, 3),
+        tuple(reasons),
+    )
 
 
-def parse_row_timestamp(row: Mapping[str, Any], plan: TemporalPlan, context: TemporalContext) -> datetime | None:
+def parse_row_timestamp(
+    row: Mapping[str, Any], plan: TemporalPlan, context: TemporalContext
+) -> datetime | None:
     fields = plan.field_map
     if plan.strategy == "single_field":
         return parse_flexible_timestamp(row.get(fields["timestamp"]), context)
@@ -210,7 +301,9 @@ def parse_row_timestamp(row: Mapping[str, Any], plan: TemporalPlan, context: Tem
             return None
         return datetime.combine(parsed_date, parsed_time, ZoneInfo(context.timezone_name))
     if plan.strategy == "calendar_components":
-        year = _int_value(row.get(fields.get("year", ""))) if "year" in fields else None
+        year = (
+            _int_value(row.get(fields.get("year", ""))) if "year" in fields else None
+        )
         month = _int_value(row.get(fields.get("month", "")))
         day = _int_value(row.get(fields.get("day", "")))
         hour = _int_value(row.get(fields.get("hour", ""))) or 0
@@ -224,39 +317,98 @@ def parse_row_timestamp(row: Mapping[str, Any], plan: TemporalPlan, context: Tem
         if year is None:
             return None
         try:
-            return datetime(year, month, day, hour, minute, second, tzinfo=ZoneInfo(context.timezone_name))
+            return datetime(
+                year,
+                month,
+                day,
+                hour,
+                minute,
+                second,
+                tzinfo=ZoneInfo(context.timezone_name),
+            )
         except ValueError:
             return None
     return None
 
 
-def infer_temporal_plan(fields: Sequence[str], rows: Sequence[Mapping[str, Any]], context: TemporalContext) -> TemporalPlan | None:
+def infer_temporal_plan(
+    fields: Sequence[str],
+    rows: Sequence[Mapping[str, Any]],
+    context: TemporalContext,
+) -> TemporalPlan | None:
     """Generate and score complete-field and component-based timestamp plans."""
     candidates: list[TemporalPlan] = []
     for field in _field_candidates(fields, "timestamp"):
-        candidates.append(TemporalPlan("single_field", (("timestamp", field),), context.timezone_name, 0.0, 0.0, ("complete timestamp field",)))
+        candidates.append(
+            TemporalPlan(
+                "single_field",
+                (("timestamp", field),),
+                context.timezone_name,
+                0.0,
+                0.0,
+                ("complete timestamp field",),
+            )
+        )
     date_fields = _field_candidates(fields, "date")
     time_fields = _field_candidates(fields, "time")
     for date_field in date_fields[:3]:
         for time_field in time_fields[:3]:
             if date_field != time_field:
-                candidates.append(TemporalPlan("date_and_time", (("date", date_field), ("time", time_field)), context.timezone_name, 0.0, 0.0, ("date and time fields combined",)))
-    components = {role: _field_candidates(fields, role) for role in ("year", "month", "day", "hour", "minute", "second")}
+                candidates.append(
+                    TemporalPlan(
+                        "date_and_time",
+                        (("date", date_field), ("time", time_field)),
+                        context.timezone_name,
+                        0.0,
+                        0.0,
+                        ("date and time fields combined",),
+                    )
+                )
+    components = {
+        role: _field_candidates(fields, role)
+        for role in ("year", "month", "day", "hour", "minute", "second")
+    }
     if components["month"] and components["day"]:
-        mapping = [("month", components["month"][0]), ("day", components["day"][0])]
+        mapping = [
+            ("month", components["month"][0]),
+            ("day", components["day"][0]),
+        ]
         for role in ("year", "hour", "minute", "second"):
             if components[role]:
                 mapping.append((role, components[role][0]))
-        candidates.append(TemporalPlan("calendar_components", tuple(mapping), context.timezone_name, 0.0, 0.0, ("calendar components synthesized", "missing year resolved near current date" if not components["year"] else "explicit year component",)))
+        candidates.append(
+            TemporalPlan(
+                "calendar_components",
+                tuple(mapping),
+                context.timezone_name,
+                0.0,
+                0.0,
+                (
+                    "calendar components synthesized",
+                    "missing year resolved near current date"
+                    if not components["year"]
+                    else "explicit year component",
+                ),
+            )
+        )
     scored: list[TemporalPlan] = []
     for candidate in candidates:
         parsed = tuple(parse_row_timestamp(row, candidate, context) for row in rows)
         scored.append(_candidate_score(candidate, parsed, context))
     usable = [item for item in scored if item.parse_success_rate >= 0.5]
-    return max(usable, key=lambda item: (item.confidence, item.parse_success_rate), default=None)
+    return max(
+        usable,
+        key=lambda item: (item.confidence, item.parse_success_rate),
+        default=None,
+    )
 
 
-def normalize_row_timestamps(rows: Sequence[Mapping[str, Any]], *, timezone_name: str, now: datetime | None = None) -> tuple[list[dict[str, Any]], TemporalPlan | None, str | None]:
+def normalize_row_timestamps(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    timezone_name: str,
+    now: datetime | None = None,
+) -> tuple[list[dict[str, Any]], TemporalPlan | None, str | None]:
     """Copy rows and add one canonical timestamp field when a plan is usable."""
     zone = ZoneInfo(timezone_name)
     context = TemporalContext(now or datetime.now(zone), timezone_name)
