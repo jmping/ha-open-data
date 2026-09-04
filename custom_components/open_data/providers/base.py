@@ -138,15 +138,27 @@ class OpenDataProvider(ABC):
     ) -> list[list[dict[str, Any]]]:
         """Return separated bounded physical-order windows when possible.
 
-        Providers that expose offsets/pages should override this method so schema
-        analysis can compare within-slice and between-slice variation. The default
-        keeps the API safe for providers without random access and returns one
-        bounded natural-order window rather than pretending multiple regions were
-        observed.
+        Providers with true offset/page access should override this. The generic
+        fallback requests one larger bounded natural-order window and separates it
+        into non-overlapping regions. That still reveals repeated ordering blocks
+        inside the provider cap without claiming coverage of the complete source.
         """
-        limit = max(1, min(slice_limit, 100)) * max(1, min(slices, 5))
-        rows = await self.async_sample_rows(dataset_id, resource_id, limit=limit)
-        return [rows] if rows else []
+        width = max(1, min(slice_limit, 50))
+        count = max(1, min(slices, 5))
+        candidate_limit = min(200, width * count * 2)
+        rows = await self.async_sample_rows(
+            dataset_id, resource_id, limit=candidate_limit
+        )
+        if not rows:
+            return []
+        if len(rows) <= width:
+            return [rows]
+        max_start = max(0, len(rows) - width)
+        starts = {
+            round(index * max_start / max(count - 1, 1))
+            for index in range(count)
+        }
+        return [rows[start : start + width] for start in sorted(starts)]
 
     async def async_distinct_rows(
         self,
