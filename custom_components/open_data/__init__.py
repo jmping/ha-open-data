@@ -23,7 +23,9 @@ from .const import (
     CONF_RESOURCE_ID,
     CONF_SELECTED_RECORDS,
     CONF_SELECTED_FIELDS,
+    CONF_TEMPORAL_PLAN,
     CONF_TIMESTAMP_FIELD,
+    CONF_TIMEZONE,
     DOMAIN,
     PLATFORMS,
 )
@@ -117,6 +119,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: OpenDataConfigEntry) -> 
         repaired_options[CONF_SELECTED_RECORDS] = []
         hass.config_entries.async_update_entry(entry, options=repaired_options)
 
+    temporal_plan = entry.options.get(
+        CONF_TEMPORAL_PLAN, entry.data.get(CONF_TEMPORAL_PLAN)
+    )
+    timezone_name = entry.options.get(CONF_TIMEZONE, entry.data.get(CONF_TIMEZONE))
+
     coordinator = OpenDataCoordinator(
         hass,
         provider,
@@ -146,6 +153,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: OpenDataConfigEntry) -> 
                 else None
             )
         ),
+        temporal_plan=temporal_plan,
+        timezone_name=timezone_name,
     )
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = coordinator
