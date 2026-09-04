@@ -128,6 +128,26 @@ class OpenDataProvider(ABC):
         row = await self.async_latest_row(dataset_id, resource_id)
         return [row] if row else []
 
+    async def async_sample_slices(
+        self,
+        dataset_id: str,
+        resource_id: str | None = None,
+        *,
+        slice_limit: int = 25,
+        slices: int = 3,
+    ) -> list[list[dict[str, Any]]]:
+        """Return separated bounded physical-order windows when possible.
+
+        Providers that expose offsets/pages should override this method so schema
+        analysis can compare within-slice and between-slice variation. The default
+        keeps the API safe for providers without random access and returns one
+        bounded natural-order window rather than pretending multiple regions were
+        observed.
+        """
+        limit = max(1, min(slice_limit, 100)) * max(1, min(slices, 5))
+        rows = await self.async_sample_rows(dataset_id, resource_id, limit=limit)
+        return [rows] if rows else []
+
     async def async_distinct_rows(
         self,
         dataset_id: str,
