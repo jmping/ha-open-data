@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
+from statistics import median
 from typing import Mapping
 
 from .models import SemanticObservation
@@ -49,6 +50,25 @@ def _latest_observed_at(observation: SemanticObservation | None) -> datetime | N
     timestamps.extend(parse_timestamp(point.timestamp) for point in observation.history)
     valid = [timestamp for timestamp in timestamps if timestamp is not None]
     return max(valid, default=None)
+
+
+def _stream_frequency_seconds(observation: SemanticObservation) -> float | None:
+    """Estimate one stream's own recent cadence from bounded history."""
+    timestamps = sorted(
+        {
+            parsed
+            for point in observation.history
+            if (parsed := parse_timestamp(point.timestamp)) is not None
+        }
+    )
+    gaps = [
+        (right - left).total_seconds()
+        for left, right in zip(timestamps, timestamps[1:])
+        if right > left
+    ]
+    if not gaps:
+        return None
+    return float(median(gaps[-30:]))
 
 
 def observation_freshness(
@@ -110,16 +130,29 @@ def apply_observation_freshness(
     *,
     checked_at: object = None,
 ) -> dict[str, SemanticObservation]:
-    """Mask only demonstrably stale values while preserving stream identity.
+    """Return only streams that are not demonstrably stale.
 
-    The stream, source history, unit, metric, and unique-ID inputs remain intact.
-    Untimed observations remain usable but are marked with unknown freshness.
+    A stream's own bounded history is the preferred cadence source; the dataset
+    cadence is only a fallback. This prevents one dead metric from inheriting the
+    apparent recency of active siblings. Untimed observations remain usable with
+    an explicit unknown freshness state.
+
+    Existing Home Assistant entities are not deleted when a stream later becomes
+    stale: the sensor platform intentionally keeps previously discovered stream
+    identities. The suppression primarily prevents stale streams from being
+    materialized during initial setup and yields ``unknown`` while they are stale.
     """
     result: dict[str, SemanticObservation] = {}
     for stream_id, observation in observations.items():
-        state = observation_freshness(
-            observation, frequency_seconds, checked_at=checked_at
+        stream_frequency = _stream_frequency_seconds(observation)
+        effective_frequency = (
+            stream_frequency if stream_frequency is not None else frequency_seconds
         )
+        state = observation_freshness(
+            observation, effective_frequency, checked_at=checked_at
+        )
+        if state.stale is True:
+            continue
         dimensions = tuple(
             item for item in observation.dimensions if item[0] not in _FRESHNESS_DIMENSIONS
         )
@@ -137,9 +170,5 @@ def apply_observation_freshness(
                     str(round(state.age_seconds, 1)),
                 ),
             )
-        result[stream_id] = replace(
-            observation,
-            value=None if state.stale is True else observation.value,
-            dimensions=dimensions,
-        )
+        result[stream_id] = replace(observation, dimensions=dimensions)
     return result
