@@ -3,15 +3,21 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from datetime import datetime
 from typing import Any, Mapping, Sequence
 
 from .analyzer import analyze_dataset, dataset_explorer_summary
+from .measure_freshness import (
+    build_measure_freshness_profiles,
+    serializable_profiles,
+)
 from .models import OpenDataDataset
 from .observation_model import build_observation_model_review
 from .observation_sampling import (
     infer_functional_dependencies,
     stratify_observation_rows,
 )
+from .sampling_strategy import profile_source_order
 
 
 def build_dataset_inspection_evidence(
@@ -19,12 +25,19 @@ def build_dataset_inspection_evidence(
     candidate_rows: Sequence[Mapping[str, Any]],
     *,
     sample_limit: int = 100,
+    timezone_name: str = "UTC",
+    now: datetime | None = None,
 ) -> dict[str, Any]:
-    """Return explorer analysis plus bounded sample and relationship evidence."""
+    """Return explorer analysis plus bounded sample, freshness, and order evidence."""
     materialized = [dict(row) for row in candidate_rows]
     preliminary = analyze_dataset(dataset, materialized)
     identity_fields = (
         (preliminary.identity_field,) if preliminary.identity_field is not None else ()
+    )
+    ordering = profile_source_order(
+        materialized,
+        timestamp_field=preliminary.timestamp_field,
+        identity_fields=identity_fields,
     )
     sample = stratify_observation_rows(
         materialized,
@@ -53,9 +66,24 @@ def build_dataset_inspection_evidence(
         timestamp_field=preliminary.timestamp_field,
         metric_fields=preliminary.metric_fields,
     )
+    freshness = build_measure_freshness_profiles(
+        rows,
+        metric_fields=preliminary.metric_fields,
+        timestamp_fields=preliminary.timestamp_fields,
+        timezone_name=timezone_name,
+        now=now,
+    )
     analysis["sampling_evidence"] = sample.evidence.as_dict()
+    analysis["source_ordering"] = ordering.as_dict()
     analysis["historical_relationships"] = [
         asdict(relationship) for relationship in relationships
     ]
     analysis["observation_model"] = observation_model.as_dict()
+    analysis["measure_freshness"] = serializable_profiles(freshness)
+    analysis["default_metric_fields"] = [
+        field for field, profile in freshness.items() if profile.auto_import
+    ]
+    analysis["stale_metric_fields"] = [
+        field for field, profile in freshness.items() if profile.status == "stale"
+    ]
     return analysis
