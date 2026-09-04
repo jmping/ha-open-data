@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timedelta, timezone
+from typing import Any, Mapping
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -42,6 +43,8 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
         record_structure: RecordStructure | None = None,
         field_roles: dict[str, str] | None = None,
         selected_fields: tuple[str, ...] | None = None,
+        temporal_plan: Mapping[str, Any] | None = None,
+        timezone_name: str | None = None,
     ) -> None:
         super().__init__(
             hass,
@@ -62,6 +65,8 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
         self.record_structure = record_structure or RecordStructure(())
         self.field_roles = field_roles or {}
         self.selected_fields = selected_fields
+        self.temporal_plan = dict(temporal_plan or {})
+        self.timezone_name = timezone_name
         self.dataset: OpenDataDataset | None = None
         self.record_labels: dict[str, str] = {}
 
@@ -123,6 +128,8 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
                     field_roles=self.field_roles,
                     structure=self.record_structure,
                     selected_fields=self.selected_fields,
+                    temporal_plan=self.temporal_plan,
+                    timezone_name=self.timezone_name,
                 )
             observations = apply_observation_freshness(
                 observations,
@@ -184,9 +191,7 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
     def _latest_values_from_records(records: dict[str, dict]) -> dict:
         return next(iter(records.values()), {})
 
-    def _normalize_record_observations(
-        self, records: dict[str, dict]
-    ) -> dict:
+    def _normalize_record_observations(self, records: dict[str, dict]) -> dict:
         observations = {}
         for record_id, row in records.items():
             observations.update(
@@ -196,6 +201,8 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
                     structure=self.record_structure,
                     selected_fields=self.selected_fields,
                     unit_id=record_id,
+                    temporal_plan=self.temporal_plan,
+                    timezone_name=self.timezone_name,
                 )
             )
         return observations
