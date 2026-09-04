@@ -1,8 +1,8 @@
 """Run bounded live audits against representative municipal open-data portals.
 
 Third-party availability never gates normal CI. Reports capture which stage of the
-real provider/analyzer pipeline succeeds or fails so repeatable findings can become
-stable fixtures and generic fixes.
+real provider/analyzer/runtime pipeline succeeds or fails so repeatable findings can
+become stable fixtures and generic fixes.
 """
 
 from __future__ import annotations
@@ -27,6 +27,8 @@ from custom_components.open_data.portal_inspector import (
 )
 from custom_components.open_data.temporal_policy import resolve_temporal_plan
 
+
+SEARCH_QUERIES = ("weather", "air quality", "traffic", "water", "transit")
 
 BATCHES = {
     1: (
@@ -53,6 +55,24 @@ BATCHES = {
         ("Toulouse", "https://data.toulouse-metropole.fr", "Europe/Paris"),
         ("Nantes", "https://data.nantesmetropole.fr", "Europe/Paris"),
         ("Raleigh", "https://data.raleighnc.gov", "America/New_York"),
+    ),
+    4: (
+        ("Los Angeles", "https://data.lacity.org", "America/Los_Angeles"),
+        ("Baltimore", "https://data.baltimorecity.gov", "America/New_York"),
+        ("New Orleans", "https://data.nola.gov", "America/Chicago"),
+        ("Edmonton", "https://data.edmonton.ca", "America/Edmonton"),
+        ("Dallas", "https://www.dallasopendata.com", "America/Chicago"),
+    ),
+    5: (
+        ("Washington, DC", "https://opendata.dc.gov", "America/New_York"),
+        ("Ottawa", "https://open.ottawa.ca", "America/Toronto"),
+        ("Vancouver", "https://opendata.vancouver.ca", "America/Vancouver"),
+        (
+            "Bordeaux",
+            "https://opendata.bordeaux-metropole.fr",
+            "Europe/Paris",
+        ),
+        ("Helsinki", "https://hri.fi/data/en_GB", "Europe/Helsinki"),
     ),
 }
 
@@ -129,9 +149,24 @@ async def _audit_dataset(
         )
         result["temporal"] = temporal.as_dict()
 
+        evidence_rows = rows
+        if structure.metric_fields and structure.timestamp_fields:
+            result["stage"] = "observation"
+            observation_rows = await provider.async_observation_rows(
+                resolved.dataset_id,
+                resolved.resource_id,
+                structure.timestamp_fields[0],
+                limit=25,
+            )
+            result["observation_rows"] = len(observation_rows)
+            if observation_rows:
+                evidence_rows = observation_rows
+            else:
+                result["observation_warning"] = "bounded observation query returned no rows"
+
         result["stage"] = "freshness"
         freshness = build_measure_freshness_profiles(
-            rows,
+            evidence_rows,
             metric_fields=structure.metric_fields,
             timestamp_fields=structure.timestamp_fields,
             timezone_name=timezone_name,
@@ -163,6 +198,25 @@ async def _audit_dataset(
     return result
 
 
+async def _targeted_candidates(provider: Any) -> tuple[list[Any], dict[str, Any]]:
+    """Return deduplicated HA-relevant search candidates plus bounded evidence."""
+    found: dict[str, Any] = {}
+    evidence: dict[str, Any] = {}
+    for query in SEARCH_QUERIES:
+        try:
+            matches = await provider.async_search_datasets(query, limit=3)
+        except Exception as err:  # noqa: BLE001 - search failures are diagnostics
+            evidence[query] = {"error_type": type(err).__name__, "error": str(err)[:200]}
+            continue
+        evidence[query] = [
+            {"dataset_id": item.dataset_id, "title": item.title}
+            for item in matches[:3]
+        ]
+        for item in matches:
+            found.setdefault(item.dataset_id, item)
+    return list(found.values()), evidence
+
+
 async def _audit_portal(
     session: aiohttp.ClientSession,
     city: str,
@@ -185,6 +239,12 @@ async def _audit_portal(
         catalog, catalog_errors = await async_discover_catalog(inspected, limit=30)
         report["catalog_size_sampled"] = len(catalog)
         report["catalog_errors"] = catalog_errors
+        report["catalog_titles"] = [
+            {"dataset_id": item.dataset_id, "title": item.title}
+            for item in catalog[:30]
+        ]
+        targeted, search_evidence = await _targeted_candidates(inspected.provider)
+        report["targeted_searches"] = search_evidence
     except Exception as err:  # noqa: BLE001
         report["status"] = "portal_failure"
         report["stage"] = "portal"
@@ -200,10 +260,14 @@ async def _audit_portal(
         )
         return report
 
+    candidates: dict[str, Any] = {}
+    for dataset in (*targeted, *catalog):
+        candidates.setdefault(dataset.dataset_id, dataset)
+
     attempts = 0
     passes = 0
-    for dataset in catalog:
-        if attempts >= max(datasets_per_city * 4, datasets_per_city):
+    for dataset in candidates.values():
+        if attempts >= max(datasets_per_city * 5, 15):
             break
         audited = await _audit_dataset(
             inspected.provider,
@@ -254,6 +318,7 @@ async def _main(output: Path, datasets_per_city: int, batch: int) -> None:
         "city_passes": passes,
         "city_failure_rate": round(1 - passes / max(len(results), 1), 3),
         "datasets_per_city_target": datasets_per_city,
+        "search_queries": list(SEARCH_QUERIES),
         "portals": results,
     }
     output.write_text(
