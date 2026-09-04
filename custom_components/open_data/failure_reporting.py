@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from hashlib import sha256
 import json
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping
 from urllib.parse import urlencode
 
 ISSUE_URL = "https://github.com/jmping/ha-open-data/issues/new"
