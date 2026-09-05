@@ -6,7 +6,12 @@ from dataclasses import dataclass
 import json
 import math
 from pathlib import Path
-from typing import Any
+
+VALIDATION_UNTESTED = "untested"
+VALIDATION_DISCOVERY_ONLY = "discovery_only"
+VALIDATION_PARTIAL = "partial"
+VALIDATION_TESTED = "tested"
+VALIDATION_FAILED = "failed"
 
 
 @dataclass(frozen=True, slots=True)
@@ -19,11 +24,29 @@ class LocalSourceProfile:
     source_type: str
     topics: tuple[str, ...]
     importable: bool
+    validation_status: str = VALIDATION_UNTESTED
+    last_tested_at: str | None = None
+    validation_notes: str | None = None
     formal_bbox: tuple[float, float, float, float] | None = None
     relevance_center: tuple[float, float] | None = None
     relevance_distance_km: float | None = None
     relevance_model: str = "inside"
     authority: str = "public"
+
+    @property
+    def validation_label(self) -> str:
+        """Return a concise user-facing extraction-test provenance label."""
+        labels = {
+            VALIDATION_TESTED: "Tested successfully",
+            VALIDATION_PARTIAL: "Tested — partial support",
+            VALIDATION_FAILED: "Previously failed/unresolved",
+            VALIDATION_DISCOVERY_ONLY: "Discovered — extraction not yet tested",
+            VALIDATION_UNTESTED: "Known source — not yet tested",
+        }
+        label = labels.get(self.validation_status, labels[VALIDATION_UNTESTED])
+        if self.last_tested_at:
+            return f"{label} · last checked {self.last_tested_at}"
+        return label
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +74,17 @@ def _load_profiles() -> tuple[LocalSourceProfile, ...]:
                 source_type=str(item.get("source_type", "unknown")),
                 topics=tuple(str(topic) for topic in item.get("topics", ())),
                 importable=bool(item.get("importable", False)),
+                validation_status=str(item.get("validation_status", VALIDATION_UNTESTED)),
+                last_tested_at=(
+                    str(item["last_tested_at"])
+                    if item.get("last_tested_at")
+                    else None
+                ),
+                validation_notes=(
+                    str(item["validation_notes"])
+                    if item.get("validation_notes")
+                    else None
+                ),
                 formal_bbox=tuple(float(value) for value in bbox) if bbox else None,
                 relevance_center=tuple(float(value) for value in center) if center else None,
                 relevance_distance_km=(
@@ -114,6 +148,10 @@ def rank_local_sources(
         score = 100.0 if applies else 70.0
         if profile.importable:
             score += 10.0
+        if profile.validation_status == VALIDATION_TESTED:
+            score += 5.0
+        elif profile.validation_status == VALIDATION_FAILED:
+            score -= 15.0
         if distance is not None:
             score -= min(distance, 500.0) / 25.0
         ranked.append(RankedLocalSource(profile, applies, distance, score))
