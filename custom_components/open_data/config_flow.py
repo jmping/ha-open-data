@@ -116,6 +116,7 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._preparation_task = None
         self._resolved_sources: dict[str, ResolvedSourceCandidate] = {}
         self._local_sources: dict[str, RankedLocalSource] = {}
+        self._pending_entries: list[dict[str, Any]] = []
 
     @staticmethod
     def async_get_options_flow(
@@ -384,9 +385,8 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 resource_id=reference.resource_id,
             )
         )
-        await self.async_set_unique_id(entry["unique_id"])
-        self._abort_if_unique_id_configured()
-        return self.async_create_entry(title=entry[CONF_TITLE], data=entry["data"])
+        self._pending_entries = [entry]
+        return await self.async_step_activate()
 
     async def async_step_prepare(
         self, user_input: dict[str, Any] | None = None
@@ -443,20 +443,8 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     )
                     errors["base"] = "unknown"
                 else:
-                    first = entries[0]
-                    for extra in entries[1:]:
-                        self.hass.async_create_task(
-                            self.hass.config_entries.flow.async_init(
-                                DOMAIN,
-                                context={"source": config_entries.SOURCE_IMPORT},
-                                data=extra,
-                            )
-                        )
-                    await self.async_set_unique_id(first["unique_id"])
-                    self._abort_if_unique_id_configured()
-                    return self.async_create_entry(
-                        title=first[CONF_TITLE], data=first["data"]
-                    )
+                    self._pending_entries = entries
+                    return await self.async_step_activate()
         options = [
             SelectOptionDict(
                 value=c.dataset.dataset_id,
@@ -478,6 +466,39 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 "portal": self._portal_url or "",
                 "count": str(len(options)),
                 "provider": self._provider_name or "",
+            },
+        )
+
+    async def async_step_activate(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Explicitly cross from prepared datasets into active HA config entries."""
+        if not self._pending_entries:
+            return self.async_abort(reason="no_pending_datasets")
+        first = self._pending_entries[0]
+        if user_input is not None:
+            for extra in self._pending_entries[1:]:
+                self.hass.async_create_task(
+                    self.hass.config_entries.flow.async_init(
+                        DOMAIN,
+                        context={"source": config_entries.SOURCE_IMPORT},
+                        data=extra,
+                    )
+                )
+            await self.async_set_unique_id(first["unique_id"])
+            self._abort_if_unique_id_configured()
+            return self.async_create_entry(
+                title=first[CONF_TITLE], data=first["data"]
+            )
+        titles = ", ".join(entry[CONF_TITLE] for entry in self._pending_entries[:5])
+        if len(self._pending_entries) > 5:
+            titles = f"{titles}, +{len(self._pending_entries) - 5} more"
+        return self.async_show_form(
+            step_id="activate",
+            data_schema=vol.Schema({}),
+            description_placeholders={
+                "count": str(len(self._pending_entries)),
+                "datasets": titles,
             },
         )
 
