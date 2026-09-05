@@ -111,6 +111,40 @@
           "record_label_fields": "Record label fields"
         }
       },
+      "records": {
+        "title": "Review imported records and measurements",
+        "description": "Observation time: {temporal_status} using {timestamp_strategy} ({timestamp_confidence} confidence). Timezone: {timezone} ({timezone_source}). {stale_count} measurements are currently classified stale and are excluded by default unless you select them. Record mode: {record_mode}. This review observed {record_count} records/locations and estimates {entity_estimate} measurement entities from the current bounded selection. If the provider returns the full cardinality cap, Open Data does not show that truncated list as if it were complete.",
+        "data": {
+          "selected_records": "Records, stations, or locations",
+          "selected_fields": "Measurements (freshness shown in label)"
+        }
+      },
+      "semantics": {
+        "title": "Review what the data means",
+        "description": "Different clocks and numeric fields can mean very different things. Assign timestamp roles and measurement behavior when automatic inference is wrong. Categories must not overlap. These semantics are provider-independent and affect how Open Data interprets freshness, state, and history.",
+        "data": {
+          "timestamp_field": "Primary observation/event timestamp",
+          "time_role_fields__observation": "Observation / measurement time fields",
+          "time_role_fields__event": "Event occurrence time fields",
+          "time_role_fields__as_of": "As-of / effective time fields",
+          "time_role_fields__published": "Publication / issue time fields",
+          "time_role_fields__updated": "Source update time fields",
+          "time_role_fields__start": "Start / onset time fields",
+          "time_role_fields__end": "End / expiry time fields",
+          "time_role_fields__previous_event": "Previous / prior event time fields",
+          "time_role_fields__other": "Other time fields",
+          "measure_kind_fields__instantaneous": "Current / instantaneous measurements",
+          "measure_kind_fields__cumulative": "Cumulative counters / totals",
+          "measure_kind_fields__interval_amount": "Amounts or volumes for an interval",
+          "measure_kind_fields__duration": "Elapsed time / duration measurements",
+          "measure_kind_fields__event_count": "Cumulative event counts",
+          "measure_kind_fields__event_occurrence": "Event occurrence / indicator fields",
+          "measure_kind_fields__rate": "Rates / speeds / flows",
+          "measure_kind_fields__status": "Status / state fields",
+          "measure_kind_fields__category": "Category / nominal fields",
+          "measure_kind_fields__unknown": "Unknown behavior / do not assume"
+        }
+      },
       "temporal": {
         "title": "Timestamp and timezone override",
         "description": "Use automatic inference unless the source's observation time was misunderstood. A user-selected timestamp field is persisted and reused on every refresh. Enter an IANA timezone such as America/Detroit or Europe/Paris for naive local timestamps.",
@@ -119,18 +153,11 @@
           "timestamp_field": "Observation timestamp field",
           "timezone": "IANA timezone"
         }
-      },
-      "records": {
-        "title": "Review imported records and measurements",
-        "description": "Observation time: {temporal_status} using {timestamp_strategy} ({timestamp_confidence} confidence). Timezone: {timezone} ({timezone_source}). {stale_count} measurements are currently classified stale and are excluded by default unless you select them. Record mode: {record_mode}. This review observed {record_count} records/locations and estimates {entity_estimate} measurement entities from the current bounded selection. If the provider returns the full cardinality cap, Open Data does not show that truncated list as if it were complete.",
-        "data": {
-          "selected_records": "Records, stations, or locations",
-          "selected_fields": "Measurements (freshness shown in label)"
-        }
       }
     },
     "error": {
       "invalid_field_roles": "One or more field assignments were invalid. Review the selected fields and try again.",
+      "invalid_semantics": "A timestamp or measurement was assigned to more than one semantic category. Each field can have only one meaning.",
       "invalid_timezone": "Enter a valid IANA timezone name, for example America/Detroit or Europe/Paris.",
       "invalid_timestamp_field": "Choose a timestamp field from this dataset."
     }
