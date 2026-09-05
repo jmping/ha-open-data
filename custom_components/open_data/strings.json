@@ -142,9 +142,51 @@
         "data": {
           "timestamp_field": "Primary observation/event timestamp",
           "time_role_fields__observation": "Observation / measurement time fields",
-          "time_role_fields__event": "Event occurrence time fields"
+          "time_role_fields__event": "Event occurrence time fields",
+          "time_role_fields__as_of": "As-of / effective time fields",
+          "time_role_fields__published": "Publication / issue time fields",
+          "time_role_fields__updated": "Source update time fields",
+          "time_role_fields__start": "Start / onset time fields",
+          "time_role_fields__end": "End / expiry time fields",
+          "time_role_fields__previous_event": "Previous / prior event time fields",
+          "time_role_fields__other": "Other time fields",
+          "measure_kind_fields__instantaneous": "Current / instantaneous measurements",
+          "measure_kind_fields__cumulative": "Cumulative counters / totals",
+          "measure_kind_fields__interval_amount": "Amounts or volumes for an interval",
+          "measure_kind_fields__duration": "Elapsed time / duration measurements",
+          "measure_kind_fields__event_count": "Cumulative event counts",
+          "measure_kind_fields__event_occurrence": "Event occurrence / indicator fields",
+          "measure_kind_fields__rate": "Rates / speeds / flows",
+          "measure_kind_fields__status": "Status / state fields",
+          "measure_kind_fields__category": "Category / nominal fields",
+          "measure_kind_fields__unknown": "Unknown behavior / do not assume"
+        }
+      },
+      "temporal": {
+        "title": "Adjust timestamp and timezone",
+        "description": "Open Data starts with automatic inference. Override it here only if the source's observation time or timezone was misunderstood. A user-selected timestamp field is persisted and reused on every refresh. Enter an IANA timezone such as America/Detroit or Europe/Paris for naive local timestamps.",
+        "data": {
+          "temporal_mode": "Timestamp strategy",
+          "timestamp_field": "Observation timestamp field",
+          "timezone": "IANA timezone"
         }
       }
+    },
+    "error": {
+      "invalid_field_roles": "One or more field assignments were invalid. Review the selected fields and try again.",
+      "invalid_semantics": "A timestamp or measurement was assigned to more than one semantic category. Each field can have only one meaning.",
+      "invalid_timezone": "Enter a valid IANA timezone name, for example America/Detroit or Europe/Paris.",
+      "invalid_timestamp_field": "Choose a timestamp field from this dataset.",
+      "invalid_relationship": "Each structural dyad must have two different known fields and may belong to only one relationship category."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "dataset_status": {
+        "name": "Dataset status",
+        "state": {"data_available": "Data available", "no_data": "No data"}
+      },
+      "latest_observation": {"name": "Latest observation"}
     }
   }
 }
