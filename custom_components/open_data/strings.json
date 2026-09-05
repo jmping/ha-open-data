@@ -4,9 +4,9 @@
     "step": {
       "user": {
         "title": "Open Data Importer",
-        "description": "Paste a portal, catalog, dataset page, resource/API URL, or dataset ID. Dataset links import only that dataset; portal roots start bounded catalog discovery.",
+        "description": "Add public data by pasting a portal or dataset URL. If you are not sure what source to use, local discovery is planned but is not available in this release yet.",
         "data": {
-          "source_location": "Portal or dataset URL / ID",
+          "source_location": "Public data portal or dataset URL / ID",
           "portal_url": "Portal URL for a bare ID (optional)"
         }
       },
