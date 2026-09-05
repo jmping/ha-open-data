@@ -55,7 +55,8 @@ from .record_structure import build_record_structure, load_record_structure
 CONF_MANUAL_CHILD = "manual_relationship_child"
 CONF_MANUAL_PARENT = "manual_relationship_parent"
 CONF_MANUAL_RELATION = "manual_relationship_type"
-_DYAD_PREFIX = "hierarchy_relationship__"
+_DYAD_GROUP_PREFIX = "relationship_keys__"
+_DYAD_SEPARATOR = "\u001f"
 _MAX_EDITABLE_DYADS = 40
 
 _RELATION_LABELS = {
@@ -68,10 +69,6 @@ _RELATION_LABELS = {
 
 class OpenDataDyadOptionsFlow(OpenDataOptionsFlow):
     """Let users improve one aspect of an import without replaying onboarding."""
-
-    def __init__(self, config_entry) -> None:
-        super().__init__(config_entry)
-        self._relationship_rows: tuple[HierarchyRelationship, ...] = ()
 
     @staticmethod
     def _relation_selector() -> SelectSelector:
@@ -97,6 +94,19 @@ class OpenDataDyadOptionsFlow(OpenDataOptionsFlow):
                 sort=False,
             )
         )
+
+    @staticmethod
+    def _dyad_value(item: HierarchyRelationship) -> str:
+        return f"{item.child_field}{_DYAD_SEPARATOR}{item.parent_field}"
+
+    @staticmethod
+    def _dyad_key(value: str) -> tuple[str, str] | None:
+        if _DYAD_SEPARATOR not in value:
+            return None
+        child, parent = value.split(_DYAD_SEPARATOR, 1)
+        if not child or not parent or child == parent:
+            return None
+        return (child, parent)
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -174,15 +184,13 @@ class OpenDataDyadOptionsFlow(OpenDataOptionsFlow):
     def _dyad_label(item: HierarchyRelationship) -> str:
         evidence = item.evidence
         suffix = (
-            f"{evidence.observed_children} children; "
-            f"{evidence.multi_parent_children} conflicts"
+            f"{evidence.observed_children} child values; "
+            f"{evidence.multi_parent_children} conflicts; "
+            f"{item.confidence:.0%} confidence"
             if evidence.observed_children
             else "legacy/user relationship; no current bounded evidence"
         )
-        return (
-            f"{item.child_field} → {item.parent_field} · "
-            f"{item.relation} · {suffix}"
-        )
+        return f"{item.child_field} → {item.parent_field} · {suffix}"
 
     def _persist_relationships(
         self, relationships: tuple[HierarchyRelationship, ...]
@@ -233,10 +241,11 @@ class OpenDataDyadOptionsFlow(OpenDataOptionsFlow):
     async def async_step_relationships(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Review child -> parent dyads instead of forcing one hierarchy tree."""
+        """Review known child -> parent dyads without forcing one hierarchy tree."""
         fields = self._candidate_fields()
         current = self._current_relationships()
-        self._relationship_rows = current[:_MAX_EDITABLE_DYADS]
+        editable = current[:_MAX_EDITABLE_DYADS]
+        by_key = {item.key: item for item in current}
         errors: dict[str, str] = {}
 
         if user_input is not None:
@@ -246,13 +255,24 @@ class OpenDataDyadOptionsFlow(OpenDataOptionsFlow):
             if identity:
                 stable_ids = tuple(dict.fromkeys((*stable_ids, identity)))
 
-            updated: dict[tuple[str, str], HierarchyRelationship] = {
-                item.key: item for item in current
-            }
-            for index, item in enumerate(self._relationship_rows):
-                relation = str(
-                    submitted.pop(f"{_DYAD_PREFIX}{index}", item.relation)
-                )
+            assignments: dict[tuple[str, str], str] = {}
+            for relation in RELATION_KINDS:
+                selected = submitted.pop(f"{_DYAD_GROUP_PREFIX}{relation}", ()) or ()
+                if isinstance(selected, str):
+                    selected = [selected]
+                for raw_value in selected:
+                    key = self._dyad_key(str(raw_value))
+                    if key is None or key not in {item.key for item in editable}:
+                        errors["base"] = "invalid_relationship"
+                        continue
+                    if key in assignments:
+                        errors["base"] = "invalid_relationship"
+                        continue
+                    assignments[key] = relation
+
+            updated: dict[tuple[str, str], HierarchyRelationship] = dict(by_key)
+            for item in editable:
+                relation = assignments.get(item.key, RELATION_UNKNOWN)
                 updated[item.key] = apply_user_relationship(
                     item,
                     relation,
@@ -271,9 +291,7 @@ class OpenDataDyadOptionsFlow(OpenDataOptionsFlow):
                 elif child not in fields or parent not in fields:
                     errors["base"] = "invalid_relationship"
                 else:
-                    evidence = analyze_relationship(
-                        self._evidence_rows(), child, parent
-                    )
+                    evidence = analyze_relationship(self._evidence_rows(), child, parent)
                     updated[evidence.key] = apply_user_relationship(
                         evidence,
                         relation,
@@ -290,14 +308,35 @@ class OpenDataDyadOptionsFlow(OpenDataOptionsFlow):
                         ),
                     )
                 )
-                options = self._persist_relationships(relationships)
-                return self.async_create_entry(title="", data=options)
+                return self.async_create_entry(
+                    title="", data=self._persist_relationships(relationships)
+                )
 
+        choices = [
+            SelectOptionDict(value=self._dyad_value(item), label=self._dyad_label(item))
+            for item in editable
+        ]
         schema: dict[Any, Any] = {}
-        for index, item in enumerate(self._relationship_rows):
-            schema[
-                vol.Required(f"{_DYAD_PREFIX}{index}", default=item.relation)
-            ] = self._relation_selector()
+        if choices:
+            selector = SelectSelector(
+                SelectSelectorConfig(
+                    options=choices,
+                    multiple=True,
+                    mode=SelectSelectorMode.LIST,
+                    sort=False,
+                )
+            )
+            for relation in RELATION_KINDS:
+                schema[
+                    vol.Optional(
+                        f"{_DYAD_GROUP_PREFIX}{relation}",
+                        default=[
+                            self._dyad_value(item)
+                            for item in editable
+                            if item.relation == relation
+                        ],
+                    )
+                ] = selector
 
         if fields:
             schema[vol.Optional(CONF_MANUAL_CHILD, default="")] = self._field_selector(
@@ -312,7 +351,7 @@ class OpenDataDyadOptionsFlow(OpenDataOptionsFlow):
 
         warnings = relationship_warnings(current)
         warning_text = " | ".join(warnings[:4]) if warnings else "none"
-        hidden = max(0, len(current) - len(self._relationship_rows))
+        hidden = max(0, len(current) - len(editable))
         return self.async_show_form(
             step_id="relationships",
             data_schema=vol.Schema(schema),
