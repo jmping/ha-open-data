@@ -95,7 +95,13 @@ def test_registry_persists_success_and_reuses_running_task() -> None:
         async def async_save(self, value):
             saved.append(value)
 
+    class FakeHass:
+        @staticmethod
+        def async_create_background_task(coro, _name):
+            return asyncio.create_task(coro)
+
     registry = object.__new__(preparation.PreparationRegistry)
+    registry._hass = FakeHass()
     registry._store = FakeStore()
     registry._sites = {}
     registry._tasks = {}

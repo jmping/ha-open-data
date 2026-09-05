@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+from functools import partial
 import logging
 from typing import Any
 
@@ -97,6 +99,11 @@ _INTEGRATION_VERSION = "0.2.0"
 _LOGGER = logging.getLogger(__name__)
 
 
+async def _async_wait_for_background_preparation(task: asyncio.Task[None]) -> None:
+    """Let a flow observe preparation without owning or cancelling the work."""
+    await asyncio.shield(task)
+
+
 class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle local discovery, webpage resolution, and known data sources."""
 
@@ -154,10 +161,13 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Suggest source profiles relevant to Home Assistant's configured location."""
-        ranked = rank_local_sources(
-            self.hass.config.latitude,
-            self.hass.config.longitude,
-            importable_only=True,
+        ranked = await self.hass.async_add_executor_job(
+            partial(
+                rank_local_sources,
+                self.hass.config.latitude,
+                self.hass.config.longitude,
+                importable_only=True,
+            )
         )
         self._local_sources = {item.profile.url: item for item in ranked}
         if user_input is not None:
@@ -329,7 +339,11 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return self._portal_url or portal_url, self._provider_name or "", candidates
 
         self._portal_url = portal_url
-        self._preparation_task = registry.start(portal_url, _prepare)
+        background_task = registry.start(portal_url, _prepare)
+        self._preparation_task = self.hass.async_create_task(
+            _async_wait_for_background_preparation(background_task),
+            f"Wait for Open Data catalog preparation: {portal_url}",
+        )
         return await self.async_step_prepare()
 
     async def async_step_portal(self, user_input: dict[str, Any] | None = None) -> FlowResult:
@@ -483,7 +497,8 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         datasets, _errors = await async_discover_catalog(
             inspected, limit=_CATALOG_LIMIT
         )
-        return rank_datasets(datasets)[:_DISCOVERY_LIMIT]
+        ranked = await self.hass.async_add_executor_job(rank_datasets, datasets)
+        return ranked[:_DISCOVERY_LIMIT]
 
     async def _async_prepare_dataset_entry(
         self, discovered: OpenDataDataset
@@ -502,7 +517,9 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         sample_rows = await provider.async_sample_rows(
             dataset.dataset_id, dataset.resource_id, limit=80
         )
-        structure = analyze_dataset(dataset, sample_rows)
+        structure = await self.hass.async_add_executor_job(
+            analyze_dataset, dataset, sample_rows
+        )
         candidate = score_dataset(dataset)
         temporal = resolve_temporal_plan(
             tuple(field.name for field in dataset.fields),
@@ -535,7 +552,8 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             hierarchy_fields=structure.hierarchy_fields,
         )
         inferred_relationships = infer_relationships(sample_rows, structural_fields)
-        reference_relationships = fips_relationship_hints(
+        reference_relationships = await self.hass.async_add_executor_job(
+            fips_relationship_hints,
             sample_rows,
             tuple(field.name for field in dataset.fields),
         )

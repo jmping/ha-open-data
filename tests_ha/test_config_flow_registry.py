@@ -7,6 +7,10 @@ from unittest.mock import AsyncMock, Mock, patch
 from homeassistant import config_entries
 from homeassistant.data_entry_flow import FlowResultType
 
+from custom_components.open_data.config_flow import (
+    OpenDataConfigFlow,
+    _async_wait_for_background_preparation,
+)
 from custom_components.open_data.const import DOMAIN, PROVIDER_CKAN
 from custom_components.open_data.options_dyads import OpenDataDyadOptionsFlow
 from custom_components.open_data.discovery import score_dataset
@@ -130,6 +134,49 @@ async def test_options_menu_has_resumable_menu_handler(hass) -> None:
     assert result["type"] is FlowResultType.MENU
     assert result["step_id"] == "menu"
     assert resumed["type"] is FlowResultType.MENU
+
+
+async def test_local_source_file_is_loaded_off_the_event_loop(hass) -> None:
+    """Packaged source profiles must not perform file I/O on HA's event loop."""
+    flow = OpenDataConfigFlow()
+    flow.hass = hass
+
+    with patch(
+        "custom_components.open_data.config_flow.rank_local_sources",
+        return_value=[],
+    ) as rank:
+        result = await flow.async_step_local()
+
+    assert result["type"] is FlowResultType.ABORT
+    rank.assert_called_once_with(
+        hass.config.latitude,
+        hass.config.longitude,
+        importable_only=True,
+    )
+
+
+async def test_leaving_flow_does_not_cancel_background_preparation(hass) -> None:
+    """The registry-owned catalog job must outlive its config-flow observer."""
+    preparation = hass.async_create_background_task(
+        _never_finishes(),
+        "Test Open Data preparation",
+    )
+    observer = hass.async_create_task(
+        _async_wait_for_background_preparation(preparation),
+        "Test Open Data preparation observer",
+    )
+
+    await asyncio.sleep(0)
+    observer.cancel()
+    with suppress(asyncio.CancelledError):
+        await observer
+
+    assert not preparation.cancelled()
+    assert not preparation.done()
+
+    preparation.cancel()
+    with suppress(asyncio.CancelledError):
+        await preparation
 
 
 async def _never_finishes() -> None:

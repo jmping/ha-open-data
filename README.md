@@ -170,7 +170,7 @@ See [Project plan](docs/PLAN.md), [Issue 6 future plan](docs/ISSUE6_FUTURE_PLAN.
 
 ## Validation and contribution rules
 
-Every relevant pull request runs compilation, regression tests, Ruff, repository metadata validation, and Home Assistant lifecycle tests. The compatibility gate is pinned to Home Assistant 2026.9.0 for the 0.2.0 release. Scheduled/manual jobs exercise representative live portal and GTFS corpora separately from normal CI.
+Every relevant pull request runs compilation, regression tests, Ruff, repository metadata validation, and Home Assistant lifecycle tests. The 0.2 compatibility gate covers a rolling year of Home Assistant monthly releases (currently 2025.9 through 2026.9), including full lifecycle checks at the oldest supported release, runtime transition boundaries, the previous release, and current stable. Scheduled/manual jobs exercise representative live portal and GTFS corpora separately from normal CI.
 
 Useful contributions include:
 
