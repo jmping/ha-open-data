@@ -4,7 +4,7 @@
     "step": {
       "user": {
         "title": "Add Open Data",
-        "description": "Choose how you want Open Data to find the public data source.",
+        "description": "Choose how you want Open Data to find the public data source. Open Data will inspect the source, infer useful fields and data meaning, and create an initial import automatically. You can refine variables, records, timestamp meaning, measurement categories, timezone, and structure later from Configure.",
         "menu_options": {
           "local": "Find useful data for my area",
           "website": "Add from a website or dashboard",
@@ -13,28 +13,28 @@
       },
       "local": {
         "title": "Find useful data for my area",
-        "description": "Sources are ranked using your Home Assistant location, formal coverage, practical relevance, and extraction-test history. 'Tested' means the source has actually been exercised by the Open Data extraction corpus; discovered/untested sources may still require new resolver or provider support.",
+        "description": "Sources are ranked using your Home Assistant location, formal coverage, practical relevance, and extraction-test history. 'Tested' means the source has actually been exercised by the Open Data extraction corpus; discovered/untested sources may still require new resolver or provider support. Choose a source to let Open Data inspect and import it with inferred defaults; you can adjust the resulting import later from Configure.",
         "data": {
           "source_profile": "Public data source"
         }
       },
       "website": {
         "title": "Find the data behind a website",
-        "description": "Paste a public webpage, dashboard, chart, portal, or data page. Open Data will inspect bounded public page evidence for upstream APIs, files, feeds, spreadsheets, and embedded data services without executing arbitrary page JavaScript.",
+        "description": "Paste a public webpage, dashboard, chart, portal, or data page. Open Data will inspect bounded public page evidence for upstream APIs, files, feeds, spreadsheets, and embedded data services without executing arbitrary page JavaScript. If a usable source is found, Open Data will infer an initial import; you can correct variables and categories later from Configure.",
         "data": {
           "source_location": "Public website or dashboard URL"
         }
       },
       "resolved_source": {
         "title": "Choose an upstream data source",
-        "description": "Open Data found these likely machine-readable sources behind the page. Choose the source that should be inspected next. A resolved source may still require provider/feed support before it can be imported.",
+        "description": "Open Data found these likely machine-readable sources behind the page. Choose the source that should be inspected next. A resolved source may still require provider/feed support before it can be imported. Successful imports start with inferred settings that remain editable later.",
         "data": {
           "resolved_source": "Resolved data source"
         }
       },
       "known": {
         "title": "Add a known data source",
-        "description": "Paste a portal, catalog, dataset page, resource/API URL, or dataset ID. Dataset links import only that dataset; portal roots start bounded catalog discovery.",
+        "description": "Paste a portal, catalog, dataset page, resource/API URL, or dataset ID. Dataset links import only that dataset; portal roots start bounded catalog discovery. Open Data will infer the initial variables and interpretation automatically, and you can revise them later from Configure.",
         "data": {
           "source_location": "Portal, dataset, API URL, or ID",
           "portal_url": "Portal URL for a bare ID (optional)"
@@ -57,7 +57,7 @@
       },
       "discover": {
         "title": "Choose discovered datasets",
-        "description": "Found {count} ranked datasets on {portal} using {provider}. Dataset preparation will infer fields, observation time, freshness, stable records, timestamp semantics, and measurement behavior before creating Home Assistant entities.",
+        "description": "Found {count} ranked datasets on {portal} using {provider}. Select what you want to import. Open Data will infer fields, observation time, freshness, stable records, timestamp semantics, and measurement behavior automatically. The initial choices are not permanent: use Configure afterward to change variables, records, categories, timestamps, timezone, or structure.",
         "data": {
           "dataset_ids": "Datasets"
         }
@@ -87,8 +87,8 @@
   "options": {
     "step": {
       "init": {
-        "title": "Advanced field review",
-        "description": "Dataset structure: {kind}. Automatic assignments are preselected. Change these only when the importer misunderstood which columns describe location, time, measurements, or context.",
+        "title": "Adjust inferred fields",
+        "description": "Open Data created the import using automatic inference. Dataset structure: {kind}. The current assignments are preselected below; change only what you want to improve, such as which columns describe location, time, measurements, or context.",
         "data": {
           "field_role_fields__location": "Location fields",
           "field_role_fields__time": "Time fields",
@@ -99,8 +99,8 @@
         }
       },
       "structure": {
-        "title": "Advanced unit and hierarchy review",
-        "description": "Define stable units and observations only when automatic structure inference needs correction. Hierarchy sets run from broadest to most specific.",
+        "title": "Adjust units and hierarchy",
+        "description": "These settings refine an existing import. Define stable units and observations only when automatic structure inference needs correction. Hierarchy sets run from broadest to most specific.",
         "data": {
           "hierarchy_fields": "Hierarchy set 1 — broadest to smallest",
           "hierarchy_fields__2": "Hierarchy set 2 — broadest to smallest (optional)",
@@ -111,26 +111,53 @@
           "record_label_fields": "Record label fields"
         }
       },
+      "records": {
+        "title": "Adjust imported records and measurements",
+        "description": "These are the current inferred/imported choices. Observation time: {temporal_status} using {timestamp_strategy} ({timestamp_confidence} confidence). Timezone: {timezone} ({timezone_source}). {stale_count} measurements are currently classified stale and are excluded by default unless you select them. Record mode: {record_mode}. This review observed {record_count} records/locations and estimates {entity_estimate} measurement entities from the current bounded selection. If the provider returns the full cardinality cap, Open Data does not show that truncated list as if it were complete.",
+        "data": {
+          "selected_records": "Records, stations, or locations",
+          "selected_fields": "Measurements (freshness shown in label)"
+        }
+      },
+      "semantics": {
+        "title": "Adjust what the data means",
+        "description": "Open Data inferred these meanings during import. Change them only when the source uses a different meaning. Different clocks and numeric fields can represent observation time, publication time, cumulative totals, interval amounts, event counts, status values, and more. Categories must not overlap.",
+        "data": {
+          "timestamp_field": "Primary observation/event timestamp",
+          "time_role_fields__observation": "Observation / measurement time fields",
+          "time_role_fields__event": "Event occurrence time fields",
+          "time_role_fields__as_of": "As-of / effective time fields",
+          "time_role_fields__published": "Publication / issue time fields",
+          "time_role_fields__updated": "Source update time fields",
+          "time_role_fields__start": "Start / onset time fields",
+          "time_role_fields__end": "End / expiry time fields",
+          "time_role_fields__previous_event": "Previous / prior event time fields",
+          "time_role_fields__other": "Other time fields",
+          "measure_kind_fields__instantaneous": "Current / instantaneous measurements",
+          "measure_kind_fields__cumulative": "Cumulative counters / totals",
+          "measure_kind_fields__interval_amount": "Amounts or volumes for an interval",
+          "measure_kind_fields__duration": "Elapsed time / duration measurements",
+          "measure_kind_fields__event_count": "Cumulative event counts",
+          "measure_kind_fields__event_occurrence": "Event occurrence / indicator fields",
+          "measure_kind_fields__rate": "Rates / speeds / flows",
+          "measure_kind_fields__status": "Status / state fields",
+          "measure_kind_fields__category": "Category / nominal fields",
+          "measure_kind_fields__unknown": "Unknown behavior / do not assume"
+        }
+      },
       "temporal": {
-        "title": "Timestamp and timezone override",
-        "description": "Use automatic inference unless the source's observation time was misunderstood. A user-selected timestamp field is persisted and reused on every refresh. Enter an IANA timezone such as America/Detroit or Europe/Paris for naive local timestamps.",
+        "title": "Adjust timestamp and timezone",
+        "description": "Open Data starts with automatic inference. Override it here only if the source's observation time or timezone was misunderstood. A user-selected timestamp field is persisted and reused on every refresh. Enter an IANA timezone such as America/Detroit or Europe/Paris for naive local timestamps.",
         "data": {
           "temporal_mode": "Timestamp strategy",
           "timestamp_field": "Observation timestamp field",
           "timezone": "IANA timezone"
         }
-      },
-      "records": {
-        "title": "Review imported records and measurements",
-        "description": "Observation time: {temporal_status} using {timestamp_strategy} ({timestamp_confidence} confidence). Timezone: {timezone} ({timezone_source}). {stale_count} measurements are currently classified stale and are excluded by default unless you select them. Record mode: {record_mode}. This review observed {record_count} records/locations and estimates {entity_estimate} measurement entities from the current bounded selection. If the provider returns the full cardinality cap, Open Data does not show that truncated list as if it were complete.",
-        "data": {
-          "selected_records": "Records, stations, or locations",
-          "selected_fields": "Measurements (freshness shown in label)"
-        }
       }
     },
     "error": {
       "invalid_field_roles": "One or more field assignments were invalid. Review the selected fields and try again.",
+      "invalid_semantics": "A timestamp or measurement was assigned to more than one semantic category. Each field can have only one meaning.",
       "invalid_timezone": "Enter a valid IANA timezone name, for example America/Detroit or Europe/Paris.",
       "invalid_timestamp_field": "Choose a timestamp field from this dataset."
     }
