@@ -90,3 +90,45 @@ def test_explicit_timestamp_offset_is_not_reinterpreted_as_local_time() -> None:
     )
     assert parsed is not None
     assert parsed.utcoffset().total_seconds() == 0
+
+
+def test_parseable_period_is_discovered_from_values() -> None:
+    rows = [
+        {"site": "A", "period": "2025-09-18T02:00:00", "rainfall": 0.01},
+        {"site": "A", "period": "2025-09-18T02:15:00", "rainfall": 0.0},
+    ]
+
+    resolution = policy.resolve_temporal_plan(
+        tuple(rows[0]),
+        rows,
+        home_assistant_timezone="America/Detroit",
+        now=datetime(2026, 9, 5, 12, tzinfo=ZoneInfo("America/Detroit")),
+    )
+
+    assert resolution.plan is not None
+    assert resolution.plan.field_map == {"timestamp": "period"}
+
+
+def test_single_sampledate_row_is_usable_without_name_separator() -> None:
+    rows = [{"sampledate": "2019-06-13T16:09:59Z", "pfoaresult": 2.1}]
+
+    resolution = policy.resolve_temporal_plan(
+        tuple(rows[0]),
+        rows,
+        home_assistant_timezone="America/Detroit",
+        now=datetime(2026, 9, 5, 12, tzinfo=ZoneInfo("America/Detroit")),
+    )
+
+    assert resolution.plan is not None
+    assert resolution.plan.field_map == {"timestamp": "sampledate"}
+
+
+def test_numeric_identifier_is_not_inferred_as_timestamp_from_value_alone() -> None:
+    resolution = policy.resolve_temporal_plan(
+        ("asset", "reading"),
+        [{"asset": "1725494400000", "reading": 3.1}],
+        home_assistant_timezone="UTC",
+        now=datetime(2026, 9, 5, 12, tzinfo=ZoneInfo("UTC")),
+    )
+
+    assert resolution.plan is None

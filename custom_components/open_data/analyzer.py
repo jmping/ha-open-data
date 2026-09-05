@@ -12,8 +12,9 @@ from .ontology import map_fields, match_dataset_profile
 
 _IDENTIFIER_TERMS = (
     "station_id", "site_id", "monitor_id", "sensor_id", "gage_id", "gauge_id",
-    "well_id", "facility_id", "location_id", "asset_id", "objectid", "fips",
-    "fipscode", "geoid", "code", "id",
+    "well_id", "facility_id", "location_id", "asset_id", "water_system_id",
+    "water_system_number", "wssn", "objectid", "fips", "fipscode", "geoid",
+    "code", "id",
 )
 _DISPLAY_TERMS = (
     "station_name", "site_name", "monitor_name", "location_name", "facility_name",
@@ -35,6 +36,15 @@ _GEOMETRY_TYPES = {
     "point", "multipoint", "line", "multiline", "linestring", "multilinestring",
     "polygon", "multipolygon", "location",
 }
+_SAMPLED_METRIC_TERMS = (
+    "amount", "average", "battery", "concentration", "count", "current",
+    "depth", "diameter", "distance", "duration", "energy", "flow", "height",
+    "humidity", "index", "level", "mean", "measurement", "median", "occupancy",
+    "oxygen", "ph", "power", "precip", "pressure", "rain", "rate", "raw",
+    "reading", "result", "score", "speed", "sum", "temperature", "tonnage",
+    "total", "turbidity", "value", "velocity", "voltage", "volume", "weight",
+    "wind",
+)
 
 
 def _norm(value: str) -> str:
@@ -133,6 +143,20 @@ def _looks_temporal(value: Any) -> bool:
         return True
     except ValueError:
         return bool(re.fullmatch(r"\d{4}[-/]\d{1,2}[-/]\d{1,2}.*", candidate))
+
+
+def _looks_sampled_metric_field(field: str) -> bool:
+    """Return whether a numeric fallback field has measurement-like semantics."""
+    normalized = _norm(field)
+    tokens = set(normalized.split("_"))
+    return any(
+        term in tokens
+        or (
+            len(term) >= 4
+            and (normalized.startswith(term) or normalized.endswith(term))
+        )
+        for term in _SAMPLED_METRIC_TERMS
+    )
 
 
 def _temporal_fields(
@@ -429,25 +453,42 @@ def analyze_dataset(
         if name not in {identity, display, timestamp, geometry_field}
         and any(term == _norm(name) or term in _norm(name) for term in _HIERARCHY_TERMS)
     )
-    metric_fields = tuple(
+    mapped_metric_fields = tuple(
         name
         for name, metric in mappings.items()
         if metric not in {"station", "timestamp", "latitude", "longitude"}
     )
     ignored = tuple(name for name in fields if name in provider_helper_fields)
 
-    numeric_observation = any(
-        name not in {
-            identity, display, timestamp, geometry_field,
-            *identity_fields, *display_fields, *timestamp_fields, *location_fields,
-            *hierarchy,
-        }
+    structural_fields = {
+        identity,
+        display,
+        timestamp,
+        geometry_field,
+        *identity_fields,
+        *display_fields,
+        *timestamp_fields,
+        *location_fields,
+        *hierarchy,
+    }
+    sampled_metric_fields = tuple(
+        name
+        for name in semantic_fields
+        if name not in structural_fields
+        and _looks_sampled_metric_field(name)
         and (
             values := [row.get(name) for row in rows if row.get(name) not in (None, "")]
         )
         and sum(_looks_numeric(value) for value in values) / len(values) >= 0.6
-        for name in semantic_fields
     )
+    # Ontology matches remain the strongest evidence, while bounded numeric
+    # evidence keeps valid city-specific analyte/readout names from disappearing
+    # merely because the global vocabulary has not learned them yet.
+    metric_fields = tuple(
+        dict.fromkeys((*mapped_metric_fields, *sampled_metric_fields))
+    )
+
+    numeric_observation = bool(sampled_metric_fields)
 
     if timestamp and identity and (metric_fields or numeric_observation):
         kind = "time_series"

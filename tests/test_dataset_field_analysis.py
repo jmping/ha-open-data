@@ -66,3 +66,36 @@ def test_low_level_boundary_remains_explainable() -> None:
 
     assert isinstance(result, FieldRoles)
     assert result.as_assignments()["temperature"] == FIELD_ROLE_DATA
+
+
+def test_dataset_boundary_uses_samples_for_unmapped_numeric_readouts() -> None:
+    dataset = OpenDataDataset(
+        dataset_id="air-quality",
+        title="Municipal readings",
+        fields=(
+            OpenDataField("location_name", "Location", "text"),
+            OpenDataField("period", "Period", "text"),
+            OpenDataField("pm2point5_raw", "Raw channel", "number"),
+            OpenDataField("largest_pollutant_name", "Largest pollutant", "text"),
+        ),
+    )
+    rows = [
+        {
+            "location_name": "Central",
+            "period": "2026-09-05T10:00:00",
+            "pm2point5_raw": 8.1,
+            "largest_pollutant_name": "PM2.5",
+        },
+        {
+            "location_name": "Central",
+            "period": "2026-09-05T11:00:00",
+            "pm2point5_raw": 8.4,
+            "largest_pollutant_name": "Ozone",
+        },
+    ]
+    structure = analyze_dataset(dataset, rows)
+
+    assignments = classify_field_roles(dataset, structure, sample_rows=rows)
+
+    assert assignments["pm2point5_raw"] == FIELD_ROLE_DATA
+    assert assignments["largest_pollutant_name"] != FIELD_ROLE_LOCATION

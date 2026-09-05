@@ -8,6 +8,7 @@ from custom_components.open_data.hierarchy_relationships import (
     infer_relationships,
     perfect_cycle_fields,
     qualified_identity_fields,
+    relationship_candidate_fields,
     relationship_warnings,
     relationships_from_paths,
 )
@@ -156,3 +157,28 @@ def test_one_to_one_aliases_are_not_automatically_promoted_to_hierarchy() -> Non
     assert ("county_code", "county_name") not in edges
     assert ("county_name", "state") in edges
     assert ("county_code", "state") in edges
+
+
+def test_relationship_candidates_exclude_coordinates_and_observation_ids() -> None:
+    rows = [
+        {
+            "station_name": "Oak Street",
+            "measurement_id": "oak-20260905-10",
+            "latitude": 41.9,
+            "longitude": -87.6,
+        },
+        {
+            "station_name": "Oak Street",
+            "measurement_id": "oak-20260905-11",
+            "latitude": 41.9,
+            "longitude": -87.6,
+        },
+    ]
+
+    fields = relationship_candidate_fields(
+        rows,
+        identity_fields=("station_name", "measurement_id"),
+        location_fields=("station_name", "latitude", "longitude"),
+    )
+
+    assert fields == ("station_name",)

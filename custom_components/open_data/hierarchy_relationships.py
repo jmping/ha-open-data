@@ -9,6 +9,7 @@ unrelated (e.g. city and ZIP can both nest under state).
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, replace
+import re
 from typing import Iterable, Mapping, Sequence
 
 RELATION_PERFECT = "perfect"
@@ -21,6 +22,60 @@ RELATION_KINDS = (
     RELATION_NONE,
     RELATION_UNKNOWN,
 )
+
+_NON_STRUCTURAL_LOCATION_NAMES = {
+    "geometry",
+    "lat",
+    "latitude",
+    "lng",
+    "lon",
+    "long",
+    "longitude",
+    "shape",
+    "the_geom",
+    "x_coordinate",
+    "y_coordinate",
+}
+
+
+def _normalized_field(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", value.casefold()).strip("_")
+
+
+def relationship_candidate_fields(
+    rows: Sequence[Mapping[str, object]],
+    *,
+    identity_fields: Iterable[str] = (),
+    location_fields: Iterable[str] = (),
+    hierarchy_fields: Iterable[str] = (),
+) -> tuple[str, ...]:
+    """Return stable categorical fields suitable for automatic dyad inference.
+
+    Coordinate columns are spatial attributes rather than hierarchy levels.
+    Row-unique secondary identifiers usually identify observations, not stable
+    units, so they are excluded unless their schema also marks them as a
+    location or hierarchy field.
+    """
+    identities = tuple(dict.fromkeys(field for field in identity_fields if field))
+    locations = tuple(
+        field
+        for field in dict.fromkeys(field for field in location_fields if field)
+        if _normalized_field(field) not in _NON_STRUCTURAL_LOCATION_NAMES
+    )
+    hierarchies = tuple(dict.fromkeys(field for field in hierarchy_fields if field))
+    stable_context = set((*locations, *hierarchies))
+    candidates = list(dict.fromkeys((*hierarchies, *locations)))
+
+    for field in identities:
+        if field in candidates:
+            continue
+        present = [row.get(field) for row in rows if row.get(field) not in (None, "")]
+        row_unique = len(present) > 1 and len({str(value) for value in present}) == len(
+            present
+        )
+        if not row_unique or field in stable_context:
+            candidates.append(field)
+    return tuple(candidates)
 
 
 @dataclass(frozen=True, slots=True)

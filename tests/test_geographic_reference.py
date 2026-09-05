@@ -3,7 +3,11 @@ from custom_components.open_data.geographic_reference import (
     fips_relationship_hints,
     load_us_fips_reference,
 )
-from custom_components.open_data.hierarchy_relationships import RELATION_PERFECT
+from custom_components.open_data.hierarchy_relationships import (
+    RELATION_PERFECT,
+    infer_relationships,
+    merge_relationships,
+)
 
 
 def test_bundled_fips_reference_contains_michigan() -> None:
@@ -37,3 +41,24 @@ def test_county_fips_is_parent_scoped_by_state() -> None:
     assert relationship.identity_fields == ("STATEFP", "COUNTYFP")
     assert relationship.source == "fips_reference"
     assert relationship.warning is not None
+
+
+def test_fips_reference_overrides_bounded_repeated_code_inference() -> None:
+    rows = [
+        {"STATEFP": "41", "COUNTYFP": "067"},
+        {"STATEFP": "49", "COUNTYFP": "067"},
+    ]
+    inferred = infer_relationships(rows, ("STATEFP", "COUNTYFP"))
+    combined = merge_relationships(
+        inferred,
+        fips_relationship_hints(rows, ("STATEFP", "COUNTYFP")),
+    )
+
+    relationship = next(
+        item
+        for item in combined
+        if item.child_field == "COUNTYFP" and item.parent_field == "STATEFP"
+    )
+    assert relationship.relation == RELATION_PERFECT
+    assert relationship.source == "fips_reference"
+    assert relationship.identity_fields == ("STATEFP", "COUNTYFP")

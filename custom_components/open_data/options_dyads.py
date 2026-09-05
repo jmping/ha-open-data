@@ -47,6 +47,7 @@ from .hierarchy_relationships import (
     merge_relationships,
     qualified_identity_fields,
     relationship_warnings,
+    relationship_candidate_fields,
     relationships_from_paths,
 )
 from .options_flow import OpenDataOptionsFlow
@@ -177,7 +178,25 @@ class OpenDataDyadOptionsFlow(OpenDataOptionsFlow):
             persisted = relationships_from_paths(raw_paths)
         fields = self._candidate_fields()
         rows = self._evidence_rows()
-        inferred = infer_relationships(rows, fields) if rows and len(fields) > 1 else ()
+        roles = self._current(CONF_FIELD_ROLES) or {}
+        inference_fields = relationship_candidate_fields(
+            rows,
+            identity_fields=(
+                *(self._current(CONF_IDENTITY_FIELDS) or ()),
+                self._current(CONF_IDENTITY_FIELD),
+            ),
+            location_fields=(
+                field
+                for field in fields
+                if roles.get(field) == FIELD_ROLE_LOCATION
+            ),
+            hierarchy_fields=(self._current(CONF_HIERARCHY_FIELDS) or ()),
+        )
+        inferred = (
+            infer_relationships(rows, inference_fields)
+            if rows and len(inference_fields) > 1
+            else ()
+        )
         return merge_relationships(inferred, persisted)
 
     @staticmethod

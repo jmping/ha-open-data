@@ -61,6 +61,10 @@ _ADMIN_TIME_TERMS = {
     "resource_updated",
 }
 
+_DATE_SHAPE = re.compile(
+    r"(?:\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{2,4})"
+)
+
 
 def _norm(value: str) -> str:
     """Normalize Latin labels without discarding meaningful non-ASCII input."""
@@ -250,6 +254,32 @@ def _field_candidates(fields: Sequence[str], role: str) -> tuple[str, ...]:
     return tuple((*exact, *fuzzy))
 
 
+def _value_timestamp_fields(
+    fields: Sequence[str],
+    rows: Sequence[Mapping[str, Any]],
+    context: TemporalContext,
+) -> tuple[str, ...]:
+    """Find parseable civil timestamp columns with unfamiliar field names.
+
+    Municipal exports frequently call a timestamp ``period`` or concatenate
+    words such as ``sampledate``. Requiring a recognizable date shape avoids
+    treating numeric identifiers or ordinary epoch-like values as time solely
+    because Python can parse them as numbers.
+    """
+    candidates: list[str] = []
+    for field in fields:
+        values = [row.get(field) for row in rows if row.get(field) not in (None, "")]
+        if not values:
+            continue
+        text_values = [str(value).strip() for value in values if isinstance(value, str)]
+        if not text_values or not any(_DATE_SHAPE.search(value) for value in text_values):
+            continue
+        parsed = [parse_flexible_timestamp(value, context) for value in values]
+        if sum(value is not None for value in parsed) / len(values) >= 0.7:
+            candidates.append(field)
+    return tuple(candidates)
+
+
 def _candidate_score(
     plan: TemporalPlan,
     parsed: Sequence[datetime | None],
@@ -338,7 +368,12 @@ def infer_temporal_plan(
 ) -> TemporalPlan | None:
     """Generate and score complete-field and component-based timestamp plans."""
     candidates: list[TemporalPlan] = []
-    for field in _field_candidates(fields, "timestamp"):
+    complete_fields = tuple(
+        dict.fromkeys(
+            (*_field_candidates(fields, "timestamp"), *_value_timestamp_fields(fields, rows, context))
+        )
+    )
+    for field in complete_fields:
         candidates.append(
             TemporalPlan(
                 "single_field",
