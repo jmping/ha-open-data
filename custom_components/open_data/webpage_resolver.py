@@ -35,6 +35,25 @@ _GOOGLE_SHEET_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _DIRECT_EXTENSIONS = (".csv", ".json", ".geojson", ".xml", ".atom", ".rss")
+_STATIC_EXTENSIONS = (
+    ".css",
+    ".gif",
+    ".ico",
+    ".jpeg",
+    ".jpg",
+    ".js",
+    ".png",
+    ".svg",
+    ".webp",
+    ".woff",
+    ".woff2",
+)
+_NON_DATA_API_PATHS = (
+    "/api/assets/",
+    "/openapi.json",
+    "/swagger",
+    "/build/",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,6 +94,10 @@ def _classify_candidate(url: str) -> tuple[str, float] | None:
     parsed = urlparse(url)
     path = unquote(parsed.path).casefold()
     host = (parsed.hostname or "").casefold()
+    if path.endswith(_STATIC_EXTENSIONS) or any(
+        marker in path for marker in _NON_DATA_API_PATHS
+    ):
+        return None
     if "/featureserver" in path or "/mapserver" in path:
         return "arcgis_service", 0.98
     if host == "docs.google.com" and "/spreadsheets/" in path:

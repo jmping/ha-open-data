@@ -1,6 +1,7 @@
 """Regression tests for modern ArcGIS Hub OGC Records catalogs."""
 
 from importlib.util import module_from_spec, spec_from_file_location
+import asyncio
 from pathlib import Path
 import sys
 from types import ModuleType
@@ -91,3 +92,45 @@ def test_non_queryable_download_is_not_imported() -> None:
     }
 
     assert arcgis.ArcGisHubProvider._normalize_item(item) is None
+
+
+def test_catalog_item_is_compact_but_keeps_selection_metadata() -> None:
+    item = {
+        "id": "abc123",
+        "attributes": {
+            "name": "Weather Stations",
+            "description": "Hourly readings",
+            "tags": ["weather", "sensors"],
+            "applicationProxies": [{"blob": "x" * 100_000}],
+            "additionalResources": [
+                {
+                    "url": "https://services.arcgis.com/example/rest/services/Weather/FeatureServer/0"
+                }
+            ],
+        },
+    }
+
+    dataset = arcgis.ArcGisHubProvider._normalize_item(item)
+
+    assert dataset is not None
+    assert dataset.raw["name"] == "Weather Stations"
+    assert dataset.raw["tags"] == ["weather", "sensors"]
+    assert "applicationProxies" not in dataset.raw
+    assert len(str(dataset.raw)) < 5_000
+
+
+def test_known_resource_does_not_reload_the_catalog() -> None:
+    provider = object.__new__(arcgis.ArcGisHubProvider)
+
+    async def fail_catalog(_dataset_id):
+        raise AssertionError("selected ArcGIS resource reloaded the catalog")
+
+    async def layer_metadata(_url, *, params=None):
+        assert params == {"f": "json"}
+        return {"fields": [{"name": "reading"}]}
+
+    provider._catalog_item = fail_catalog
+    provider._async_get_external_json = layer_metadata
+    resource = "https://services.arcgis.com/example/rest/services/Weather/FeatureServer/0"
+
+    assert asyncio.run(provider._layer_url("weather", resource)) == resource

@@ -21,7 +21,7 @@ from .record_structure import (
     decode_unit_key,
 )
 from .runtime_failure import RuntimeFailure, next_failure
-from .snapshot_merge import carry_forward_failed_records
+from .snapshot_merge import carry_forward_failed_snapshot
 from .temporal_runtime import normalize_observations
 
 _MAX_CONCURRENT_RECORD_REQUESTS = 6
@@ -112,11 +112,14 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
                 stage = "record_labels"
                 await self._async_load_record_labels()
                 stage = "record_fetch"
-                records = await self._async_fetch_selected_records(dataset)
+                records, failed_record_ids = await self._async_fetch_selected_records(
+                    dataset
+                )
                 values = self._latest_values_from_records(records)
                 stage = "normalize"
                 observations = self._normalize_record_observations(records)
             else:
+                failed_record_ids = ()
                 stage = "observation_fetch"
                 rows = await self.provider.async_observation_rows(
                     dataset.dataset_id,
@@ -166,7 +169,9 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
             self.runtime_failure = None
             if self.update_interval is None:
                 self.update_interval = self._normal_update_interval
-            return carry_forward_failed_records(self.data, snapshot)
+            return carry_forward_failed_snapshot(
+                self.data, snapshot, failed_record_ids
+            )
         except Exception as err:  # noqa: BLE001 - normalize all refresh failures
             failure = next_failure(
                 stage=stage,
@@ -187,7 +192,7 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
 
     async def _async_fetch_selected_records(
         self, dataset: OpenDataDataset
-    ) -> dict[str, dict]:
+    ) -> tuple[dict[str, dict], tuple[str, ...]]:
         semaphore = asyncio.Semaphore(_MAX_CONCURRENT_RECORD_REQUESTS)
 
         async def _fetch(record_id: str) -> tuple[str, dict | None]:
@@ -206,13 +211,15 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
             return_exceptions=True,
         )
         records: dict[str, dict] = {}
-        for result in results:
-            if isinstance(result, Exception):
+        failed_record_ids: list[str] = []
+        for requested_id, result in zip(self.selected_records, results, strict=True):
+            if isinstance(result, BaseException):
+                failed_record_ids.append(requested_id)
                 continue
             record_id, row = result
             if row:
                 records[record_id] = row
-        return records
+        return records, tuple(failed_record_ids)
 
     def _filters_for_record(self, record_id: str) -> dict[str, str]:
         key_fields = self.record_structure.unit_key_fields

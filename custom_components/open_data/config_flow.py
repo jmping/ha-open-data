@@ -154,18 +154,18 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Suggest source profiles relevant to Home Assistant's configured location."""
-        ranked = rank_local_sources(self.hass.config.latitude, self.hass.config.longitude)
+        ranked = rank_local_sources(
+            self.hass.config.latitude,
+            self.hass.config.longitude,
+            importable_only=True,
+        )
         self._local_sources = {item.profile.url: item for item in ranked}
         if user_input is not None:
             selected_url = str(user_input.get(CONF_SOURCE_PROFILE) or "")
             selected = self._local_sources.get(selected_url)
             if selected is not None:
-                if selected.profile.importable:
-                    return await self.async_step_known(
-                        {CONF_SOURCE_LOCATION: selected.profile.url, CONF_PORTAL_URL: ""}
-                    )
-                return await self.async_step_website(
-                    {CONF_SOURCE_LOCATION: selected.profile.url}
+                return await self.async_step_known(
+                    {CONF_SOURCE_LOCATION: selected.profile.url, CONF_PORTAL_URL: ""}
                 )
         options = [
             SelectOptionDict(value=item.profile.url, label=self._local_source_label(item))

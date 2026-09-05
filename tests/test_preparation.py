@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import json
 from pathlib import Path
 import sys
 import types
@@ -37,7 +38,7 @@ models = sys.modules["custom_components.open_data.models"]
 discovery = sys.modules["custom_components.open_data.discovery"]
 
 
-def test_prepared_site_round_trip_preserves_catalog() -> None:
+def test_prepared_site_round_trip_preserves_bounded_catalog_identity() -> None:
     dataset = models.OpenDataDataset(
         dataset_id="air",
         title="Air quality",
@@ -53,7 +54,38 @@ def test_prepared_site_round_trip_preserves_catalog() -> None:
     restored = preparation.PreparedSite.from_dict(site.as_dict())
 
     assert restored.status == "ready"
-    assert restored.candidates[0].dataset == dataset
+    restored_dataset = restored.candidates[0].dataset
+    assert restored_dataset.dataset_id == dataset.dataset_id
+    assert restored_dataset.title == dataset.title
+    assert restored_dataset.resource_id == dataset.resource_id
+    assert restored_dataset.fields == dataset.fields
+    assert restored_dataset.raw == dataset.raw
+
+
+def test_prepared_site_drops_large_unneeded_provider_payloads() -> None:
+    dataset = models.OpenDataDataset(
+        dataset_id="large",
+        title="Large ArcGIS catalog item",
+        description="d" * 10_000,
+        raw={
+            "tags": ["weather"],
+            "thumbnail_blob": "x" * 2_000_000,
+            "nested_application_state": {"value": "y" * 2_000_000},
+        },
+    )
+    site = preparation.PreparedSite(
+        "https://data.example",
+        "arcgis",
+        "ready",
+        "2026-09-05T00:00:00Z",
+        (discovery.score_dataset(dataset),),
+    )
+
+    serialized = site.as_dict()
+
+    assert len(json.dumps(serialized).encode()) < 10_000
+    assert serialized["datasets"][0]["raw"] == {"tags": ["weather"]}
+    assert len(serialized["datasets"][0]["description"]) == 2_000
 
 
 def test_registry_persists_success_and_reuses_running_task() -> None:

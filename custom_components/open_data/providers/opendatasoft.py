@@ -6,7 +6,7 @@ from typing import Any
 
 from ..models import OpenDataDataset, OpenDataField
 from .base import OpenDataResponseError, ProviderCapabilities
-from .common import JsonClient
+from .common import JsonClient, async_pause_between_catalog_pages
 
 
 class OpendatasoftProvider(JsonClient):
@@ -95,6 +95,7 @@ class OpendatasoftProvider(JsonClient):
             if len(page) < page_size:
                 break
             offset += page_size
+            await async_pause_between_catalog_pages()
         return list(found.values())
 
     async def async_search_datasets(

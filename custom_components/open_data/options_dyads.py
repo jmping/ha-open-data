@@ -113,6 +113,12 @@ class OpenDataDyadOptionsFlow(OpenDataOptionsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Offer independent post-import adjustments."""
+        return await self.async_step_menu(user_input)
+
+    async def async_step_menu(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Render the resumable options menu using a supported flow handler."""
         return self.async_show_menu(
             step_id="menu",
             menu_options=[

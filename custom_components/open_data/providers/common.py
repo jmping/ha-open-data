@@ -27,6 +27,12 @@ MAX_CSV_BYTES = 128 * 1024 * 1024
 MAX_CSV_ROW_BYTES = 2 * 1024 * 1024
 MAX_REDIRECTS = 5
 USER_AGENT = "Home Assistant Open Data integration"
+CATALOG_PAGE_DELAY_SECONDS = 0.2
+
+
+async def async_pause_between_catalog_pages() -> None:
+    """Yield to Home Assistant and avoid bursting catalog API requests."""
+    await asyncio.sleep(CATALOG_PAGE_DELAY_SECONDS)
 
 
 def normalize_portal_url(portal_url: str) -> str:

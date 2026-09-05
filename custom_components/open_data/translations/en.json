@@ -13,7 +13,7 @@
       },
       "local": {
         "title": "Find useful data for my area",
-        "description": "Sources are ranked using your Home Assistant location, formal coverage, practical relevance, and extraction-test history. 'Tested' means the source has actually been exercised by the Open Data extraction corpus; discovered/untested sources may still require new resolver or provider support. Choose a source to let Open Data inspect and import it with inferred defaults; you can adjust the resulting import later from Configure.",
+        "description": "Sources are ranked using your Home Assistant location, formal coverage, practical relevance, and extraction-test history. Only sources with a supported import path are offered. Open Data prepares the selected catalog in the background, then lets you choose datasets; you can adjust the resulting import later from Configure.",
         "data": {"source_profile": "Public data source"}
       },
       "website": {
@@ -54,10 +54,10 @@
       },
       "prepare": {
         "title": "Prepare site catalog",
-        "description": "Preparing the site catalog in the background. You may close this dialog and return later; no entities or regular downloads begin until you select a dataset."
+        "description": "Preparing and checking the site catalog in the background with rate-limited requests. Large catalogs can take a few minutes. You may close this dialog and submit the same source later; completed preparation is saved. No time-series downloads, entities, or regular updates begin until you select a dataset."
       }
     },
-    "progress": {"prepare_catalog": "Inspecting the portal, cataloguing datasets, and saving the catalog for later selection"},
+    "progress": {"prepare_catalog": "Checking supported catalog pages at a safe rate and saving working datasets for later selection"},
     "error": {
       "cannot_connect": "Unable to connect to the supplied source.",
       "invalid_reference": "The source reference could not be recognized or resolved. Check the URL or provide the portal URL for a bare ID.",

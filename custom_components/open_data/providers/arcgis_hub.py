@@ -21,6 +21,7 @@ from .common import (
     REQUEST_TIMEOUT,
     USER_AGENT,
     JsonClient,
+    async_pause_between_catalog_pages,
     async_validate_public_url,
 )
 
@@ -29,6 +30,8 @@ _SERVICE_PATTERN = re.compile(
     r"/(?:FeatureServer|MapServer)(?:/\d+)?/?(?:\?.*)?$", re.IGNORECASE
 )
 _OGC_ITEMS_PATH = "/api/search/v1/collections/all/items"
+_MAX_CATALOG_TEXT = 2_000
+_MAX_CATALOG_TERMS = 32
 
 
 def _walk_strings(value: Any) -> Iterable[str]:
@@ -164,8 +167,7 @@ class ArcGisHubProvider(JsonClient):
         if not service_urls:
             return None
         description = item.get("description") or merged.get("description")
-        raw = dict(item)
-        raw["arcgis_service_urls"] = service_urls
+        raw = cls._compact_catalog_item(item, service_urls)
         return OpenDataDataset(
             dataset_id=identifier,
             title=title,
@@ -173,6 +175,44 @@ class ArcGisHubProvider(JsonClient):
             resource_id=service_urls[0],
             raw=raw,
         )
+
+    @staticmethod
+    def _compact_catalog_item(
+        item: dict[str, Any], service_urls: list[str]
+    ) -> dict[str, Any]:
+        """Keep only bounded metadata needed after catalog discovery."""
+        attributes = item.get("attributes")
+        properties = item.get("properties")
+        sources = [
+            item,
+            attributes if isinstance(attributes, dict) else {},
+            properties if isinstance(properties, dict) else {},
+        ]
+        compact: dict[str, Any] = {"arcgis_service_urls": service_urls[:4]}
+        for key in (
+            "title",
+            "name",
+            "description",
+            "type",
+            "viewType",
+            "modified",
+            "rowsUpdatedAt",
+            "parentId",
+        ):
+            value = next((source.get(key) for source in sources if source.get(key)), None)
+            if isinstance(value, str):
+                compact[key] = value[:_MAX_CATALOG_TEXT]
+            elif isinstance(value, (int, float, bool)):
+                compact[key] = value
+        for key in ("tags", "keywords", "categories"):
+            value = next((source.get(key) for source in sources if source.get(key)), None)
+            if isinstance(value, list):
+                compact[key] = [
+                    term[:256]
+                    for term in value[:_MAX_CATALOG_TERMS]
+                    if isinstance(term, str)
+                ]
+        return compact
 
     @staticmethod
     def _ogc_records(payload: Any) -> list[dict[str, Any]]:
@@ -203,13 +243,14 @@ class ArcGisHubProvider(JsonClient):
                 dataset = self._normalize_item(item)
                 if dataset is None or dataset.dataset_id in self._catalog:
                     continue
-                self._catalog[dataset.dataset_id] = item
+                self._catalog[dataset.dataset_id] = dataset.raw
                 found.append(dataset)
                 if len(found) >= bounded:
                     break
             if len(records) < page_size:
                 break
             offset += page_size
+            await async_pause_between_catalog_pages()
         return found
 
     async def _list_from_feed(self, limit: int) -> list[OpenDataDataset]:
@@ -222,7 +263,7 @@ class ArcGisHubProvider(JsonClient):
             dataset = self._normalize_item(item)
             if dataset is None:
                 continue
-            self._catalog[dataset.dataset_id] = item
+            self._catalog[dataset.dataset_id] = dataset.raw
             found.append(dataset)
             if len(found) >= min(max(int(limit), 1), 1000):
                 break
@@ -265,8 +306,9 @@ class ArcGisHubProvider(JsonClient):
     async def _layer_url(
         self, dataset_id: str, resource_id: str | None = None
     ) -> str:
-        item = await self._catalog_item(dataset_id)
-        candidates = [resource_id] if resource_id else self._service_urls(item)
+        candidates = [resource_id] if resource_id else self._service_urls(
+            await self._catalog_item(dataset_id)
+        )
         for candidate in candidates:
             if not isinstance(candidate, str) or not _SERVICE_PATTERN.search(candidate):
                 continue
@@ -285,7 +327,9 @@ class ArcGisHubProvider(JsonClient):
     async def async_get_dataset(
         self, dataset_id: str, resource_id: str | None = None
     ) -> OpenDataDataset:
-        item = await self._catalog_item(dataset_id)
+        item = self._catalog.get(dataset_id, {})
+        if not item and resource_id is None:
+            item = await self._catalog_item(dataset_id)
         layer_url = await self._layer_url(dataset_id, resource_id)
         metadata = await self._async_get_external_json(layer_url, params={"f": "json"})
         fields = tuple(
@@ -300,8 +344,8 @@ class ArcGisHubProvider(JsonClient):
         )
         attributes = item.get("attributes") if isinstance(item.get("attributes"), dict) else {}
         properties = item.get("properties") if isinstance(item.get("properties"), dict) else {}
-        title = item.get("title") or attributes.get("title") or attributes.get("name") or properties.get("title") or dataset_id
-        description = item.get("description") or attributes.get("description") or properties.get("description")
+        title = item.get("title") or attributes.get("title") or attributes.get("name") or properties.get("title") or metadata.get("name") or dataset_id
+        description = item.get("description") or attributes.get("description") or properties.get("description") or metadata.get("description")
         return OpenDataDataset(
             dataset_id=dataset_id,
             title=title,

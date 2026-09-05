@@ -99,3 +99,20 @@ def test_current_result_wins_over_previous_data() -> None:
     )
     assert records["b"]["temperature"] == 11
     assert observations["b:temperature"].value == 11
+
+
+def test_snapshot_wrapper_matches_coordinator_contract() -> None:
+    previous = _previous_snapshot()
+    current = models.OpenDataSnapshot(
+        dataset=previous.dataset,
+        values={"station": "a", "temperature": 21},
+        records={"a": {"station": "a", "temperature": 21}},
+        record_labels=previous.record_labels,
+        observations={"a:temperature": _observation("a:temperature", "a", 21)},
+    )
+
+    merged = snapshot_merge.carry_forward_failed_snapshot(previous, current, ["b"])
+
+    assert merged.records["a"]["temperature"] == 21
+    assert merged.records["b"]["temperature"] == 10
+    assert merged.observations["b:temperature"].value == 10

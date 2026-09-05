@@ -8,6 +8,7 @@ from homeassistant import config_entries
 from homeassistant.data_entry_flow import FlowResultType
 
 from custom_components.open_data.const import DOMAIN, PROVIDER_CKAN
+from custom_components.open_data.options_dyads import OpenDataDyadOptionsFlow
 from custom_components.open_data.discovery import score_dataset
 from custom_components.open_data.models import OpenDataDataset
 from custom_components.open_data.preparation import DATA_PREPARATIONS
@@ -114,6 +115,21 @@ async def test_prepared_ann_arbor_portal_reaches_dataset_picker(hass) -> None:
     options = selector.config["options"]
     assert options[0]["value"] == "weather-stations"
     assert options[0]["label"] == "Weather Stations · weather"
+
+
+async def test_options_menu_has_resumable_menu_handler(hass) -> None:
+    """The menu step advertised to HA must have a matching flow handler."""
+    entry = Mock()
+    entry.options = {}
+    flow = OpenDataDyadOptionsFlow(entry)
+    flow.hass = hass
+
+    result = await flow.async_step_init()
+    resumed = await flow.async_step_menu()
+
+    assert result["type"] is FlowResultType.MENU
+    assert result["step_id"] == "menu"
+    assert resumed["type"] is FlowResultType.MENU
 
 
 async def _never_finishes() -> None:
