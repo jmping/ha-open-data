@@ -8,6 +8,7 @@ import platform
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryError, ConfigEntryNotReady
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
@@ -156,7 +157,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: OpenDataConfigEntry) -> 
         temporal_plan=temporal_plan,
         timezone_name=timezone_name,
     )
-    await coordinator.async_config_entry_first_refresh()
+    try:
+        await coordinator.async_config_entry_first_refresh()
+    except ConfigEntryNotReady as err:
+        failure = coordinator.runtime_failure
+        if failure is not None and failure.suspended:
+            raise ConfigEntryError(
+                "Open Data stopped automatic setup retries after a deterministic "
+                f"{failure.stage} failure ({failure.error_type}): {failure.message}"
+            ) from err
+        raise
     entry.runtime_data = coordinator
 
     snapshot = coordinator.data

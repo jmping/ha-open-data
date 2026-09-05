@@ -36,6 +36,27 @@ class _FakePreparationRegistry:
         self.start = Mock(return_value=prepare_task)
 
 
+async def _start_known_source_flow(hass, source_location: str):
+    """Start the user menu, choose known source, and submit one source URL."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": config_entries.SOURCE_USER},
+    )
+    assert result["type"] is FlowResultType.MENU
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "known"}
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "known"
+    return await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            "source_location": source_location,
+            "portal_url": "",
+        },
+    )
+
+
 async def test_portal_flow_initializes_registry_before_integration_setup(hass) -> None:
     """Submitting a portal must not require hass.data[DOMAIN] to exist."""
     hass.data.pop(DOMAIN, None)
@@ -57,13 +78,8 @@ async def test_portal_flow_initializes_registry_before_integration_setup(hass) -
                 side_effect=_resolve,
             ),
         ):
-            result = await hass.config_entries.flow.async_init(
-                DOMAIN,
-                context={"source": config_entries.SOURCE_USER},
-                data={
-                    "source_location": "https://ckan.a2gov.org",
-                    "portal_url": "",
-                },
+            result = await _start_known_source_flow(
+                hass, "https://ckan.a2gov.org"
             )
 
         assert result["type"] is FlowResultType.SHOW_PROGRESS
@@ -89,14 +105,7 @@ async def test_prepared_ann_arbor_portal_reaches_dataset_picker(hass) -> None:
         "custom_components.open_data.config_flow.async_resolve_reference",
         side_effect=_resolve,
     ):
-        result = await hass.config_entries.flow.async_init(
-            DOMAIN,
-            context={"source": config_entries.SOURCE_USER},
-            data={
-                "source_location": "data.a2gov.org",
-                "portal_url": "",
-            },
-        )
+        result = await _start_known_source_flow(hass, "data.a2gov.org")
 
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "discover"
