@@ -3,10 +3,40 @@
   "config": {
     "step": {
       "user": {
-        "title": "Open Data Importer",
-        "description": "Add public data by pasting a portal or dataset URL. If you are not sure what source to use, local discovery is planned but is not available in this release yet.",
+        "title": "Add Open Data",
+        "description": "Choose how you want Open Data to find the public data source.",
+        "menu_options": {
+          "local": "Find useful data for my area",
+          "website": "Add from a website or dashboard",
+          "known": "Add a known portal, dataset, API, or ID"
+        }
+      },
+      "local": {
+        "title": "Find useful data for my area",
+        "description": "Sources are ranked using your Home Assistant location, formal coverage, practical relevance, and extraction-test history. 'Tested' means the source has actually been exercised by the Open Data extraction corpus; discovered/untested sources may still require new resolver or provider support.",
         "data": {
-          "source_location": "Public data portal or dataset URL / ID",
+          "source_profile": "Public data source"
+        }
+      },
+      "website": {
+        "title": "Find the data behind a website",
+        "description": "Paste a public webpage, dashboard, chart, portal, or data page. Open Data will inspect bounded public page evidence for upstream APIs, files, feeds, spreadsheets, and embedded data services without executing arbitrary page JavaScript.",
+        "data": {
+          "source_location": "Public website or dashboard URL"
+        }
+      },
+      "resolved_source": {
+        "title": "Choose an upstream data source",
+        "description": "Open Data found these likely machine-readable sources behind the page. Choose the source that should be inspected next. A resolved source may still require provider/feed support before it can be imported.",
+        "data": {
+          "resolved_source": "Resolved data source"
+        }
+      },
+      "known": {
+        "title": "Add a known data source",
+        "description": "Paste a portal, catalog, dataset page, resource/API URL, or dataset ID. Dataset links import only that dataset; portal roots start bounded catalog discovery.",
+        "data": {
+          "source_location": "Portal, dataset, API URL, or ID",
           "portal_url": "Portal URL for a bare ID (optional)"
         }
       },
@@ -27,7 +57,7 @@
       },
       "discover": {
         "title": "Choose discovered datasets",
-        "description": "Found {count} ranked datasets on {portal} using {provider}. Dataset preparation will infer fields, observation time, freshness, and stable records before creating Home Assistant entities.",
+        "description": "Found {count} ranked datasets on {portal} using {provider}. Dataset preparation will infer fields, observation time, freshness, stable records, timestamp semantics, and measurement behavior before creating Home Assistant entities.",
         "data": {
           "dataset_ids": "Datasets"
         }
@@ -46,10 +76,12 @@
       "unsafe_source": "The supplied source was blocked by Open Data's network safety checks.",
       "invalid_dataset": "The portal or selected dataset is invalid.",
       "no_datasets": "No suitable queryable datasets were discovered on this portal.",
+      "no_machine_source": "No public machine-readable source was found in the bounded page evidence. The page may use an unsupported embed, authenticated API, or JavaScript-only data loading.",
       "unknown": "Unexpected error. Check the Home Assistant logs."
     },
     "abort": {
-      "already_configured": "This open data resource is already configured."
+      "already_configured": "This open data resource is already configured.",
+      "no_local_sources": "No source profiles in the current audited corpus were relevant to the configured Home Assistant location."
     }
   },
   "options": {
