@@ -101,6 +101,7 @@ class PreparationRegistry:
     """Persist preparation results and own background tasks."""
 
     def __init__(self, hass: HomeAssistant) -> None:
+        self._hass = hass
         self._store: Store[dict[str, Any]] = Store(hass, STORAGE_VERSION, STORAGE_KEY)
         self._sites: dict[str, PreparedSite] = {}
         self._tasks: dict[str, asyncio.Task[None]] = {}
@@ -141,7 +142,10 @@ class PreparationRegistry:
         if running and not running.done():
             return running
         self._sites[key] = PreparedSite(portal_url, None, "preparing", _now())
-        task = asyncio.create_task(self._run(key, prepare))
+        task = self._hass.async_create_background_task(
+            self._run(key, prepare),
+            f"Prepare Open Data catalog: {portal_url}",
+        )
         self._tasks[key] = task
         return task
 
