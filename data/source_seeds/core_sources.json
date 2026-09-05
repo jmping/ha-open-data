@@ -1,0 +1,116 @@
+{
+  "sources": [
+    {
+      "name": "City of Ann Arbor Open Data",
+      "url": "https://data.a2gov.org",
+      "provenance": "curated-ann-arbor-prototype",
+      "source_type": "city",
+      "region_hint": "Ann Arbor, Michigan, US",
+      "language_hint": "en"
+    },
+    {
+      "name": "Washtenaw County",
+      "url": "https://www.washtenaw.org",
+      "provenance": "curated-ann-arbor-prototype",
+      "source_type": "county",
+      "region_hint": "Washtenaw County, Michigan, US",
+      "language_hint": "en"
+    },
+    {
+      "name": "Open Storm Maps",
+      "url": "http://maps.open-storm.org",
+      "provenance": "curated-dashboard-resolver-corpus",
+      "source_type": "dashboard",
+      "region_hint": "Southeast Michigan, US",
+      "language_hint": "en"
+    },
+    {
+      "name": "University of Michigan Health Response Dashboard",
+      "url": "https://healthresponse.umich.edu/dashboard",
+      "provenance": "curated-dashboard-resolver-corpus",
+      "source_type": "dashboard",
+      "region_hint": "Ann Arbor, Michigan, US",
+      "language_hint": "en"
+    },
+    {
+      "name": "Washtenaw County Opioid Data",
+      "url": "https://www.washtenaw.org/opioid-data",
+      "provenance": "curated-dashboard-resolver-corpus",
+      "source_type": "dashboard",
+      "region_hint": "Washtenaw County, Michigan, US",
+      "language_hint": "en"
+    },
+    {
+      "name": "SEMCOG",
+      "url": "https://www.semcog.org",
+      "provenance": "curated-ann-arbor-prototype",
+      "source_type": "regional_agency",
+      "region_hint": "Southeast Michigan, US",
+      "language_hint": "en"
+    },
+    {
+      "name": "Michigan Open Data",
+      "url": "https://gis-michigan.opendata.arcgis.com",
+      "provenance": "curated-ann-arbor-prototype",
+      "source_type": "state",
+      "region_hint": "Michigan, US",
+      "language_hint": "en"
+    },
+    {
+      "name": "New York Open Data",
+      "url": "https://data.ny.gov",
+      "provenance": "curated-state-corpus",
+      "source_type": "state",
+      "region_hint": "New York, US",
+      "language_hint": "en"
+    },
+    {
+      "name": "Ontario Open Data",
+      "url": "https://data.ontario.ca",
+      "provenance": "curated-jurisdiction-corpus",
+      "source_type": "province",
+      "region_hint": "Ontario, Canada",
+      "language_hint": "en,fr"
+    },
+    {
+      "name": "Paris Open Data",
+      "url": "https://opendata.paris.fr",
+      "provenance": "curated-language-corpus",
+      "source_type": "city",
+      "region_hint": "Paris, France",
+      "language_hint": "fr"
+    },
+    {
+      "name": "Barcelona Open Data",
+      "url": "https://opendata-ajuntament.barcelona.cat",
+      "provenance": "curated-language-corpus",
+      "source_type": "city",
+      "region_hint": "Barcelona, Catalonia, Spain",
+      "language_hint": "ca,es"
+    },
+    {
+      "name": "Madrid Open Data",
+      "url": "https://datos.madrid.es",
+      "provenance": "curated-language-corpus",
+      "source_type": "city",
+      "region_hint": "Madrid, Spain",
+      "language_hint": "es"
+    },
+    {
+      "name": "Berlin Open Data",
+      "url": "https://daten.berlin.de",
+      "provenance": "curated-language-corpus",
+      "source_type": "city_state",
+      "region_hint": "Berlin, Germany",
+      "language_hint": "de"
+    },
+    {
+      "name": "Tokyo Open Data",
+      "url": "https://portal.data.metro.tokyo.lg.jp",
+      "provenance": "curated-language-corpus",
+      "source_type": "metropolis",
+      "region_hint": "Tokyo, Japan",
+      "language_hint": "ja"
+    }
+  ]
+}

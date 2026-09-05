@@ -1,4 +1,4 @@
-"""Run bounded live audits against representative municipal open-data portals.
+"""Run bounded live audits against representative public open-data portals.
 
 Third-party availability never gates normal CI. Reports capture which stage of the
 real provider/analyzer/runtime pipeline succeeds or fails so repeatable findings can
@@ -36,11 +36,7 @@ BATCHES = {
         ("Oklahoma City", "https://data.okc.gov", "America/Chicago"),
         ("London, Ontario", "https://opendata.london.ca", "America/Toronto"),
         ("Paris", "https://opendata.paris.fr", "Europe/Paris"),
-        (
-            "Barcelona",
-            "https://opendata-ajuntament.barcelona.cat",
-            "Europe/Madrid",
-        ),
+        ("Barcelona", "https://opendata-ajuntament.barcelona.cat", "Europe/Madrid"),
     ),
     2: (
         ("Chicago", "https://data.cityofchicago.org", "America/Chicago"),
@@ -67,22 +63,27 @@ BATCHES = {
         ("Washington, DC", "https://opendata.dc.gov", "America/New_York"),
         ("Ottawa", "https://open.ottawa.ca", "America/Toronto"),
         ("Vancouver", "https://opendata.vancouver.ca", "America/Vancouver"),
-        (
-            "Bordeaux",
-            "https://opendata.bordeaux-metropole.fr",
-            "Europe/Paris",
-        ),
+        ("Bordeaux", "https://opendata.bordeaux-metropole.fr", "Europe/Paris"),
         ("Helsinki", "https://hri.fi/data/en_GB", "Europe/Helsinki"),
+    ),
+    6: (
+        ("Madrid", "https://datos.madrid.es", "Europe/Madrid"),
+        ("Milan", "https://dati.comune.milano.it", "Europe/Rome"),
+        ("Berlin", "https://daten.berlin.de", "Europe/Berlin"),
+        ("Zurich", "https://data.stadt-zuerich.ch", "Europe/Zurich"),
+        ("Tokyo", "https://portal.data.metro.tokyo.lg.jp", "Asia/Tokyo"),
+    ),
+    7: (
+        ("State of New York", "https://data.ny.gov", "America/New_York"),
+        ("Province of Ontario", "https://data.ontario.ca", "America/Toronto"),
+        ("Government of Canada", "https://open.canada.ca/data/en", "America/Toronto"),
+        ("France", "https://www.data.gouv.fr", "Europe/Paris"),
+        ("Catalonia", "https://analisi.transparenciacatalunya.cat", "Europe/Madrid"),
     ),
 }
 
 
-def _failure_context(
-    result: dict[str, Any],
-    *,
-    provider: str | None,
-    portal_url: str,
-) -> dict[str, Any]:
+def _failure_context(result: dict[str, Any], *, provider: str | None, portal_url: str) -> dict[str, Any]:
     structure = result.get("structure") or {}
     return {
         "provider": provider,
@@ -98,14 +99,7 @@ def _failure_context(
     }
 
 
-async def _audit_dataset(
-    provider: Any,
-    dataset: Any,
-    *,
-    timezone_name: str,
-    provider_name: str,
-    portal_url: str,
-) -> dict[str, Any]:
+async def _audit_dataset(provider: Any, dataset: Any, *, timezone_name: str, provider_name: str, portal_url: str) -> dict[str, Any]:
     result: dict[str, Any] = {
         "dataset_id": dataset.dataset_id,
         "title": dataset.title,
@@ -116,9 +110,7 @@ async def _audit_dataset(
         resolved = await provider.async_get_dataset(dataset.dataset_id, dataset.resource_id)
         result["field_count"] = len(resolved.fields)
         result["stage"] = "sample"
-        rows = await provider.async_sample_rows(
-            resolved.dataset_id, resolved.resource_id, limit=40
-        )
+        rows = await provider.async_sample_rows(resolved.dataset_id, resolved.resource_id, limit=40)
         result["sample_rows"] = len(rows)
         if not rows:
             result["status"] = "empty_sample"
@@ -184,28 +176,23 @@ async def _audit_dataset(
         }
         result["status"] = "pass"
         result["stage"] = "complete"
-    except Exception as err:  # noqa: BLE001 - audit records every provider failure
+    except Exception as err:  # noqa: BLE001
         result["status"] = "fail"
         result["error_type"] = type(err).__name__
         result["error"] = str(err)[:500]
         result["failure_report"] = build_failure_report(
-            _failure_context(
-                result,
-                provider=provider_name,
-                portal_url=portal_url,
-            )
+            _failure_context(result, provider=provider_name, portal_url=portal_url)
         )
     return result
 
 
 async def _targeted_candidates(provider: Any) -> tuple[list[Any], dict[str, Any]]:
-    """Return deduplicated HA-relevant search candidates plus bounded evidence."""
     found: dict[str, Any] = {}
     evidence: dict[str, Any] = {}
     for query in SEARCH_QUERIES:
         try:
             matches = await provider.async_search_datasets(query, limit=3)
-        except Exception as err:  # noqa: BLE001 - search failures are diagnostics
+        except Exception as err:  # noqa: BLE001
             evidence[query] = {"error_type": type(err).__name__, "error": str(err)[:200]}
             continue
         evidence[query] = [
@@ -217,16 +204,10 @@ async def _targeted_candidates(provider: Any) -> tuple[list[Any], dict[str, Any]
     return list(found.values()), evidence
 
 
-async def _audit_portal(
-    session: aiohttp.ClientSession,
-    city: str,
-    portal_url: str,
-    timezone_name: str,
-    *,
-    datasets_per_city: int,
-) -> dict[str, Any]:
+async def _audit_portal(session: aiohttp.ClientSession, jurisdiction: str, portal_url: str, timezone_name: str, *, datasets_per_city: int) -> dict[str, Any]:
     report: dict[str, Any] = {
-        "city": city,
+        "jurisdiction": jurisdiction,
+        "city": jurisdiction,
         "requested_portal_url": portal_url,
         "timezone": timezone_name,
         "datasets": [],
@@ -294,36 +275,35 @@ async def _main(output: Path, datasets_per_city: int, batch: int) -> None:
     headers = {"User-Agent": "HAOpenDataImporter-live-audit/0.2"}
     async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
         results = []
-        for city, portal_url, timezone_name in BATCHES[batch]:
-            print(f"Auditing {city}: {portal_url}", flush=True)
+        for jurisdiction, portal_url, timezone_name in BATCHES[batch]:
+            print(f"Auditing {jurisdiction}: {portal_url}", flush=True)
             result = await _audit_portal(
                 session,
-                city,
+                jurisdiction,
                 portal_url,
                 timezone_name,
                 datasets_per_city=datasets_per_city,
             )
             results.append(result)
-            print(
-                f"  {result.get('provider', 'unknown')}: {result.get('status')}",
-                flush=True,
-            )
+            print(f"  {result.get('provider', 'unknown')}: {result.get('status')}", flush=True)
 
     passes = sum(item.get("status") == "pass" for item in results)
     payload = {
         "generated_at": datetime.now().astimezone().isoformat(),
         "bounded": True,
         "batch": batch,
+        "jurisdiction_count": len(results),
         "city_count": len(results),
+        "jurisdiction_passes": passes,
         "city_passes": passes,
+        "failure_rate": round(1 - passes / max(len(results), 1), 3),
         "city_failure_rate": round(1 - passes / max(len(results), 1), 3),
+        "datasets_per_jurisdiction_target": datasets_per_city,
         "datasets_per_city_target": datasets_per_city,
         "search_queries": list(SEARCH_QUERIES),
         "portals": results,
     }
-    output.write_text(
-        json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
+    output.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
 if __name__ == "__main__":
@@ -332,10 +312,4 @@ if __name__ == "__main__":
     parser.add_argument("--datasets-per-city", type=int, default=3)
     parser.add_argument("--batch", type=int, choices=sorted(BATCHES), default=1)
     args = parser.parse_args()
-    asyncio.run(
-        _main(
-            args.output,
-            max(1, min(args.datasets_per_city, 5)),
-            args.batch,
-        )
-    )
+    asyncio.run(_main(args.output, max(1, min(args.datasets_per_city, 5)), args.batch))

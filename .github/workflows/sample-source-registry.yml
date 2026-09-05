@@ -1,0 +1,48 @@
+name: Sample source registry
+
+on:
+  workflow_dispatch:
+    inputs:
+      sample_size:
+        description: Sources to sample
+        required: false
+        default: "50"
+      day:
+        description: Rotation day (YYYY-MM-DD); blank uses current UTC day
+        required: false
+        default: ""
+  schedule:
+    - cron: "43 9 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  sample-sources:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14.2"
+      - name: Install sampler runtime
+        run: python -m pip install --disable-pip-version-check -q homeassistant==2026.9.0 aiohttp
+      - name: Sample bounded source registry slice
+        env:
+          INPUT_SAMPLE_SIZE: ${{ github.event.inputs.sample_size }}
+          INPUT_DAY: ${{ github.event.inputs.day }}
+        run: |
+          DAY="${INPUT_DAY:-$(date -u +%F)}"
+          SIZE="${INPUT_SAMPLE_SIZE:-50}"
+          PYTHONPATH=. python scripts/sample_source_registry.py \
+            --seed data/source_seeds/core_sources.json \
+            --sample-size "$SIZE" \
+            --day "$DAY" \
+            --output source-sample-results.json
+      - name: Upload source sampling report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-sample-results
+          path: source-sample-results.json
+          retention-days: 30
