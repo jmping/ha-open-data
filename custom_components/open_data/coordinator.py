@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from typing import Any, Mapping
 
 from homeassistant.core import HomeAssistant
@@ -133,8 +133,7 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
                 )
             observations = apply_observation_freshness(
                 observations,
-                now=datetime.now(timezone.utc),
-                update_interval=self.update_interval,
+                self.update_interval.total_seconds() if self.update_interval else None,
             )
             snapshot = OpenDataSnapshot(
                 dataset=dataset,
