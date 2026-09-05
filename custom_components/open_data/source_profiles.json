@@ -1,0 +1,75 @@
+{
+  "sources": [
+    {
+      "source_id": "ann_arbor_open_data",
+      "name": "City of Ann Arbor Open Data",
+      "url": "https://data.a2gov.org",
+      "source_type": "city",
+      "topics": ["weather", "air quality", "rainfall", "traffic", "water"],
+      "importable": true,
+      "formal_bbox": [42.20, -83.86, 42.36, -83.64],
+      "relevance_center": [42.2808, -83.7430],
+      "relevance_distance_km": 70,
+      "relevance_model": "commute_access",
+      "authority": "City of Ann Arbor"
+    },
+    {
+      "source_id": "michigan_open_data",
+      "name": "Michigan Open Data",
+      "url": "https://gis-michigan.opendata.arcgis.com",
+      "source_type": "state",
+      "topics": ["environment", "transportation", "water", "wildfire", "infrastructure"],
+      "importable": true,
+      "formal_bbox": [41.68, -90.42, 48.31, -82.12],
+      "relevance_model": "inside",
+      "authority": "State of Michigan"
+    },
+    {
+      "source_id": "washtenaw_county",
+      "name": "Washtenaw County public data",
+      "url": "https://www.washtenaw.org",
+      "source_type": "county",
+      "topics": ["health", "water", "drains", "gis", "public safety"],
+      "importable": false,
+      "formal_bbox": [42.03, -84.14, 42.44, -83.54],
+      "relevance_center": [42.2539, -83.8380],
+      "relevance_distance_km": 60,
+      "relevance_model": "inside",
+      "authority": "Washtenaw County"
+    },
+    {
+      "source_id": "semcog",
+      "name": "SEMCOG regional data",
+      "url": "https://www.semcog.org",
+      "source_type": "regional_agency",
+      "topics": ["traffic", "transportation", "bridges", "crashes", "water"],
+      "importable": false,
+      "relevance_center": [42.3314, -83.0458],
+      "relevance_distance_km": 150,
+      "relevance_model": "corridor",
+      "authority": "SEMCOG"
+    },
+    {
+      "source_id": "nws_us",
+      "name": "US National Weather Service",
+      "url": "https://api.weather.gov",
+      "source_type": "national_agency",
+      "topics": ["weather", "warnings", "forecast"],
+      "importable": false,
+      "formal_bbox": [18.0, -179.9, 72.0, -65.0],
+      "relevance_model": "forecast_zone",
+      "authority": "National Weather Service"
+    },
+    {
+      "source_id": "usgs_water_us",
+      "name": "USGS Water Data",
+      "url": "https://api.waterdata.usgs.gov",
+      "source_type": "national_agency",
+      "topics": ["water", "river", "streamflow", "gauge"],
+      "importable": false,
+      "formal_bbox": [18.0, -179.9, 72.0, -65.0],
+      "relevance_model": "nearby",
+      "authority": "US Geological Survey"
+    }
+  ]
+}
