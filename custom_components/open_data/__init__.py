@@ -17,6 +17,8 @@ from .const import (
     CONF_DISPLAY_FIELD,
     CONF_FIELD_ROLES,
     CONF_HIERARCHY_FIELDS,
+    CONF_HIERARCHY_RELATIONSHIPS,
+    CONF_HIERARCHY_SETS,
     CONF_IDENTITY_FIELD,
     CONF_PORTAL_URL,
     CONF_PROVIDER,
@@ -33,6 +35,7 @@ from .const import (
 from .coordinator import OpenDataCoordinator
 from .entity_identity import effective_identity_field, normalize_selected_records
 from .feedback import FeedbackRegistry
+from .hierarchy_relationships import relationships_from_paths
 from .providers import create_provider
 from .preparation import DATA_PREPARATIONS, PreparationRegistry
 from .reanalysis_runtime import (
@@ -79,17 +82,29 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: OpenDataConfigEntry) -> bool:
-    """Add an explicit record structure without invalidating old selections."""
-    if entry.version >= 2:
+    """Migrate legacy record/hierarchy settings without invalidating selections."""
+    if entry.version >= 3:
         return True
+
     data = dict(entry.data)
-    if CONF_RECORD_STRUCTURE not in data:
+    if entry.version < 2 and CONF_RECORD_STRUCTURE not in data:
         data[CONF_RECORD_STRUCTURE] = legacy_record_structure(
             data.get(CONF_IDENTITY_FIELD),
             data.get(CONF_DISPLAY_FIELD),
             data.get(CONF_TIMESTAMP_FIELD),
         ).as_dict()
-    hass.config_entries.async_update_entry(entry, data=data, version=2)
+
+    if CONF_HIERARCHY_RELATIONSHIPS not in data:
+        raw_paths = data.get(CONF_HIERARCHY_SETS) or ()
+        if not raw_paths:
+            flat = tuple(data.get(CONF_HIERARCHY_FIELDS, ()))
+            raw_paths = (flat,) if flat else ()
+        relationships = relationships_from_paths(raw_paths)
+        data[CONF_HIERARCHY_RELATIONSHIPS] = [
+            item.as_dict() for item in relationships
+        ]
+
+    hass.config_entries.async_update_entry(entry, data=data, version=3)
     return True
 
 
@@ -136,7 +151,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: OpenDataConfigEntry) -> 
         identity_field,
         configured_display,
         selected_records,
-        tuple(entry.data.get(CONF_HIERARCHY_FIELDS, ())),
+        tuple(
+            entry.options.get(
+                CONF_HIERARCHY_FIELDS,
+                entry.data.get(CONF_HIERARCHY_FIELDS, ()),
+            )
+        ),
         load_record_structure(
             entry.options.get(
                 CONF_RECORD_STRUCTURE, entry.data.get(CONF_RECORD_STRUCTURE)

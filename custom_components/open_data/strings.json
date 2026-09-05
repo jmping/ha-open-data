@@ -14,23 +14,17 @@
       "local": {
         "title": "Find useful data for my area",
         "description": "Sources are ranked using your Home Assistant location, formal coverage, practical relevance, and extraction-test history. 'Tested' means the source has actually been exercised by the Open Data extraction corpus; discovered/untested sources may still require new resolver or provider support. Choose a source to let Open Data inspect and import it with inferred defaults; you can adjust the resulting import later from Configure.",
-        "data": {
-          "source_profile": "Public data source"
-        }
+        "data": {"source_profile": "Public data source"}
       },
       "website": {
         "title": "Find the data behind a website",
         "description": "Paste a public webpage, dashboard, chart, portal, or data page. Open Data will inspect bounded public page evidence for upstream APIs, files, feeds, spreadsheets, and embedded data services without executing arbitrary page JavaScript. If a usable source is found, Open Data will infer an initial import; you can correct variables and categories later from Configure.",
-        "data": {
-          "source_location": "Public website or dashboard URL"
-        }
+        "data": {"source_location": "Public website or dashboard URL"}
       },
       "resolved_source": {
         "title": "Choose an upstream data source",
         "description": "Open Data found these likely machine-readable sources behind the page. Choose the source that should be inspected next. A resolved source may still require provider/feed support before it can be imported. Successful imports start with inferred settings that remain editable later.",
-        "data": {
-          "resolved_source": "Resolved data source"
-        }
+        "data": {"resolved_source": "Resolved data source"}
       },
       "known": {
         "title": "Add a known data source",
@@ -43,9 +37,7 @@
       "portal": {
         "title": "Discover public datasets",
         "description": "Enter an institution's public data portal URL. Open Data will prepare and cache the site structure. Large catalogs and file resources can take several minutes; you can leave this screen and return later.",
-        "data": {
-          "portal_url": "Portal URL"
-        }
+        "data": {"portal_url": "Portal URL"}
       },
       "dataset": {
         "title": "Add a dataset directly",
@@ -57,19 +49,15 @@
       },
       "discover": {
         "title": "Choose discovered datasets",
-        "description": "Found {count} ranked datasets on {portal} using {provider}. Select what you want to import. Open Data will infer fields, observation time, freshness, stable records, timestamp semantics, and measurement behavior automatically. The initial choices are not permanent: use Configure afterward to change variables, records, categories, timestamps, timezone, or structure.",
-        "data": {
-          "dataset_ids": "Datasets"
-        }
+        "description": "Found {count} ranked datasets on {portal} using {provider}. Select what you want to import. Open Data will infer fields, observation time, freshness, stable records, timestamp semantics, measurement behavior, and structural relationships automatically. The initial choices are not permanent: use Configure afterward to change variables, records, categories, timestamps, timezone, or structure.",
+        "data": {"dataset_ids": "Datasets"}
       },
       "prepare": {
         "title": "Prepare site catalog",
         "description": "Preparing the site catalog in the background. You may close this dialog and return later; no entities or regular downloads begin until you select a dataset."
       }
     },
-    "progress": {
-      "prepare_catalog": "Inspecting the portal, cataloguing datasets, and saving the catalog for later selection"
-    },
+    "progress": {"prepare_catalog": "Inspecting the portal, cataloguing datasets, and saving the catalog for later selection"},
     "error": {
       "cannot_connect": "Unable to connect to the supplied source.",
       "invalid_reference": "The source reference could not be recognized or resolved. Check the URL or provide the portal URL for a bare ID.",
@@ -86,6 +74,17 @@
   },
   "options": {
     "step": {
+      "menu": {
+        "title": "Configure Open Data",
+        "description": "This import is already running with Open Data's inferred settings. Change only the part you want to improve.",
+        "menu_options": {
+          "records": "Records and measurements",
+          "semantics": "Data meaning and categories",
+          "temporal": "Timestamp and timezone",
+          "relationships": "Structural relationships",
+          "advanced": "Advanced fields and identity"
+        }
+      },
       "init": {
         "title": "Adjust inferred fields",
         "description": "Open Data created the import using automatic inference. Dataset structure: {kind}. The current assignments are preselected below; change only what you want to improve, such as which columns describe location, time, measurements, or context.",
@@ -99,16 +98,29 @@
         }
       },
       "structure": {
-        "title": "Adjust units and hierarchy",
-        "description": "These settings refine an existing import. Define stable units and observations only when automatic structure inference needs correction. Hierarchy sets run from broadest to most specific.",
+        "title": "Advanced identity and display paths",
+        "description": "Use this only when automatic structure inference needs correction. Structural relationships are edited separately as child → parent dyads; these legacy path/identity controls are retained for advanced cases.",
         "data": {
-          "hierarchy_fields": "Hierarchy set 1 — broadest to smallest",
-          "hierarchy_fields__2": "Hierarchy set 2 — broadest to smallest (optional)",
-          "hierarchy_fields__3": "Hierarchy set 3 — broadest to smallest (optional)",
+          "hierarchy_fields": "Display path 1 — broadest to smallest",
+          "hierarchy_fields__2": "Display path 2 — broadest to smallest (optional)",
+          "hierarchy_fields__3": "Display path 3 — broadest to smallest (optional)",
           "unit_key_fields": "Unit key fields",
           "unit_label_fields": "Unit label fields",
           "record_key_fields": "Record key fields",
           "record_label_fields": "Record label fields"
+        }
+      },
+      "relationships": {
+        "title": "Adjust structural relationships",
+        "description": "Open Data found {relationship_count} structural child → parent dyads; {hidden_count} are outside this bounded review. Move known dyads among Perfect, Imperfect/overlapping, None, and Unknown. Perfect means each true child identity belongs to one parent; repeated labels under different parents may therefore imply a parent-qualified identity rather than bad data. Multiple perfect parents are allowed. Current warnings: {warnings}.",
+        "data": {
+          "relationship_keys__perfect": "Perfect nesting",
+          "relationship_keys__imperfect": "Imperfect / overlapping",
+          "relationship_keys__none": "No structural relationship",
+          "relationship_keys__unknown": "Unknown / do not assume",
+          "manual_relationship_child": "Add relationship — child field (optional)",
+          "manual_relationship_parent": "Add relationship — parent field (optional)",
+          "manual_relationship_type": "Add relationship — type"
         }
       },
       "records": {
@@ -159,21 +171,17 @@
       "invalid_field_roles": "One or more field assignments were invalid. Review the selected fields and try again.",
       "invalid_semantics": "A timestamp or measurement was assigned to more than one semantic category. Each field can have only one meaning.",
       "invalid_timezone": "Enter a valid IANA timezone name, for example America/Detroit or Europe/Paris.",
-      "invalid_timestamp_field": "Choose a timestamp field from this dataset."
+      "invalid_timestamp_field": "Choose a timestamp field from this dataset.",
+      "invalid_relationship": "Each structural dyad must have two different known fields and may belong to only one relationship category."
     }
   },
   "entity": {
     "sensor": {
       "dataset_status": {
         "name": "Dataset status",
-        "state": {
-          "data_available": "Data available",
-          "no_data": "No data"
-        }
+        "state": {"data_available": "Data available", "no_data": "No data"}
       },
-      "latest_observation": {
-        "name": "Latest observation"
-      }
+      "latest_observation": {"name": "Latest observation"}
     }
   }
 }

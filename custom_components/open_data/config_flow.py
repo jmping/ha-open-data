@@ -25,6 +25,7 @@ from .const import (
     CONF_DISPLAY_FIELDS,
     CONF_FIELD_MAPPINGS,
     CONF_FIELD_ROLES,
+    CONF_HIERARCHY_RELATIONSHIPS,
     CONF_IDENTITY_FIELD,
     CONF_IDENTITY_FIELDS,
     CONF_IGNORED_FIELDS,
@@ -57,10 +58,11 @@ from .data_semantics import (
 from .discovery import DatasetCandidate, rank_datasets, score_dataset
 from .field_roles import classify_field_roles
 from .flow_diagnostics import log_flow_breadcrumb, log_flow_exception
+from .hierarchy_relationships import infer_relationships
 from .local_discovery import RankedLocalSource, rank_local_sources
 from .measure_freshness import build_measure_freshness_profiles, serializable_profiles
 from .models import OpenDataDataset
-from .options_flow import OpenDataOptionsFlow
+from .options_dyads import OpenDataDyadOptionsFlow
 from .portal_inspector import async_discover_catalog, async_inspect_portal
 from .preparation import DATA_PREPARATIONS, PreparationRegistry
 from .providers import create_provider
@@ -93,7 +95,7 @@ _LOGGER = logging.getLogger(__name__)
 class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle local discovery, webpage resolution, and known data sources."""
 
-    VERSION = 2
+    VERSION = 3
 
     def __init__(self) -> None:
         self._provider_name: str | None = None
@@ -107,7 +109,7 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def async_get_options_flow(
         config_entry: config_entries.ConfigEntry,
     ) -> config_entries.OptionsFlow:
-        return OpenDataOptionsFlow(config_entry)
+        return OpenDataDyadOptionsFlow(config_entry)
 
     def _diagnostic_context(self, **extra: Any) -> dict[str, Any]:
         return {
@@ -521,6 +523,17 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             field: infer_measure_kind(field, labels.get(field))
             for field in structure.metric_fields
         }
+        structural_fields = tuple(
+            dict.fromkeys(
+                (
+                    *structure.location_fields,
+                    *structure.identity_fields,
+                    *structure.display_fields,
+                    *structure.hierarchy_fields,
+                )
+            )
+        )
+        hierarchy_relationships = infer_relationships(sample_rows, structural_fields)
         unique_id = (
             f"{self._provider_name}:{self._portal_url}:"
             f"{dataset.dataset_id}:{dataset.resource_id or ''}"
@@ -540,6 +553,9 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             CONF_TEMPORAL_FIELD_ROLES: temporal_roles,
             CONF_LOCATION_FIELDS: list(structure.location_fields),
             CONF_FIELD_ROLES: classify_field_roles(dataset, structure),
+            CONF_HIERARCHY_RELATIONSHIPS: [
+                item.as_dict() for item in hierarchy_relationships
+            ],
             CONF_SELECTED_RECORDS: build_selectable_records(
                 dataset,
                 sample_rows,
