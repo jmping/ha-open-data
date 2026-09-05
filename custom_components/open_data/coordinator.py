@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping
 
 from homeassistant.core import HomeAssistant
@@ -14,12 +14,13 @@ from .entity_identity import looks_like_observation_id
 from .freshness import apply_observation_freshness
 from .history import snapshot_freshness
 from .models import OpenDataDataset, OpenDataSnapshot
-from .providers.base import OpenDataError, OpenDataProvider
+from .providers.base import OpenDataProvider
 from .record_structure import (
     RecordStructure,
     build_record_selections,
     decode_unit_key,
 )
+from .runtime_failure import RuntimeFailure, next_failure
 from .snapshot_merge import carry_forward_failed_records
 from .temporal_runtime import normalize_observations
 
@@ -46,11 +47,12 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
         temporal_plan: Mapping[str, Any] | None = None,
         timezone_name: str | None = None,
     ) -> None:
+        normal_interval = timedelta(minutes=DEFAULT_SCAN_INTERVAL_MINUTES)
         super().__init__(
             hass,
             logger=__import__("logging").getLogger(__name__),
             name=f"Open Data {dataset_id}",
-            update_interval=timedelta(minutes=DEFAULT_SCAN_INTERVAL_MINUTES),
+            update_interval=normal_interval,
         )
         self.provider = provider
         self.dataset_id = dataset_id
@@ -69,6 +71,8 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
         self.timezone_name = timezone_name
         self.dataset: OpenDataDataset | None = None
         self.record_labels: dict[str, str] = {}
+        self.runtime_failure: RuntimeFailure | None = None
+        self._normal_update_interval = normal_interval
 
     async def _async_load_record_labels(self) -> None:
         key_fields = self.record_structure.unit_key_fields
@@ -97,17 +101,23 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
         }
 
     async def _async_update_data(self) -> OpenDataSnapshot:
+        """Refresh one dataset and stop automatic retries for deterministic failures."""
+        stage = "metadata"
         try:
             dataset = await self.provider.async_get_dataset(
                 self.dataset_id, self.resource_id
             )
             self.dataset = dataset
             if self.selected_records:
+                stage = "record_labels"
                 await self._async_load_record_labels()
+                stage = "record_fetch"
                 records = await self._async_fetch_selected_records(dataset)
                 values = self._latest_values_from_records(records)
+                stage = "normalize"
                 observations = self._normalize_record_observations(records)
             else:
+                stage = "observation_fetch"
                 rows = await self.provider.async_observation_rows(
                     dataset.dataset_id,
                     dataset.resource_id,
@@ -123,6 +133,7 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
                     rows = [latest] if latest else []
                 records = {}
                 values = rows[0] if rows else {}
+                stage = "normalize"
                 observations = normalize_observations(
                     rows,
                     field_roles=self.field_roles,
@@ -131,20 +142,48 @@ class OpenDataCoordinator(DataUpdateCoordinator[OpenDataSnapshot]):
                     temporal_plan=self.temporal_plan,
                     timezone_name=self.timezone_name,
                 )
+
+            stage = "freshness"
             observations = apply_observation_freshness(
                 observations,
-                self.update_interval.total_seconds() if self.update_interval else None,
+                self._normal_update_interval.total_seconds(),
             )
+            latest_observation_at, source_updated_at, frequency_seconds = (
+                snapshot_freshness(dataset, observations)
+            )
+            stage = "snapshot"
             snapshot = OpenDataSnapshot(
                 dataset=dataset,
                 values=values,
                 records=records,
+                record_labels=dict(self.record_labels),
                 observations=observations,
-                freshness=snapshot_freshness(observations),
+                fetched_at=datetime.now(timezone.utc).isoformat(),
+                latest_observation_at=latest_observation_at,
+                source_updated_at=source_updated_at,
+                update_frequency_seconds=frequency_seconds,
             )
+            self.runtime_failure = None
+            if self.update_interval is None:
+                self.update_interval = self._normal_update_interval
             return carry_forward_failed_records(self.data, snapshot)
-        except OpenDataError as err:
-            raise UpdateFailed(str(err)) from err
+        except Exception as err:  # noqa: BLE001 - normalize all refresh failures
+            failure = next_failure(
+                stage=stage,
+                err=err,
+                previous=self.runtime_failure,
+            )
+            self.runtime_failure = failure
+            if failure.suspended:
+                # A deterministic parser/schema/programming failure should not make
+                # Home Assistant retry setup or poll indefinitely. Setting the
+                # interval to None leaves manual reload/retry available.
+                self.update_interval = None
+            retry_state = "automatic refresh suspended" if failure.suspended else "will retry"
+            raise UpdateFailed(
+                f"{stage} failed ({failure.error_type}); {retry_state}: "
+                f"{failure.message}"
+            ) from err
 
     async def _async_fetch_selected_records(
         self, dataset: OpenDataDataset
