@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from dataclasses import replace
 
 from .models import OpenDataSnapshot, SemanticObservation
 
@@ -35,3 +36,18 @@ def carry_forward_failed_records(
             merged_observations[stream_id] = observation
 
     return merged_records, merged_observations
+
+
+def carry_forward_failed_snapshot(
+    previous: OpenDataSnapshot | None,
+    current: OpenDataSnapshot,
+    failed_record_ids: Iterable[str],
+) -> OpenDataSnapshot:
+    """Return a current snapshot with only failed record requests restored."""
+    records, observations = carry_forward_failed_records(
+        previous,
+        current.records,
+        current.observations,
+        failed_record_ids,
+    )
+    return replace(current, records=records, observations=observations)

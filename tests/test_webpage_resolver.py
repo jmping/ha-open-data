@@ -24,3 +24,16 @@ def test_arcgis_and_direct_data_links_are_generic_candidates() -> None:
     kinds = {item.kind for item in candidates}
     assert "csv" in kinds
     assert "arcgis_service" in kinds
+
+
+def test_documentation_assets_and_image_apis_are_not_data_candidates() -> None:
+    page = "https://api.weather.gov"
+    body = """
+    <a href="/openapi.json">API specification</a>
+    <script src="/build/app.48df84fd.js"></script>
+    <link href="/build/app.addd834c.css">
+    <img src="/build/images/logo-noaa.svg">
+    <img src="https://content.civicplus.com/api/assets/example?height=150">
+    """
+
+    assert _candidate_urls(page, body) == []

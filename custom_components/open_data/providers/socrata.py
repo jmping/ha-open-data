@@ -12,7 +12,7 @@ from .base import (
     OpenDataResponseError,
     ProviderCapabilities,
 )
-from .common import JsonClient
+from .common import JsonClient, async_pause_between_catalog_pages
 
 _DATASET_ID_PATTERN = re.compile(r"^[a-z0-9]{4}-[a-z0-9]{4}$", re.IGNORECASE)
 _FIELD_NAME_PATTERN = re.compile(r"^:?[a-zA-Z_][a-zA-Z0-9_]*$")
@@ -266,4 +266,5 @@ class SocrataProvider(JsonClient):
             if len(page) < page_size:
                 break
             offset += page_size
+            await async_pause_between_catalog_pages()
         return list(found.values())

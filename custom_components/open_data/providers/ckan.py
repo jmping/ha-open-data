@@ -13,7 +13,7 @@ from typing import Any
 from ..models import OpenDataDataset, OpenDataField
 from ..refresh_policy import SourceFreshness, infer_frequency, parse_timestamp
 from .base import OpenDataResponseError, ProviderCapabilities
-from .common import JsonClient
+from .common import JsonClient, async_pause_between_catalog_pages
 
 
 class CkanProvider(JsonClient):
@@ -360,6 +360,7 @@ class CkanProvider(JsonClient):
             if len(packages) < page_size:
                 break
             start += len(packages)
+            await async_pause_between_catalog_pages()
         return list(found.values())
 
     @staticmethod
