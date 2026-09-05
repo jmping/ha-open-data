@@ -58,7 +58,12 @@ from .data_semantics import (
 from .discovery import DatasetCandidate, rank_datasets, score_dataset
 from .field_roles import classify_field_roles
 from .flow_diagnostics import log_flow_breadcrumb, log_flow_exception
-from .hierarchy_relationships import infer_relationships
+from .geographic_reference import fips_relationship_hints
+from .hierarchy_relationships import (
+    infer_relationships,
+    merge_relationships,
+    relationship_candidate_fields,
+)
 from .local_discovery import RankedLocalSource, rank_local_sources
 from .measure_freshness import build_measure_freshness_profiles, serializable_profiles
 from .models import OpenDataDataset
@@ -523,17 +528,21 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             field: infer_measure_kind(field, labels.get(field))
             for field in structure.metric_fields
         }
-        structural_fields = tuple(
-            dict.fromkeys(
-                (
-                    *structure.location_fields,
-                    *structure.identity_fields,
-                    *structure.display_fields,
-                    *structure.hierarchy_fields,
-                )
-            )
+        structural_fields = relationship_candidate_fields(
+            sample_rows,
+            identity_fields=structure.identity_fields,
+            location_fields=structure.location_fields,
+            hierarchy_fields=structure.hierarchy_fields,
         )
-        hierarchy_relationships = infer_relationships(sample_rows, structural_fields)
+        inferred_relationships = infer_relationships(sample_rows, structural_fields)
+        reference_relationships = fips_relationship_hints(
+            sample_rows,
+            tuple(field.name for field in dataset.fields),
+        )
+        hierarchy_relationships = merge_relationships(
+            inferred_relationships,
+            reference_relationships,
+        )
         unique_id = (
             f"{self._provider_name}:{self._portal_url}:"
             f"{dataset.dataset_id}:{dataset.resource_id or ''}"
@@ -552,7 +561,11 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             CONF_TIMESTAMP_FIELDS: list(structure.timestamp_fields),
             CONF_TEMPORAL_FIELD_ROLES: temporal_roles,
             CONF_LOCATION_FIELDS: list(structure.location_fields),
-            CONF_FIELD_ROLES: classify_field_roles(dataset, structure),
+            CONF_FIELD_ROLES: classify_field_roles(
+                dataset,
+                structure,
+                sample_rows=sample_rows,
+            ),
             CONF_HIERARCHY_RELATIONSHIPS: [
                 item.as_dict() for item in hierarchy_relationships
             ],

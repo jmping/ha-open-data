@@ -247,7 +247,6 @@ def classify_dataset_fields(
         dict.fromkeys(
             (
                 *structure.identity_fields,
-                *structure.display_fields,
                 *structure.location_fields,
                 *structure.hierarchy_fields,
             )
@@ -273,6 +272,7 @@ def classify_field_roles(
     timestamp_fields: Iterable[str] = (),
     ignored_fields: Iterable[str] = (),
     explicit_roles: Mapping[str, str] | None = None,
+    sample_rows: Iterable[Mapping[str, Any]] = (),
 ) -> FieldRoles: ...
 
 
@@ -286,6 +286,7 @@ def classify_field_roles(
     timestamp_fields: Iterable[str] = (),
     ignored_fields: Iterable[str] = (),
     explicit_roles: Mapping[str, str] | None = None,
+    sample_rows: Iterable[Mapping[str, Any]] = (),
 ) -> dict[str, str]: ...
 
 
@@ -298,12 +299,13 @@ def classify_field_roles(
     timestamp_fields: Iterable[str] = (),
     ignored_fields: Iterable[str] = (),
     explicit_roles: Mapping[str, str] | None = None,
+    sample_rows: Iterable[Mapping[str, Any]] = (),
 ) -> FieldRoles | dict[str, str]:
     """Classify through either the low-level or typed dataset boundary."""
     if isinstance(field_names, OpenDataDataset):
         if not isinstance(rows, DatasetStructure):
             raise TypeError("Dataset classification requires a DatasetStructure")
-        return classify_dataset_fields(field_names, rows)
+        return classify_dataset_fields(field_names, rows, sample_rows)
     if isinstance(rows, DatasetStructure):
         raise TypeError("Field-name classification requires sampled row mappings")
     return _classify_field_names(

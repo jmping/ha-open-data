@@ -1,9 +1,12 @@
 """Regression tests for provider-independent dataset structure analysis."""
 
 from importlib.util import module_from_spec, spec_from_file_location
+import json
 from pathlib import Path
 import sys
 from types import ModuleType
+
+import pytest
 
 _ROOT = Path(__file__).parents[1] / "custom_components" / "open_data"
 package = ModuleType("custom_components.open_data")
@@ -31,6 +34,8 @@ _load("ontology")
 analyzer = _load("analyzer")
 OpenDataDataset = models.OpenDataDataset
 OpenDataField = models.OpenDataField
+
+_RUNTIME_PROFILES = Path(__file__).parent / "fixtures" / "runtime_profiles"
 
 
 def test_stream_dataset_becomes_selectable_time_series() -> None:
@@ -235,3 +240,63 @@ def test_explorer_reports_ranked_bundle_hypotheses() -> None:
     assert ("loc_cd", "identity") in hypotheses
     assert ("bundle_at", "timestamp") in hypotheses
     assert ("water_temp", "metric") in hypotheses
+
+
+@pytest.mark.parametrize(
+    ("fixture_name", "expected_metrics"),
+    (
+        (
+            "ann_arbor_air_quality.json",
+            {"pm1_raw", "pm10_raw", "pm2point5_raw", "nitrogen_dioxide_raw"},
+        ),
+        ("ann_arbor_rainfall.json", {"rainfall"}),
+        (
+            "chicago_beach_weather.json",
+            {"air_temperature", "humidity", "interval_rain", "wind_speed"},
+        ),
+        ("michigan_pfas.json", {"pfoaresult", "pfosresult"}),
+    ),
+)
+def test_runtime_profile_audit_keeps_sampled_numeric_measurements(
+    fixture_name: str,
+    expected_metrics: set[str],
+) -> None:
+    """Replay old city fixtures through automatic analysis, not configured roles."""
+    profile = json.loads((_RUNTIME_PROFILES / fixture_name).read_text())
+    rows = profile["rows"]
+    fields = tuple(
+        OpenDataField(
+            name,
+            name,
+            "number" if isinstance(value, (int, float)) else "text",
+        )
+        for name, value in rows[0].items()
+    )
+    dataset = OpenDataDataset(fixture_name, profile["name"], fields=fields)
+
+    structure = analyzer.analyze_dataset(dataset, rows)
+
+    assert expected_metrics <= set(structure.metric_fields)
+    if fixture_name == "michigan_pfas.json":
+        assert "wssn" in structure.identity_fields
+        assert "wssn" not in structure.metric_fields
+
+
+def test_numeric_contact_and_identifier_fields_are_not_fallback_measurements() -> None:
+    dataset = OpenDataDataset(
+        dataset_id="facilities",
+        title="City facilities",
+        fields=(
+            OpenDataField("facility_id", "Facility ID", "number"),
+            OpenDataField("facility_name", "Facility", "text"),
+            OpenDataField("phone", "Phone", "number"),
+        ),
+    )
+    rows = [
+        {"facility_id": 1, "facility_name": "North", "phone": 5550101},
+        {"facility_id": 2, "facility_name": "South", "phone": 5550102},
+    ]
+
+    structure = analyzer.analyze_dataset(dataset, rows)
+
+    assert structure.metric_fields == ()
