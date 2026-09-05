@@ -121,6 +121,64 @@ async def test_prepared_ann_arbor_portal_reaches_dataset_picker(hass) -> None:
     assert options[0]["label"] == "Weather Stations · weather"
 
 
+async def test_dataset_selection_stages_before_activation(hass) -> None:
+    """Selecting a discovered dataset must not create a config entry yet."""
+    flow = OpenDataConfigFlow()
+    flow.hass = hass
+    flow._portal_url = "https://ckan.a2gov.org"
+    flow._provider_name = PROVIDER_CKAN
+    flow._set_candidates(_Prepared.candidates)
+    prepared_entry = {
+        "unique_id": "ckan:https://ckan.a2gov.org:weather-stations:",
+        "title": "Weather Stations",
+        "data": {"dataset_id": "weather-stations"},
+    }
+
+    with patch.object(
+        flow,
+        "_async_prepare_dataset_entry",
+        AsyncMock(return_value=prepared_entry),
+    ):
+        result = await flow.async_step_discover(
+            {"dataset_ids": ["weather-stations"]}
+        )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "activate"
+    assert flow._pending_entries == [prepared_entry]
+    assert not hass.config_entries.async_entries(DOMAIN)
+
+
+async def test_activation_creates_prepared_config_entry(hass) -> None:
+    """Only the activation submission should cross into HA runtime state."""
+    flow = OpenDataConfigFlow()
+    flow.hass = hass
+    flow._pending_entries = [
+        {
+            "unique_id": "ckan:https://ckan.a2gov.org:weather-stations:",
+            "title": "Weather Stations",
+            "data": {"dataset_id": "weather-stations"},
+        }
+    ]
+
+    result = await flow.async_step_activate({})
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["title"] == "Weather Stations"
+    assert result["data"] == {"dataset_id": "weather-stations"}
+
+
+async def test_activation_without_prepared_dataset_aborts(hass) -> None:
+    """A resumed or malformed flow cannot activate an absent dataset."""
+    flow = OpenDataConfigFlow()
+    flow.hass = hass
+
+    result = await flow.async_step_activate()
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "no_pending_datasets"
+
+
 async def test_options_menu_has_resumable_menu_handler(hass) -> None:
     """The menu step advertised to HA must have a matching flow handler."""
     entry = Mock()
