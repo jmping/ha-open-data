@@ -134,14 +134,23 @@ async def test_dataset_selection_stages_before_activation(hass) -> None:
         "data": {"dataset_id": "weather-stations"},
     }
 
-    with patch.object(
-        flow,
-        "_async_prepare_dataset_entry",
-        AsyncMock(return_value=prepared_entry),
+    inventory = Mock()
+    inventory.async_save_prepared = AsyncMock()
+    with (
+        patch.object(
+            flow,
+            "_async_prepare_dataset_entry",
+            AsyncMock(return_value=prepared_entry),
+        ),
+        patch.object(
+            flow, "_async_get_dataset_inventory",
+            AsyncMock(return_value=inventory),
+        ),
     ):
         result = await flow.async_step_discover(
             {"dataset_ids": ["weather-stations"]}
         )
+    inventory.async_save_prepared.assert_awaited_once_with(prepared_entry)
 
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "activate"
@@ -164,7 +173,15 @@ async def test_activation_creates_prepared_config_entry(hass) -> None:
     # In production the HA flow manager initializes mutable flow context.
     # Direct handler tests must supply it explicitly before setting unique_id.
     flow.context = {"source": config_entries.SOURCE_USER}
-    result = await flow.async_step_activate({})
+    inventory = Mock()
+    inventory.async_mark_activated = AsyncMock()
+    with patch.object(
+        flow, "_async_get_dataset_inventory", AsyncMock(return_value=inventory)
+    ):
+        result = await flow.async_step_activate({})
+    inventory.async_mark_activated.assert_awaited_once_with(
+        flow._pending_entries[0]
+    )
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["title"] == "Weather Stations"
