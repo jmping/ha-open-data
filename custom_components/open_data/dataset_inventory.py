@@ -194,7 +194,14 @@ class DatasetInventory:
                 now, status, error,
             )
             self._sources[key] = source
-            await self._async_save()
+            try:
+                await self._async_save()
+            except Exception:
+                if old is None:
+                    self._sources.pop(key, None)
+                else:
+                    self._sources[key] = old
+                raise
             return deepcopy(source)
 
     async def async_register_dataset(
@@ -232,7 +239,14 @@ class DatasetInventory:
                 ),
             )
             self._datasets[key] = dataset
-            await self._async_save()
+            try:
+                await self._async_save()
+            except Exception:
+                if old is None:
+                    self._datasets.pop(key, None)
+                else:
+                    self._datasets[key] = old
+                raise
             return deepcopy(dataset)
 
     async def async_save_prepared(self, entry: dict[str, Any]) -> InventoryDataset:
