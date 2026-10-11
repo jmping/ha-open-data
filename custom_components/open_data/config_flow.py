@@ -477,6 +477,11 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return self.async_abort(reason="no_pending_datasets")
         first = self._pending_entries[0]
         if user_input is not None:
+            # Check the primary entry before scheduling any additional imports.
+            # Otherwise, reactivating an existing dataset can still create extras
+            # even though this flow is aborted as a duplicate.
+            await self.async_set_unique_id(first["unique_id"])
+            self._abort_if_unique_id_configured()
             for extra in self._pending_entries[1:]:
                 self.hass.async_create_task(
                     self.hass.config_entries.flow.async_init(
@@ -485,8 +490,6 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         data=extra,
                     )
                 )
-            await self.async_set_unique_id(first["unique_id"])
-            self._abort_if_unique_id_configured()
             return self.async_create_entry(
                 title=first[CONF_TITLE], data=first["data"]
             )
