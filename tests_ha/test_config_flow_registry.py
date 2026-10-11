@@ -260,3 +260,48 @@ async def test_leaving_flow_does_not_cancel_background_preparation(hass) -> None
 async def _never_finishes() -> None:
     """Keep the mocked preparation task pending long enough to show progress."""
     await asyncio.Event().wait()
+
+
+async def test_prepared_inventory_can_be_resumed_without_discovery(hass) -> None:
+    """Previously prepared datasets can be selected without rerunning a provider."""
+    flow = OpenDataConfigFlow()
+    flow.hass = hass
+    prepared = {
+        "unique_id": "ckan:https://ckan.a2gov.org:weather-stations:",
+        "title": "Weather Stations",
+        "data": {"dataset_id": "weather-stations"},
+    }
+    item = Mock(
+        key="prepared-weather",
+        title="Weather Stations",
+        status="ready",
+        dataset_id="weather-stations",
+        resource_id=None,
+        prepared=prepared,
+    )
+    inventory = Mock()
+    inventory.datasets.return_value = (item,)
+    with patch.object(
+        flow, "_async_get_dataset_inventory", AsyncMock(return_value=inventory)
+    ):
+        listing = await flow.async_step_inventory()
+        result = await flow.async_step_inventory({"inventory_dataset": item.key})
+    assert listing["type"] is FlowResultType.FORM
+    assert listing["step_id"] == "inventory"
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "activate"
+    assert flow._pending_entries == [prepared]
+    assert not hass.config_entries.async_entries(DOMAIN)
+
+
+async def test_prepared_inventory_absent_aborts(hass) -> None:
+    flow = OpenDataConfigFlow()
+    flow.hass = hass
+    inventory = Mock()
+    inventory.datasets.return_value = ()
+    with patch.object(
+        flow, "_async_get_dataset_inventory", AsyncMock(return_value=inventory)
+    ):
+        result = await flow.async_step_inventory()
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "no_prepared_datasets"
