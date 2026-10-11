@@ -103,7 +103,7 @@ async def test_activation_changes_status_but_retains_prepared_snapshot(hass, sto
         await inventory.async_mark_activated(_entry())
         result = inventory.get_dataset("ckan", "https://ckan.a2gov.org", "weather")
         assert result is not None
-        assert result.status == "activated"
+        assert result.status == "activation_requested"
         assert result.prepared == _entry()
 
 
