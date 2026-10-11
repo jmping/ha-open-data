@@ -34,6 +34,7 @@ from .const import (
 )
 from .coordinator import OpenDataCoordinator
 from .entity_identity import effective_identity_field, normalize_selected_records
+from .dataset_inventory import DATA_INVENTORY, DatasetInventory
 from .feedback import FeedbackRegistry
 from .hierarchy_relationships import relationships_from_paths
 from .providers import create_provider
@@ -66,6 +67,11 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
         Path(__file__).resolve(),
     )
     domain_data = hass.data.setdefault(DOMAIN, {})
+    inventory = domain_data.get(DATA_INVENTORY)
+    if inventory is None:
+        inventory = DatasetInventory(hass)
+        await inventory.async_load()
+        domain_data[DATA_INVENTORY] = inventory
     feedback = FeedbackRegistry(hass)
     await feedback.async_load()
     domain_data[_DATA_FEEDBACK] = feedback
