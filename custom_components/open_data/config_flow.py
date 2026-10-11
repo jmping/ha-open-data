@@ -51,6 +51,7 @@ from .const import (
     PROVIDER_CKAN,
     PROVIDER_SOCRATA,
 )
+from .dataset_inventory import DATA_INVENTORY, DatasetInventory
 from .data_semantics import (
     TIME_ROLE_EVENT,
     TIME_ROLE_OBSERVATION,
@@ -150,6 +151,17 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         await registry.async_load()
         domain_data[DATA_PREPARATIONS] = registry
         return registry
+
+    async def _async_get_dataset_inventory(self) -> DatasetInventory:
+        """Initialize inventory even before the integration has an active entry."""
+        domain_data = self.hass.data.setdefault(DOMAIN, {})
+        existing = domain_data.get(DATA_INVENTORY)
+        if existing is not None:
+            return existing
+        inventory = DatasetInventory(self.hass)
+        await inventory.async_load()
+        domain_data[DATA_INVENTORY] = inventory
+        return inventory
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         """Start with the user's intent rather than an unexplained URL box."""
@@ -326,11 +338,16 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def _async_begin_portal(self, portal_url: str) -> FlowResult:
         registry = await self._async_get_preparation_registry()
+        inventory = await self._async_get_dataset_inventory()
         prepared = registry.get(portal_url)
         if prepared and prepared.status == "ready":
             self._portal_url = prepared.portal_url
             self._provider_name = prepared.provider
             self._set_candidates(prepared.candidates)
+            if prepared.provider:
+                await inventory.async_register_source(
+                    prepared.provider, prepared.portal_url, status="ready"
+                )
             return await self.async_step_discover()
 
         async def _prepare() -> tuple[str, str, list[DatasetCandidate]]:
@@ -385,6 +402,8 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 resource_id=reference.resource_id,
             )
         )
+        inventory = await self._async_get_dataset_inventory()
+        await inventory.async_save_prepared(entry)
         self._pending_entries = [entry]
         return await self.async_step_activate()
 
@@ -443,6 +462,9 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     )
                     errors["base"] = "unknown"
                 else:
+                    inventory = await self._async_get_dataset_inventory()
+                    for entry in entries:
+                        await inventory.async_save_prepared(entry)
                     self._pending_entries = entries
                     return await self.async_step_activate()
         options = [
@@ -490,6 +512,8 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         data=extra,
                     )
                 )
+            inventory = await self._async_get_dataset_inventory()
+            await inventory.async_mark_activated(first)
             return self.async_create_entry(
                 title=first[CONF_TITLE], data=first["data"]
             )
@@ -508,6 +532,8 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_import(self, import_data: dict[str, Any]) -> FlowResult:
         await self.async_set_unique_id(import_data["unique_id"])
         self._abort_if_unique_id_configured()
+        inventory = await self._async_get_dataset_inventory()
+        await inventory.async_mark_activated(import_data)
         return self.async_create_entry(
             title=import_data[CONF_TITLE], data=import_data["data"]
         )
