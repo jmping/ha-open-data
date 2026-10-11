@@ -229,6 +229,8 @@ class DatasetInventory:
                 )
             old = self._datasets.get(key)
             if old is None and len(self._datasets) >= _MAX_DATASETS:
+                if created_source:
+                    self._sources.pop(key_source, None)
                 raise ValueError("Dataset inventory limit reached")
             now = _now()
             dataset = InventoryDataset(
