@@ -264,12 +264,15 @@ class DatasetInventory:
         )
 
     async def async_mark_activated(self, entry: dict[str, Any]) -> None:
-        """Record activation only after the config flow accepts the request."""
+        """Record the accepted activation request.
+
+        Actual runtime activity is determined by the HA config-entry lifecycle.
+        """
         data = entry["data"]
         await self.async_register_dataset(
             str(data[CONF_PROVIDER]), str(data[CONF_PORTAL_URL]),
             str(data[CONF_DATASET_ID]), data.get(CONF_RESOURCE_ID),
-            str(entry["title"]), status="activated",
+            str(entry["title"]), status="activation_requested",
         )
 
     async def _async_save(self) -> None:
