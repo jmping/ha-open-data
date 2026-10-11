@@ -8,23 +8,30 @@
         "menu_options": {
           "local": "Find useful data for my area",
           "website": "Add from a website or dashboard",
-          "known": "Add a known portal, dataset, API, or ID"
+          "known": "Add a known portal, dataset, API, or ID",
+          "inventory": "Resume a prepared dataset"
         }
       },
       "local": {
         "title": "Find useful data for my area",
         "description": "Sources are ranked using your Home Assistant location, formal coverage, practical relevance, and extraction-test history. Only sources with a supported import path are offered. Open Data prepares the selected catalog in the background, then lets you choose datasets; you can adjust the resulting import later from Configure.",
-        "data": {"source_profile": "Public data source"}
+        "data": {
+          "source_profile": "Public data source"
+        }
       },
       "website": {
         "title": "Find the data behind a website",
         "description": "Paste a public webpage, dashboard, chart, portal, or data page. Open Data will inspect bounded public page evidence for upstream APIs, files, feeds, spreadsheets, and embedded data services without executing arbitrary page JavaScript. If a usable source is found, Open Data will infer an initial import; you can correct variables and categories later from Configure.",
-        "data": {"source_location": "Public website or dashboard URL"}
+        "data": {
+          "source_location": "Public website or dashboard URL"
+        }
       },
       "resolved_source": {
         "title": "Choose an upstream data source",
         "description": "Open Data found these likely machine-readable sources behind the page. Choose the source that should be inspected next. A resolved source may still require provider/feed support before it can be imported. Successful imports start with inferred settings that remain editable later.",
-        "data": {"resolved_source": "Resolved data source"}
+        "data": {
+          "resolved_source": "Resolved data source"
+        }
       },
       "known": {
         "title": "Add a known data source",
@@ -37,7 +44,9 @@
       "portal": {
         "title": "Discover public datasets",
         "description": "Enter an institution's public data portal URL. Open Data will prepare and cache the site structure. Large catalogs and file resources can take several minutes; you can leave this screen and return later.",
-        "data": {"portal_url": "Portal URL"}
+        "data": {
+          "portal_url": "Portal URL"
+        }
       },
       "dataset": {
         "title": "Add a dataset directly",
@@ -50,14 +59,25 @@
       "discover": {
         "title": "Choose discovered datasets",
         "description": "Found {count} ranked datasets on {portal} using {provider}. Select what you want to import. Open Data will infer fields, observation time, freshness, stable records, timestamp semantics, measurement behavior, and structural relationships automatically. The initial choices are not permanent: use Configure afterward to change variables, records, categories, timestamps, timezone, or structure.",
-        "data": {"dataset_ids": "Datasets"}
+        "data": {
+          "dataset_ids": "Datasets"
+        }
       },
       "prepare": {
         "title": "Prepare site catalog",
         "description": "Preparing and checking the site catalog in the background with rate-limited requests. Large catalogs can take a few minutes. You may close this dialog and submit the same source later; completed preparation is saved. No time-series downloads, entities, or regular updates begin until you select a dataset."
+      },
+      "inventory": {
+        "title": "Prepared datasets",
+        "description": "{count} prepared datasets are available. Select one to review and explicitly activate. Preparing a dataset does not create Home Assistant entities.",
+        "data": {
+          "inventory_dataset": "Prepared dataset"
+        }
       }
     },
-    "progress": {"prepare_catalog": "Checking supported catalog pages at a safe rate and saving working datasets for later selection"},
+    "progress": {
+      "prepare_catalog": "Checking supported catalog pages at a safe rate and saving working datasets for later selection"
+    },
     "error": {
       "cannot_connect": "Unable to connect to the supplied source.",
       "invalid_reference": "The source reference could not be recognized or resolved. Check the URL or provide the portal URL for a bare ID.",
@@ -69,7 +89,8 @@
     },
     "abort": {
       "already_configured": "This open data resource is already configured.",
-      "no_local_sources": "No source profiles in the current audited corpus were relevant to the configured Home Assistant location."
+      "no_local_sources": "No source profiles in the current audited corpus were relevant to the configured Home Assistant location.",
+      "no_prepared_datasets": "No previously prepared datasets are available."
     }
   },
   "options": {
@@ -179,9 +200,14 @@
     "sensor": {
       "dataset_status": {
         "name": "Dataset status",
-        "state": {"data_available": "Data available", "no_data": "No data"}
+        "state": {
+          "data_available": "Data available",
+          "no_data": "No data"
+        }
       },
-      "latest_observation": {"name": "Latest observation"}
+      "latest_observation": {
+        "name": "Latest observation"
+      }
     }
   }
 }
