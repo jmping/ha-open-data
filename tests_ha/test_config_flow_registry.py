@@ -161,6 +161,9 @@ async def test_activation_creates_prepared_config_entry(hass) -> None:
         }
     ]
 
+    # In production the HA flow manager initializes mutable flow context.
+    # Direct handler tests must supply it explicitly before setting unique_id.
+    flow.context = {"source": config_entries.SOURCE_USER}
     result = await flow.async_step_activate({})
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
