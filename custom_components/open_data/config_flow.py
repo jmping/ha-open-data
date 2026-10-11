@@ -167,7 +167,63 @@ class OpenDataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Start with the user's intent rather than an unexplained URL box."""
         return self.async_show_menu(
             step_id="user",
-            menu_options=["local", "website", "known"],
+            menu_options=["local", "website", "known", "inventory"],
+        )
+
+    async def async_step_inventory(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Review previously prepared datasets without repeating discovery."""
+        inventory = await self._async_get_dataset_inventory()
+        prepared = tuple(
+            item for item in inventory.datasets() if item.prepared is not None
+        )
+        if not prepared:
+            return self.async_abort(reason="no_prepared_datasets")
+        self._inventory_prepared = {item.key: item for item in prepared}
+        if user_input is not None:
+            chosen = self._inventory_prepared.get(user_input.get("inventory_dataset"))
+            if chosen is None:
+                return self.async_show_form(
+                    step_id="inventory",
+                    data_schema=vol.Schema({
+                        vol.Required("inventory_dataset"): SelectSelector(
+                            SelectSelectorConfig(
+                                options=[
+                                    SelectOptionDict(
+                                        value=item.key,
+                                        label=f"{item.title} · {item.status} · {item.dataset_id}",
+                                    )
+                                    for item in prepared
+                                ],
+                                multiple=False,
+                            )
+                        )
+                    }),
+                    errors={"base": "invalid_dataset"},
+                )
+            self._pending_entries = [chosen.prepared]
+            return await self.async_step_activate()
+        return self.async_show_form(
+            step_id="inventory",
+            data_schema=vol.Schema({
+                vol.Required("inventory_dataset"): SelectSelector(
+                    SelectSelectorConfig(
+                        options=[
+                            SelectOptionDict(
+                                value=item.key,
+                                label=(
+                                    f"{item.title} · {item.status} · "
+                                    f"{item.dataset_id} · {item.resource_id or 'default'}"
+                                ),
+                            )
+                            for item in prepared
+                        ],
+                        multiple=False,
+                    )
+                )
+            }),
+            description_placeholders={"count": str(len(prepared))},
         )
 
     async def async_step_local(
