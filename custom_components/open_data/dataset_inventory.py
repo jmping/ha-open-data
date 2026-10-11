@@ -219,7 +219,8 @@ class DatasetInventory:
         if prepared is not None and not _bounded_payload(prepared):
             raise ValueError("Prepared dataset payload exceeds safe storage bounds")
         async with self._lock:
-            if key_source not in self._sources:
+            created_source = key_source not in self._sources
+            if created_source:
                 if len(self._sources) >= _MAX_SOURCES:
                     raise ValueError("Source inventory limit reached")
                 now = _now()
@@ -246,6 +247,8 @@ class DatasetInventory:
                     self._datasets.pop(key, None)
                 else:
                     self._datasets[key] = old
+                if created_source:
+                    self._sources.pop(key_source, None)
                 raise
             return deepcopy(dataset)
 
